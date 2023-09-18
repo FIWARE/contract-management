@@ -5,6 +5,7 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.til.api.IssuerApi;
+import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.til.model.TrustedIssuerVO;
@@ -17,7 +18,7 @@ import java.util.Optional;
 @Slf4j
 public class TrustedIssuersListAdapter {
 
-    private final IssuerApi apiClient;
+    private final IssuerApiClient apiClient;
 
     public void allowIssuer(String serviceDid, String credentialsType, List<ClaimVO> claims) {
         try {

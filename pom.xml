@@ -230,7 +230,7 @@
                         </configuration>
                     </execution>
                     <execution>
-                        <id>openapi-product-ordering-api</id>
+                        <id>openapi-product-ordering-api-client</id>
                         <phase>generate-sources</phase>
                         <goals>
                             <goal>generate</goal>
@@ -246,6 +246,37 @@
                             <generateSupportingFiles>false</generateSupportingFiles>
                             <configOptions>
                                 <clientId>tmforum</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>false</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-product-ordering-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${tmforum.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.tmforum.server.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.tmforum.server.model</modelPackage>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <configOptions>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>
                                 <useGenericResponse>true</useGenericResponse>

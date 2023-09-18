@@ -6,18 +6,18 @@ import io.micronaut.scheduling.annotation.Scheduled;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.tmforum.api.EventsSubscriptionApi;
+import org.fiware.iam.tmforum.api.EventsSubscriptionApiClient;
 import org.fiware.iam.tmforum.model.EventSubscriptionInputVO;
 import org.fiware.iam.tmforum.model.EventSubscriptionVO;
 
-import static org.fiware.iam.tmforum.api.NotificationListenersClientSideApi.PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT;
+import static org.fiware.iam.tmforum.api.NotificationListenersClientSideApiClient.PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT;
 
 @Singleton
 @RequiredArgsConstructor
 @Slf4j
 public class NotificationSubscriber {
 
-    private final EventsSubscriptionApi eventsSubscriptionApi;
+    private final EventsSubscriptionApiClient eventsSubscriptionApi;
 
     @Value("${general.basepath:}")
     private String controllerPath;

@@ -6,7 +6,7 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import org.fiware.iam.til.TrustedIssuerMapper;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
-import org.fiware.iam.tmforum.api.NotificationListenersClientSideApi;
+import org.fiware.iam.tmforum.server.api.NotificationListenersClientSideApi;
 import org.fiware.iam.tmforum.model.*;
 import reactor.core.publisher.Mono;
 
