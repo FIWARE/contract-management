@@ -1,0 +1,29 @@
+micronaut:
+  application:
+    name: ${project.artifactId}
+
+  server:
+    port: 8080
+
+  metrics:
+    enabled: true
+    export:
+      prometheus:
+        step: PT2s
+        descriptions: false
+  http:
+    services:
+      read-timeout: 30s
+      til:
+        path: ""
+        url: http://trusted-issuers-list:8080
+        read-timeout: 30
+      tmforum:
+        path: "productordering"
+        url: http://tmforum:8080
+        read-timeout: 30
+
+
+general:
+  name: contract-management
+  #basepath: "callback"
