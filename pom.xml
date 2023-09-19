@@ -237,13 +237,14 @@
                         </goals>
                         <configuration>
                             <inputSpec>${tmforum.api.url}</inputSpec>
-                            <apiPackage>org.fiware.iam.tmforum.api</apiPackage>
+                            <apiPackage>org.fiware.iam.tmforum.client.api</apiPackage>
                             <strictSpec>true</strictSpec>
-                            <modelPackage>org.fiware.iam.tmforum.model</modelPackage>
+                            <modelPackage>org.fiware.iam.tmforum.client.model</modelPackage>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <generateSupportingFiles>false</generateSupportingFiles>
+                            <apisToGenerate>EventsSubscription</apisToGenerate>
                             <configOptions>
                                 <clientId>tmforum</clientId>
                                 <fullJavaUtil>true</fullJavaUtil>
@@ -276,6 +277,7 @@
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <generateSupportingFiles>false</generateSupportingFiles>
+                            <apisToGenerate>NotificationListenersClientSide</apisToGenerate>
                             <configOptions>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>

@@ -7,7 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.fiware.iam.til.TrustedIssuerMapper;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.tmforum.server.api.NotificationListenersClientSideApi;
-import org.fiware.iam.tmforum.model.*;
+import org.fiware.iam.tmforum.server.model.*;
 import reactor.core.publisher.Mono;
 
 import java.util.List;

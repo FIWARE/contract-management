@@ -4,7 +4,6 @@ import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.til.api.IssuerApi;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
@@ -30,7 +29,7 @@ public class TrustedIssuersListAdapter {
                 apiClient.createTrustedIssuer(new TrustedIssuerVO().did(serviceDid).addCredentialsItem(new CredentialsVO().credentialsType(credentialsType).claims(claims)));
             }
         } catch (Exception e) {
-            log.error("Could not write new issuer permission to Trusted Issuer List Service: {} {} {}",serviceDid,credentialsType,claims,e);
+            log.error("Could not write new issuer permission to Trusted Issuer List Service: {} {} {}", serviceDid, credentialsType, claims, e);
         }
     }
 
