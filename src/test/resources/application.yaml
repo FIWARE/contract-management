@@ -1,0 +1,19 @@
+micronaut:
+  server:
+    port: 8081
+  metrics:
+    enabled: false
+    export:
+      prometheus:
+        step: PT2s
+        descriptions: false
+endpoints:
+  metrics:
+    enabled: false
+  health:
+    enabled: false
+
+---
+loggers:
+  levels:
+    ROOT: TRACE

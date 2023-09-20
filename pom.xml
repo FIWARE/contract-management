@@ -50,10 +50,14 @@
         <project.contact.domain>fiware.org</project.contact.domain>
         <project.contact.email>tim.smyth@fiware.org</project.contact.email>
 
-        <!-- TM Forum API -->
-        <tmforum.api.url>
+        <!-- TM Forum APIs -->
+        <tmforum.productorder.api.url>
             https://tmf-open-api-table-documents.s3.eu-west-1.amazonaws.com/OpenApiTable/4.0.0/swagger/TMF622-ProductOrder-v4.0.0.swagger.json
-        </tmforum.api.url>
+        </tmforum.productorder.api.url>
+        <tmforum.party.api.url>
+            https://tmf-open-api-table-documents.s3.eu-west-1.amazonaws.com/OpenApiTable/4.0.0/swagger/TMF632-Party-v4.0.0.swagger.json
+        </tmforum.party.api.url>
+
 
 
         <!-- oci -->
@@ -95,9 +99,7 @@
         <dependency>
             <groupId>org.mapstruct</groupId>
             <artifactId>mapstruct</artifactId>
-            <version>
-                ${version.org.mapstruct}
-            </version>
+            <version>${version.org.mapstruct}</version>
         </dependency>
 
         <!-- micronaut -->
@@ -127,13 +129,9 @@
             <scope>compile</scope>
         </dependency>
         <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.micronaut.data</groupId>
-            <artifactId>micronaut-data-processor</artifactId>
-            <scope>provided</scope>
+            <groupId>io.micronaut</groupId>
+            <artifactId>micronaut-http-client</artifactId>
+            <scope>compile</scope>
         </dependency>
 
         <!-- logging -->
@@ -167,11 +165,6 @@
         <dependency>
             <groupId>io.micronaut.test</groupId>
             <artifactId>micronaut-test-core</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.micronaut</groupId>
-            <artifactId>micronaut-http-client</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -236,17 +229,17 @@
                             <goal>generate</goal>
                         </goals>
                         <configuration>
-                            <inputSpec>${tmforum.api.url}</inputSpec>
-                            <apiPackage>org.fiware.iam.tmforum.client.api</apiPackage>
+                            <inputSpec>${tmforum.productorder.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.tmforum.product.client.api</apiPackage>
                             <strictSpec>true</strictSpec>
-                            <modelPackage>org.fiware.iam.tmforum.client.model</modelPackage>
+                            <modelPackage>org.fiware.iam.tmforum.product.client.model</modelPackage>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <generateSupportingFiles>false</generateSupportingFiles>
                             <apisToGenerate>EventsSubscription</apisToGenerate>
                             <configOptions>
-                                <clientId>tmforum</clientId>
+                                <clientId>product</clientId>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>
                                 <useGenericResponse>true</useGenericResponse>
@@ -269,16 +262,49 @@
                             <goal>generate</goal>
                         </goals>
                         <configuration>
-                            <inputSpec>${tmforum.api.url}</inputSpec>
-                            <apiPackage>org.fiware.iam.tmforum.server.api</apiPackage>
+                            <inputSpec>${tmforum.productorder.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.tmforum.product.server.api</apiPackage>
                             <strictSpec>true</strictSpec>
-                            <modelPackage>org.fiware.iam.tmforum.server.model</modelPackage>
+                            <modelPackage>org.fiware.iam.tmforum.product.server.model</modelPackage>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <generateSupportingFiles>false</generateSupportingFiles>
                             <apisToGenerate>NotificationListenersClientSide</apisToGenerate>
                             <configOptions>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>false</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-ufftata-api-client</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${tmforum.party.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.tmforum.party.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.tmforum.party.model</modelPackage>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <apisToGenerate>Organization</apisToGenerate>
+                            <configOptions>
+                                <clientId>party</clientId>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>
                                 <useGenericResponse>true</useGenericResponse>
@@ -437,11 +463,6 @@
                             <version>${micronaut.version}</version>
                         </path>
                         <path>
-                            <groupId>io.micronaut.data</groupId>
-                            <artifactId>micronaut-data-processor</artifactId>
-                            <version>${micronaut.data.version}</version>
-                        </path>
-                        <path>
                             <groupId>io.micronaut</groupId>
                             <artifactId>micronaut-graal</artifactId>
                             <version>${micronaut.version}</version>
@@ -488,11 +509,6 @@
                                     <version>${micronaut.version}</version>
                                 </path>
                                 <path>
-                                    <groupId>io.micronaut.data</groupId>
-                                    <artifactId>micronaut-data-processor</artifactId>
-                                    <version>${micronaut.data.version}</version>
-                                </path>
-                                <path>
                                     <groupId>io.micronaut</groupId>
                                     <artifactId>micronaut-graal</artifactId>
                                     <version>${micronaut.version}</version>
@@ -528,25 +544,6 @@
                         </manifest>
                     </archive>
                 </configuration>
-            </plugin>
-            <!-- copy project dependencies -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>micronaut-lib</id>
-                        <phase>prepare-package</phase>
-                        <goals>
-                            <goal>copy-dependencies</goal>
-                        </goals>
-                        <configuration>
-                            <includeScope>runtime</includeScope>
-                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
-                            <silent>true</silent>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>

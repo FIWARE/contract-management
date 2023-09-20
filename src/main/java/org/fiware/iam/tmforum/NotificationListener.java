@@ -2,23 +2,23 @@ package org.fiware.iam.tmforum;
 
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.annotation.Controller;
-import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
-import org.fiware.iam.til.TrustedIssuerMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
-import org.fiware.iam.tmforum.server.api.NotificationListenersClientSideApi;
-import org.fiware.iam.tmforum.server.model.*;
-import reactor.core.publisher.Mono;
+import org.fiware.iam.tmforum.product.server.api.NotificationListenersClientSideApi;
+import org.fiware.iam.tmforum.product.server.model.*;
 
-import java.util.List;
+import java.util.Collection;
+import java.util.stream.Stream;
 
+@Slf4j
 @Controller("${general.basepath:/}")
 @RequiredArgsConstructor
 public class NotificationListener implements NotificationListenersClientSideApi {
 
-    private final TrustedIssuerMapper mapper;
-
     private final TrustedIssuersListAdapter adapter;
+
+    private final OrganizationResolver organizationResolver;
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderCreateEvent(CancelProductOrderCreateEventVO data) {
@@ -40,12 +40,31 @@ public class NotificationListener implements NotificationListenersClientSideApi 
         return HttpResponse.ok();
     }
 
+
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderCreateEvent(ProductOrderCreateEventVO data) {
         // validate notification type
+        log.info("Received a ProductOrder Created Event: {}", data);
+        try {
+            String didOrderingOrganization = Stream
+                    .ofNullable(data)
+                    .map(ProductOrderCreateEventVO::getEvent)
+                    .map(ProductOrderCreateEventPayloadVO::getProductOrder)
+                    .map(ProductOrderVO::getRelatedParty)
+                    .flatMap(Collection::stream)
+                    .map(RelatedPartyVO::getId)
+                    .reduce((a, b) -> {
+                        throw new IllegalArgumentException("Expected exactly one ordering organization.");
+                    })
+                    .map(organizationResolver::getDID)
+                    .orElseThrow(() -> new IllegalArgumentException("Expected exactly one ordering organization, none found."));
 
-        // call
-        adapter.allowIssuer("someDid","someVCType", List.of(mapper.map("someTargetDid",List.of("someRole"))));
+            // call
+            adapter.allowIssuer(didOrderingOrganization);
+        } catch (Exception e) {
+            log.error("Could not set up trusted issuer based on the event: {}", data, e);
+        }
+        // Notification sender does not care about the listeners issues
         return HttpResponse.ok();
     }
 

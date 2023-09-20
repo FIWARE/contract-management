@@ -18,8 +18,12 @@ micronaut:
         path: ""
         url: http://trusted-issuers-list:8080
         read-timeout: 30
-      tmforum:
+      product:
         path: "productordering"
+        url: http://tmforum:8080
+        read-timeout: 30
+      party:
+        path: "party"
         url: http://tmforum:8080
         read-timeout: 30
 
@@ -27,3 +31,10 @@ micronaut:
 general:
   name: contract-management
   #basepath: "callback"
+  til:
+    credentialType: MyCredential
+    claims:
+      - target: "did:some:service"
+        roles:
+          - Consumer
+          - Admin

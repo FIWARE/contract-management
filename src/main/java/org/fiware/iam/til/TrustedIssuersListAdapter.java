@@ -18,18 +18,20 @@ import java.util.Optional;
 public class TrustedIssuersListAdapter {
 
     private final IssuerApiClient apiClient;
+    private final TrustedIssuerConfigProvider trustedIssuerConfigProvider;
 
-    public void allowIssuer(String serviceDid, String credentialsType, List<ClaimVO> claims) {
+    public void allowIssuer(String serviceDid) {
+        CredentialsVO credentialToBeAdded = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
         try {
             Optional<TrustedIssuerVO> issuer = getIssuer(serviceDid);
             if (issuer.isPresent()) {
-                TrustedIssuerVO updatedIssuer = issuer.get().addCredentialsItem(new CredentialsVO().credentialsType(credentialsType).claims(claims));
+                TrustedIssuerVO updatedIssuer = issuer.get().addCredentialsItem(credentialToBeAdded);
                 apiClient.updateIssuer(serviceDid, updatedIssuer);
             } else {
-                apiClient.createTrustedIssuer(new TrustedIssuerVO().did(serviceDid).addCredentialsItem(new CredentialsVO().credentialsType(credentialsType).claims(claims)));
+                apiClient.createTrustedIssuer(new TrustedIssuerVO().did(serviceDid).addCredentialsItem(credentialToBeAdded));
             }
         } catch (Exception e) {
-            log.error("Could not write new issuer permission to Trusted Issuer List Service: {} {} {}", serviceDid, credentialsType, claims, e);
+            log.error("Could not write new issuer permission to Trusted Issuer List Service: {} {}", serviceDid, credentialToBeAdded, e);
         }
     }
 
