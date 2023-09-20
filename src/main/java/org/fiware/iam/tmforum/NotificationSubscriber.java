@@ -31,9 +31,15 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
     @Value("${general.name:contract-management}")
     private String serviceUrl;
 
+    /**
+     * Register a subscription at the TM Forum API service after startup. Using the
+     * {@link io.micronaut.scheduling.annotation.Scheduled} annotation resulted in start
+     * failure like https://stackoverflow.com/q/77075901/4341660
+     * @param event
+     */
     @Override
     public void onApplicationEvent(ServerStartupEvent event) {
-        //TODO Fixed rate
+        //TODO Fixed rate should be better fit if we don't have an option to check if the subscription still exists
         taskScheduler.schedule(Duration.ofSeconds(10), () -> {
             try {
                 String callbackUrl = String.format("%s%s%s", serviceUrl, controllerPath, PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT);
@@ -41,7 +47,7 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
 
                 EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
                         .callback(callbackUrl)
-                        .query(""); //TODO define query
+                        .query("eventType=ProductOrderCreateEvent"); //TODO define query
                 HttpResponse<EventSubscriptionVO> eventSubscriptionVOHttpResponse = eventsSubscriptionApi.registerListener(subscription);
                 log.info("Got reply {} and status {}", eventSubscriptionVOHttpResponse.body(), eventSubscriptionVOHttpResponse.getStatus());
             } catch (Exception e) {

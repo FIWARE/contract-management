@@ -22,21 +22,25 @@ public class NotificationListener implements NotificationListenersClientSideApi 
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderCreateEvent(CancelProductOrderCreateEventVO data) {
+        log.warn("Received an unimplemented CancelProductOrderCreateEvent: {}", data);
         return HttpResponse.ok();
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderInformationRequiredEvent(CancelProductOrderInformationRequiredEventVO data) {
+        log.warn("Received an unimplemented CancelProductOrderInformationRequiredEvent: {}", data);
         return HttpResponse.ok();
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderStateChangeEvent(CancelProductOrderStateChangeEventVO data) {
+        log.warn("Received an unimplemented CancelProductOrderStateChangeEvent: {}", data);
         return HttpResponse.ok();
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderAttributeValueChangeEvent(ProductOrderAttributeValueChangeEventVO data) {
+        log.warn("Received an unimplemented ProductOrderAttributeValueChangeEvent: {}", data);
         return HttpResponse.ok();
     }
 
@@ -70,16 +74,19 @@ public class NotificationListener implements NotificationListenersClientSideApi 
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderDeleteEvent(ProductOrderDeleteEventVO data) {
+        log.warn("Received an unimplemented ProductOrderDeleteEvent: {}", data);
         return HttpResponse.ok();
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderInformationRequiredEvent(ProductOrderInformationRequiredEventVO data) {
+        log.warn("Received an unimplemented ProductOrderInformationRequiredEvent: {}", data);
         return HttpResponse.ok();
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderStateChangeEvent(ProductOrderStateChangeEventVO data) {
+        log.warn("Received an unimplemented ProductOrderStateChangeEvent: {}", data);
         return HttpResponse.ok();
     }
 }
