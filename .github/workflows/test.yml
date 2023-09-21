@@ -18,7 +18,4 @@ jobs:
           java-package: jdk
 
       - name: Run tests
-        run: mvn clean test jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }}
-
-      - name: Run integration tests
-        run: mvn clean install -Pintegration-test
+        run: mvn clean test integration-test verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }}
