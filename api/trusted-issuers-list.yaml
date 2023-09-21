@@ -35,7 +35,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
-  /v4/issuers/{did}:
+  /issuer/{did}:
     get:
       tags:
         - issuer
@@ -45,7 +45,7 @@ paths:
       operationId: getIssuer
       responses:
         '200':
-          description: Successfully got the issuer.
+          description: Successfully retrieved the issuer.
           content:
             application/json:
               schema:
