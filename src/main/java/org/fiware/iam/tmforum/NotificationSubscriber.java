@@ -28,6 +28,10 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
     @Value("${general.basepath:}")
     private String controllerPath;
 
+
+    @Value("${general.port:8080}")
+    private String servicePort;
+
     @Value("${general.name:contract-management}")
     private String serviceUrl;
 
@@ -42,7 +46,7 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
         //TODO Fixed rate should be better fit if we don't have an option to check if the subscription still exists
         taskScheduler.schedule(Duration.ofSeconds(10), () -> {
             try {
-                String callbackUrl = String.format("http://%s%s%s", serviceUrl, controllerPath, PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT);
+                String callbackUrl = String.format("http://%s:%s%s%s", serviceUrl, servicePort, controllerPath, PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT);
                 log.info("Attempting to register subscription with callback {}", callbackUrl);
 
                 EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
