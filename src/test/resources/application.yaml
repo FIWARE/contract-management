@@ -17,3 +17,14 @@ endpoints:
 loggers:
   levels:
     ROOT: TRACE
+general:
+  name: contract-management
+  #basepath: "callback"
+  port: 8080
+  til:
+    credentialType: MyCredential
+    claims:
+      - target: "did:some:service"
+        roles:
+          - Consumer
+          - Admin
