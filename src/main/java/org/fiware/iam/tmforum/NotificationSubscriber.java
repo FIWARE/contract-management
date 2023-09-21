@@ -44,7 +44,7 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
     @Override
     public void onApplicationEvent(ServerStartupEvent event) {
         //TODO Fixed rate should be better fit if we don't have an option to check if the subscription still exists
-        taskScheduler.schedule(Duration.ofSeconds(10), () -> {
+        taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(10),Duration.ofSeconds(30), () -> {
             try {
                 String callbackUrl = String.format("http://%s:%s%s%s", serviceUrl, servicePort, controllerPath, PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT);
                 log.info("Attempting to register subscription with callback {}", callbackUrl);

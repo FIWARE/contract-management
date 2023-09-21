@@ -11,10 +11,4 @@ public class TrustedIssuerConfig {
 
         private String credentialType;
         private List<Claim> claims = new ArrayList<>();
-
-        @Data
-        public class Claim{
-                private String target;
-                private List<String> roles = new ArrayList<>();
-        }
 }

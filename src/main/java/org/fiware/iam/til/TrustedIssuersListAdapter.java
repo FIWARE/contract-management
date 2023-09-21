@@ -26,9 +26,12 @@ public class TrustedIssuersListAdapter {
             Optional<TrustedIssuerVO> issuer = getIssuer(serviceDid);
             if (issuer.isPresent()) {
                 TrustedIssuerVO updatedIssuer = issuer.get().addCredentialsItem(credentialToBeAdded);
+                log.debug("Updating existing issuer with {}", updatedIssuer);
                 apiClient.updateIssuer(serviceDid, updatedIssuer);
             } else {
-                apiClient.createTrustedIssuer(new TrustedIssuerVO().did(serviceDid).addCredentialsItem(credentialToBeAdded));
+                TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(serviceDid).addCredentialsItem(credentialToBeAdded);
+                log.debug("Adding new issuer with {}", newIssuer);
+                apiClient.createTrustedIssuer(newIssuer);
             }
         } catch (Exception e) {
             log.error("Could not write new issuer permission to Trusted Issuer List Service: {} {}", serviceDid, credentialToBeAdded, e);
