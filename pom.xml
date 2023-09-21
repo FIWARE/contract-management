@@ -656,6 +656,9 @@
             </build>
         </profile>
         <profile>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
             <id>integration-test</id>
             <build>
                 <plugins>
@@ -705,7 +708,6 @@
                                     <goal>run</goal>
                                     <goal>image</goal>
                                     <goal>apply</goal>
-                                    <goal>rm</goal>
                                 </goals>
                                 <configuration>
                                     <timeout>1200</timeout>
@@ -728,6 +730,13 @@
                                         <portBinding>1026:1026</portBinding>
                                     </portBindings>
                                 </configuration>
+                            </execution>
+                            <execution>
+                                <id>clean</id>
+                                <phase>post-integration-test</phase>
+                                <goals>
+                                    <goal>rm</goal>
+                                </goals>
                             </execution>
                         </executions>
                     </plugin>
