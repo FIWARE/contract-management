@@ -7,7 +7,7 @@ tags:
   - name: verfication
   - name: issuer
 paths:
-  /v4/issuers:
+  /issuer:
     post:
       tags:
         - issuer
