@@ -715,9 +715,6 @@
                                 </goals>
                                 <configuration>
                                     <timeout>1200</timeout>
-                                    <dockerImages>
-                                        <dockerImage>${image.registry}/${image.repository}/${project.artifactId}:${project.version}</dockerImage>
-                                    </dockerImages>
                                     <streamLogs>true</streamLogs>
                                     <manifests>src/test/resources/k3s/</manifests>
                                     <command>kubectl apply -R -f .</command>
