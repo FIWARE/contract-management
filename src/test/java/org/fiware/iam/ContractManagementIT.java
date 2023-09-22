@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
-public class ContractManagementIntegrationTest {
+public class ContractManagementIT {
 
     private static final String TEST_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
 

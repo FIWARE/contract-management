@@ -662,14 +662,14 @@
             <id>integration-test</id>
             <build>
                 <plugins>
-                    <!-- only run integration tests -->
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <configuration>
-                            <skip>true</skip>
-                        </configuration>
-                    </plugin>
+<!--                    &lt;!&ndash; only run integration tests &ndash;&gt;-->
+<!--                    <plugin>-->
+<!--                        <groupId>org.apache.maven.plugins</groupId>-->
+<!--                        <artifactId>maven-surefire-plugin</artifactId>-->
+<!--                        <configuration>-->
+<!--                            <skip>true</skip>-->
+<!--                        </configuration>-->
+<!--                    </plugin>-->
                     <!-- run tests -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
@@ -677,7 +677,7 @@
                         <configuration>
                             <failIfNoTests>true</failIfNoTests>
                             <includes>
-                                <include>**/*IntegrationTest.java</include>
+                                <include>**/*IT.java</include>
                             </includes>
                         </configuration>
                         <executions>
@@ -704,6 +704,7 @@
                         <executions>
                             <execution>
                                 <id>prepare-test-cluster</id>
+                                <phase>pre-integration-test</phase>
                                 <goals>
                                     <goal>run</goal>
                                     <goal>image</goal>
