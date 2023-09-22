@@ -55,7 +55,7 @@ public class ContractManagementIT {
 
     private boolean trustedIssuersListServiceReady() {
         try {
-            return Optional.ofNullable(Unirest.get("http://localhost:8084/v4/issuers/")
+            return Optional.ofNullable(Unirest.get("http://localhost:8085/v4/issuers/")
                             .asJson())
                     .filter(HttpResponse::isSuccess)
                     .isPresent();
@@ -85,7 +85,7 @@ public class ContractManagementIT {
 
     private Optional<JSONObject> getTrustedIssuersListEntry(String did) {
         try {
-            return Optional.ofNullable(Unirest.get("http://localhost:8084/issuer/" + did)
+            return Optional.ofNullable(Unirest.get("http://localhost:8085/issuer/" + did)
                             .asJson())
                     .filter(HttpResponse::isSuccess)
                     .map(HttpResponse::getBody)

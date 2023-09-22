@@ -1,6 +1,7 @@
 package org.fiware.iam.tmforum;
 
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.Controller;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,25 +24,25 @@ public class NotificationListener implements NotificationListenersClientSideApi 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderCreateEvent(CancelProductOrderCreateEventVO data) {
         log.warn("Received an unimplemented CancelProductOrderCreateEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderInformationRequiredEvent(CancelProductOrderInformationRequiredEventVO data) {
         log.warn("Received an unimplemented CancelProductOrderInformationRequiredEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToCancelProductOrderStateChangeEvent(CancelProductOrderStateChangeEventVO data) {
         log.warn("Received an unimplemented CancelProductOrderStateChangeEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderAttributeValueChangeEvent(ProductOrderAttributeValueChangeEventVO data) {
         log.warn("Received an unimplemented ProductOrderAttributeValueChangeEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 
 
@@ -69,24 +70,24 @@ public class NotificationListener implements NotificationListenersClientSideApi 
             log.error("Could not set up trusted issuer based on the event: {}", data, e);
         }
         // Notification sender does not care about the listeners issues
-        return HttpResponse.ok();
+        return HttpResponse.noContent();
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderDeleteEvent(ProductOrderDeleteEventVO data) {
         log.warn("Received an unimplemented ProductOrderDeleteEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderInformationRequiredEvent(ProductOrderInformationRequiredEventVO data) {
         log.warn("Received an unimplemented ProductOrderInformationRequiredEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderStateChangeEvent(ProductOrderStateChangeEventVO data) {
         log.warn("Received an unimplemented ProductOrderStateChangeEvent: {}", data);
-        return HttpResponse.ok();
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED, "Not supported yet.");
     }
 }

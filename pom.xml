@@ -58,6 +58,9 @@
             https://tmf-open-api-table-documents.s3.eu-west-1.amazonaws.com/OpenApiTable/4.0.0/swagger/TMF632-Party-v4.0.0.swagger.json
         </tmforum.party.api.url>
 
+        <!-- Trusted Issuers List API -->
+        <til.api.url>https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/main/api/trusted-issuers-list.yaml</til.api.url>
+
         <!-- oci -->
         <exec.mainClass>org.fiware.iam.Application</exec.mainClass>
         <image.registry>quay.io</image.registry>
@@ -227,7 +230,7 @@
                             <goal>generate</goal>
                         </goals>
                         <configuration>
-                            <inputSpec>./api/trusted-issuers-list.yaml</inputSpec>
+                            <inputSpec>${til.api.url}</inputSpec>
                             <apiPackage>org.fiware.iam.til.api</apiPackage>
                             <strictSpec>true</strictSpec>
                             <modelPackage>org.fiware.iam.til.model</modelPackage>
@@ -726,7 +729,7 @@
                                         <!-- tm-forum-api-party-catalog -->
                                         <portBinding>8083:8083</portBinding>
                                         <!-- trusted-issuers-list -->
-                                        <portBinding>8084:8084</portBinding>
+                                        <portBinding>8085:8085</portBinding>
                                         <!-- orion -->
                                         <portBinding>1026:1026</portBinding>
                                     </portBindings>

@@ -19,11 +19,13 @@ public class TrustedIssuerConfigProvider {
 
     private final TrustedIssuerConfig trustedIssuerConfig;
 
+    private final TrustedIssuerConfigMapper mapper;
+
     public CredentialsVO createCredentialConfigForTargetService() {
         List<ClaimVO> claims = trustedIssuerConfig
                 .getClaims()
                 .stream()
-                .map(c -> new ClaimVO().name(c.getTarget()).allowedValues(Arrays.asList(c.getRoles().toArray())))
+                .map(mapper::map)
                 .toList();
 
         return new CredentialsVO()

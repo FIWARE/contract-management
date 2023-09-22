@@ -1,6 +1,7 @@
 package org.fiware.iam.til;
 
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +42,7 @@ public class TrustedIssuersListAdapter {
     private Optional<TrustedIssuerVO> getIssuer(String serviceDID) {
         try {
             HttpResponse<TrustedIssuerVO> response = apiClient.getIssuer(serviceDID);
-            if (response.code() != 200) {
+            if (response.code() != HttpStatus.OK.getCode()) {
                 log.debug("Could not find issuer {} in Trusted Issuers List. Status {}", serviceDID, response.code());
                 return Optional.empty();
             }

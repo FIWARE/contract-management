@@ -59,7 +59,7 @@ metadata:
 spec:
   type: LoadBalancer
   ports:
-    - port: 8084
+    - port: 8085
       targetPort: 8080
       protocol: TCP
       name: http

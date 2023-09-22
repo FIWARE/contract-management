@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.List;
+
 @Data
 @ConfigurationProperties("general.til")
 public class TrustedIssuerConfig {

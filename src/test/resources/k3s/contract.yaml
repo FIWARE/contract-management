@@ -82,7 +82,7 @@ data:
           til:
             path: ""
             read-timeout: 30
-            url: http://trusted-issuers-list:8084
+            url: http://trusted-issuers-list:8085
     general:
       name: contract-management
       basepath: "/callback"
