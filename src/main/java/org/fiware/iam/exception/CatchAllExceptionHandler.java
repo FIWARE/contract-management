@@ -32,6 +32,14 @@ public class CatchAllExceptionHandler implements ExceptionHandler<Exception, Htt
                                     .message(String.format("Request could not be answered due to an invalid date: %s.",
                                             dateTimeParseException.getParsedString())));
         }
+        if (exception instanceof TMForumException tmForumException) {
+            return HttpResponse.status(HttpStatus.BAD_GATEWAY)
+                    .body(
+                            new ErrorVO().status(HttpStatus.BAD_GATEWAY.toString())
+                                    .reason(HttpStatus.BAD_GATEWAY.getReason())
+                                    .message(String.format("Request could not be answered due to error in downstream service: %s.",
+                                            tmForumException.getMessage())));
+        }
         if (exception instanceof IllegalArgumentException illegalArgumentException) {
             return HttpResponse.status(HttpStatus.BAD_REQUEST)
                     .body(

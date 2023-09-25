@@ -5,7 +5,7 @@ import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.exception.OrganizationRetrievalException;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.party.api.OrganizationApiClient;
 import org.fiware.iam.tmforum.party.model.CharacteristicVO;
 import org.fiware.iam.tmforum.party.model.OrganizationVO;
@@ -27,7 +27,7 @@ public class OrganizationResolver {
     public String getDID(String organizationId) {
         HttpResponse<OrganizationVO> organizationResponse = apiClient.retrieveOrganization(organizationId, FIELD_NAME_PARTY_CHARACTERISTIC);
         if (organizationResponse.getStatus() != HttpStatus.OK) {
-            throw new OrganizationRetrievalException("Failed to retrieve organization. Status:" + organizationResponse.getStatus(), organizationId);
+            throw new TMForumException("Failed to retrieve organization (%s). Status:(%s)".formatted(organizationId, organizationResponse.getStatus()));
         }
         log.debug("Retrieved organization info:{}", organizationResponse.body());
         return Stream
@@ -39,6 +39,6 @@ public class OrganizationResolver {
                 .filter(e -> e instanceof String)
                 .map(e -> (String) e)
                 .findAny()
-                .orElseThrow(() -> new OrganizationRetrievalException("Could not find organizations DID in response: " + organizationResponse.body(), organizationId));
+                .orElseThrow(() -> new TMForumException("Could not find organizations DID (%s) in response: %s".formatted(organizationId, organizationResponse.body())));
     }
 }

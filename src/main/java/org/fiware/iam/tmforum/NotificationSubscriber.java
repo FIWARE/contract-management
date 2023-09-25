@@ -3,6 +3,7 @@ package org.fiware.iam.tmforum;
 import io.micronaut.context.annotation.Value;
 import io.micronaut.context.event.ApplicationEventListener;
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.client.exceptions.HttpClientException;
 import io.micronaut.runtime.server.event.ServerStartupEvent;
 import io.micronaut.scheduling.TaskScheduler;
 import jakarta.inject.Singleton;
@@ -21,13 +22,14 @@ import static org.fiware.iam.tmforum.product.server.api.NotificationListenersCli
 @Slf4j
 public class NotificationSubscriber implements ApplicationEventListener<ServerStartupEvent> {
 
+    private static final String QUERY_PRODUCT_ORDER_CREATED = "eventType=ProductOrderCreateEvent";
+
     private final EventsSubscriptionApiClient eventsSubscriptionApi;
 
     private final TaskScheduler taskScheduler;
 
     @Value("${general.basepath:}")
     private String controllerPath;
-
 
     @Value("${general.port:8080}")
     private String servicePort;
@@ -43,7 +45,7 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
      */
     @Override
     public void onApplicationEvent(ServerStartupEvent event) {
-        //TODO Fixed rate should be better fit if we don't have an option to check if the subscription still exists
+        //Using fixed rate since we don't have an option to check if the subscription (still) exists
         taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(10),Duration.ofSeconds(30), () -> {
             try {
                 String callbackUrl = String.format("http://%s:%s%s%s", serviceUrl, servicePort, controllerPath, PATH_LISTEN_TO_PRODUCT_ORDER_CREATE_EVENT);
@@ -51,10 +53,10 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
 
                 EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
                         .callback(callbackUrl)
-                        .query("eventType=ProductOrderCreateEvent"); //TODO define query
+                        .query(QUERY_PRODUCT_ORDER_CREATED);
                 HttpResponse<EventSubscriptionVO> eventSubscriptionVOHttpResponse = eventsSubscriptionApi.registerListener(subscription);
                 log.info("Got reply {} and status {}", eventSubscriptionVOHttpResponse.body(), eventSubscriptionVOHttpResponse.getStatus());
-            } catch (Exception e) {
+            } catch (HttpClientException e) {
                 log.error("Could not create subscription in TM Forum API", e);
             }
         });

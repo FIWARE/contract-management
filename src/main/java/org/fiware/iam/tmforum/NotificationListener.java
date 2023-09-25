@@ -48,28 +48,22 @@ public class NotificationListener implements NotificationListenersClientSideApi 
 
     @Override
     public HttpResponse<EventSubscriptionVO> listenToProductOrderCreateEvent(ProductOrderCreateEventVO data) {
-        // validate notification type
         log.info("Received a ProductOrder Created Event: {}", data);
-        try {
-            String didOrderingOrganization = Stream
-                    .ofNullable(data)
-                    .map(ProductOrderCreateEventVO::getEvent)
-                    .map(ProductOrderCreateEventPayloadVO::getProductOrder)
-                    .map(ProductOrderVO::getRelatedParty)
-                    .flatMap(Collection::stream)
-                    .map(RelatedPartyVO::getId)
-                    .reduce((a, b) -> {
-                        throw new IllegalArgumentException("Expected exactly one ordering organization.");
-                    })
-                    .map(organizationResolver::getDID)
-                    .orElseThrow(() -> new IllegalArgumentException("Expected exactly one ordering organization, none found."));
+        String didOrderingOrganization = Stream
+                .ofNullable(data)
+                .map(ProductOrderCreateEventVO::getEvent)
+                .map(ProductOrderCreateEventPayloadVO::getProductOrder)
+                .map(ProductOrderVO::getRelatedParty)
+                .flatMap(Collection::stream)
+                .map(RelatedPartyVO::getId)
+                .reduce((a, b) -> {
+                    throw new IllegalArgumentException("Expected exactly one ordering organization.");
+                })
+                .map(organizationResolver::getDID)
+                .orElseThrow(() -> new IllegalArgumentException("Expected exactly one ordering organization, none found."));
 
-            // call
-            adapter.allowIssuer(didOrderingOrganization);
-        } catch (Exception e) {
-            log.error("Could not set up trusted issuer based on the event: {}", data, e);
-        }
-        // Notification sender does not care about the listeners issues
+        adapter.allowIssuer(didOrderingOrganization);
+        log.info("Successfully added {}", didOrderingOrganization);
         return HttpResponse.noContent();
     }
 

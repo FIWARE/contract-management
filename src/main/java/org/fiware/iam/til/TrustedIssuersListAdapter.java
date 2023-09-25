@@ -5,6 +5,7 @@ import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
@@ -35,7 +36,7 @@ public class TrustedIssuersListAdapter {
                 apiClient.createTrustedIssuer(newIssuer);
             }
         } catch (Exception e) {
-            log.error("Could not write new issuer permission to Trusted Issuer List Service: {} {}", serviceDid, credentialToBeAdded, e);
+            throw new TMForumException("Could not write new issuer permission to Trusted Issuer List Service: %s %s".formatted(serviceDid, credentialToBeAdded), e);
         }
     }
 
