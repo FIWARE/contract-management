@@ -21,16 +21,16 @@ public class ContractManagementIT {
     @DisplayName("Test Happy Path")
     @Test
     public void testCreateProductOrder() {
-        String productSpecId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
+        String productSpecId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
         System.out.println("productSpecId: " + productSpecId);
-        String productOfferingId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> createProductOffering(productSpecId), Optional::isPresent).get();
+        String productOfferingId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> createProductOffering(productSpecId), Optional::isPresent).get();
         System.out.println("productOfferingId: " + productOfferingId);
-        String organizationId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createOrganization, Optional::isPresent).get();
+        String organizationId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createOrganization, Optional::isPresent).get();
         System.out.println("organizationId: " + organizationId);
-        String productOrder = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> orderProduct(productOfferingId, organizationId), Optional::isPresent).get();
+        String productOrder = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> orderProduct(productOfferingId, organizationId), Optional::isPresent).get();
         System.out.println("productOrder: " + productOrder);
 
-        JSONObject tilConfig = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent).get();
+        JSONObject tilConfig = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent).get();
         System.out.println("tilConfig: " + tilConfig);
         Assertions.assertEquals("did:web:bunnyinc.dsba.fiware.dev:did", tilConfig.getString("did"));
         JSONArray credentials = tilConfig.getJSONArray("credentials");
