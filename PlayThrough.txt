@@ -1,0 +1,77 @@
+kubectl port-forward -ndsba svc/pdc-proxy-tmforum-api 8087:8080
+kubectl port-forward -ndsba svc/pdc-til-service 8088:8080
+
+DID=did:web:bunnyinc3.dsba.fiware.dev:did
+
+ORGANIZATION_ID=`curl --location 'http://localhost:8087/tmf-api/party/v4/organization' \
+--header 'Content-Type: application/json' \
+--data '{
+"name": "BunnyInc",
+"tradingName": "BunnyInc",
+"partyCharacteristic": [
+{
+"name": "did",
+"valueType": "string",
+"value": "'${DID}'"
+}
+]
+}' | yq .id`
+echo Organisation: $ORGANIZATION_ID
+
+PRODUCT_SPEC=`curl --location 'http://localhost:8087/tmf-api/productCatalogManagement/v4/productSpecification' \
+--header 'Content-Type: application/json' \
+--data '{
+"name": "Packet Delivery Premium Service Spec",
+"productSpecCharacteristic": [
+{
+"name": "Service Endpoint",
+"valueType": "string",
+"productSpecCharacteristicValue": [
+{
+"valueType": "string",
+"value": "https://<provider_NGSI-LD_endpoint>"
+}
+]
+}
+]
+}' | yq .id`
+echo Product Spec: $PRODUCT_SPEC
+
+PRODUCT_OFFERING=`curl --location 'http://localhost:8087/tmf-api/productCatalogManagement/v4/productOffering' \
+--header 'Content-Type: application/json' \
+--data '{
+"description": "My Offering description",
+"isBundle": false,
+"isSellable": true,
+"lifecycleStatus": "Active",
+"name": "Packet Delivery Premium Service",
+"productSpecification": {
+"id": "'${PRODUCT_SPEC}'",
+"name": "Packet Delivery Premium Service Spec"
+}
+}' | yq .id`
+echo Product Offering: $PRODUCT_OFFERING
+
+
+PRODUCT_ORDER=`curl --location 'http://localhost:8087/tmf-api/productOrderingManagement/v4/productOrder' \
+--header 'Content-Type: application/json' \
+--data '{
+"productOrderItem": [
+{
+"productOffering": {
+"id": "'${PRODUCT_OFFERING}'",
+"name": "Packet Delivery Premium Service"
+}
+}
+],
+"relatedParty": [
+{
+"id": "'${ORGANIZATION_ID}'",
+"name": "BunnyInc"
+}
+]
+}' | yq .id`
+echo Product Order: $PRODUCT_ORDER
+
+
+curl http://localhost:8088/v4/issuers/$DID
