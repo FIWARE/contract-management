@@ -31,7 +31,7 @@ public class NotificationSubscriber implements ApplicationEventListener<ServerSt
     @Value("${general.basepath:}")
     private String controllerPath;
 
-    @Value("${general.port:8080}")
+    @Value("${micronaut.server.port:8080}")
     private String servicePort;
 
     @Value("${general.name:contract-management}")

@@ -2,6 +2,7 @@ package org.fiware.iam.til;
 
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
+import io.micronaut.http.exceptions.HttpException;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +36,7 @@ public class TrustedIssuersListAdapter {
                 log.debug("Adding new issuer with {}", newIssuer);
                 apiClient.createTrustedIssuer(newIssuer);
             }
-        } catch (Exception e) {
+        } catch (HttpException e) {
             throw new TMForumException("Could not write new issuer permission to Trusted Issuer List Service: %s %s".formatted(serviceDid, credentialToBeAdded), e);
         }
     }
@@ -48,7 +49,7 @@ public class TrustedIssuersListAdapter {
                 return Optional.empty();
             }
             return Optional.ofNullable(response.body());
-        } catch (Exception e) {
+        } catch (HttpException e) {
             log.error("Error while retrieving Issuer {}", serviceDID, e);
             return Optional.empty();
         }

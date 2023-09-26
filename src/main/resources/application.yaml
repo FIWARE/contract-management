@@ -31,7 +31,6 @@ micronaut:
 general:
   name: contract-management
   #basepath: "callback"
-  port: 8080
   til:
     credentialType: MyCredential
     claims:
