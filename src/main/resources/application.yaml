@@ -11,22 +11,29 @@ micronaut:
       prometheus:
         step: PT2s
         descriptions: false
+
   http:
     services:
-      read-timeout: 30s
-      til:
-        path: ""
-        url: http://trusted-issuers-list:8080
-        read-timeout: 30
-      product:
-        path: "productordering"
-        url: http://tmforum:8080
+      rainbow:
+        path: "/"
+        url:  http://localhost:1234
         read-timeout: 30
       party:
-        path: "party"
-        url: http://tmforum:8080
+        path: "/tmf-api/party/v4"
+        url: http://localhost:8083
         read-timeout: 30
-
+      product-catalog:
+        path: "/tmf-api/productCatalogManagement/v4"
+        url: http://localhost:8082
+        read-timeout: 30
+      service-catalog:
+        path: "/tmf-api/serviceCatalogManagement/v4"
+        url: http://localhost:8084
+        read-timeout: 30
+      trusted-issuers-list:
+        path: "/"
+        url: http://localhost:8085
+        read-timeout: 30
 
 general:
   name: contract-management
@@ -38,3 +45,14 @@ general:
         roles:
           - Consumer
           - Admin
+
+notification:
+  entities:
+    - entityType: "ProductOrder"
+      eventTypes: ["CREATE", "UPDATE", "DELETE"]
+      apiAddress: "http://localhost:8081/tmf-api/productOrderingManagement/v4"
+    - entityType: "Catalog"
+      eventTypes: ["CREATE", "UPDATE", "DELETE", "STATE_CHANGE"]
+      apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"
+    - entityType: "ProductSpecification"
+      apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"

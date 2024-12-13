@@ -2,6 +2,7 @@ package org.fiware.iam.til;
 
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.http.exceptions.HttpException;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,7 @@ import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.til.model.TrustedIssuerVO;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Optional;
@@ -20,38 +22,67 @@ import java.util.Optional;
 @Slf4j
 public class TrustedIssuersListAdapter {
 
-    private final IssuerApiClient apiClient;
-    private final TrustedIssuerConfigProvider trustedIssuerConfigProvider;
+	private final IssuerApiClient apiClient;
+	private final TrustedIssuerConfigProvider trustedIssuerConfigProvider;
 
-    public void allowIssuer(String serviceDid) {
-        CredentialsVO credentialToBeAdded = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
-        try {
-            Optional<TrustedIssuerVO> issuer = getIssuer(serviceDid);
-            if (issuer.isPresent()) {
-                TrustedIssuerVO updatedIssuer = issuer.get().addCredentialsItem(credentialToBeAdded);
-                log.debug("Updating existing issuer with {}", updatedIssuer);
-                apiClient.updateIssuer(serviceDid, updatedIssuer);
-            } else {
-                TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(serviceDid).addCredentialsItem(credentialToBeAdded);
-                log.debug("Adding new issuer with {}", newIssuer);
-                apiClient.createTrustedIssuer(newIssuer);
-            }
-        } catch (HttpException e) {
-            throw new TMForumException("Could not write new issuer permission to Trusted Issuer List Service: %s %s".formatted(serviceDid, credentialToBeAdded), e);
-        }
-    }
+	public Mono<?> allowIssuer(String issuerDid) {
+		CredentialsVO credentialToBeAdded = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
 
-    private Optional<TrustedIssuerVO> getIssuer(String serviceDID) {
-        try {
-            HttpResponse<TrustedIssuerVO> response = apiClient.getIssuer(serviceDID);
-            if (response.code() != HttpStatus.OK.getCode()) {
-                log.debug("Could not find issuer {} in Trusted Issuers List. Status {}", serviceDID, response.code());
-                return Optional.empty();
-            }
-            return Optional.ofNullable(response.body());
-        } catch (HttpException e) {
-            log.error("Error while retrieving Issuer {}", serviceDID, e);
-            return Optional.empty();
-        }
-    }
+		return getIssuer(issuerDid)
+				.flatMap(optionalIssuer -> {
+					if (optionalIssuer.isPresent()) {
+						TrustedIssuerVO updatedIssuer = optionalIssuer.get().addCredentialsItem(credentialToBeAdded);
+						log.debug("Updating existing issuer with {}", updatedIssuer);
+						return apiClient.updateIssuer(issuerDid, updatedIssuer);
+					} else {
+						TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(issuerDid).addCredentialsItem(credentialToBeAdded);
+						log.debug("Adding new issuer with {}", newIssuer);
+						return apiClient.createTrustedIssuer(newIssuer);
+					}
+				})
+				.onErrorMap(e -> {
+					throw new TMForumException("Was not able to allow the issuer.", e);
+				});
+
+	}
+
+	public Mono<?> denyIssuer(String issuerDid) {
+		CredentialsVO credentialToBeAdded = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
+
+		return getIssuer(issuerDid)
+				.onErrorResume(e -> {
+					log.info("Was not able to get the issuer.", e);
+					return Mono.just(Optional.empty());
+				})
+				.flatMap(optionalIssuer -> {
+					if (optionalIssuer.isPresent()) {
+						TrustedIssuerVO updatedIssuer = optionalIssuer.get().removeCredentialsItem(credentialToBeAdded);
+						log.debug("Updating existing issuer with {}", updatedIssuer);
+						return apiClient.updateIssuer(issuerDid, updatedIssuer);
+					}
+					return Mono.just(HttpResponse.noContent());
+				})
+				.onErrorMap(e -> {
+					throw new TMForumException("Was not able to allow the issuer.", e);
+				});
+
+	}
+
+	private Mono<Optional<TrustedIssuerVO>> getIssuer(String issuerDid) {
+		return apiClient.getIssuer(issuerDid)
+				.onErrorResume(e -> {
+					if (e instanceof HttpClientResponseException hcr && hcr.getStatus() == HttpStatus.NOT_FOUND) {
+						throw new IllegalArgumentException("Requested issuer does not exist.");
+					}
+					throw new TMForumException("Client error on issuer retrieval.", e);
+				})
+				.map(trustedIssuerVOHttpResponse -> {
+					if (trustedIssuerVOHttpResponse.code() != HttpStatus.OK.getCode()) {
+						log.debug("Could not find issuer {} in Trusted Issuers List. Status {}", issuerDid, trustedIssuerVOHttpResponse.code());
+						return Optional.empty();
+					}
+					return Optional.ofNullable(trustedIssuerVOHttpResponse.body());
+				});
+
+	}
 }

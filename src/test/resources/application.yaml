@@ -1,12 +1,35 @@
 micronaut:
   server:
-    port: 8081
+    port: 8080
   metrics:
     enabled: false
     export:
       prometheus:
         step: PT2s
         descriptions: false
+
+  http:
+    services:
+      rainbow:
+        path: "/"
+        url:  http://localhost:1234
+        read-timeout: 30
+      party:
+        path: "/tmf-api/party/v4"
+        url: http://localhost:8083
+        read-timeout: 30
+      product-catalog:
+        path: "/tmf-api/productCatalogManagement/v4"
+        url: http://localhost:8082
+        read-timeout: 30
+      service-catalog:
+        path: "/tmf-api/serviceCatalogManagement/v4"
+        url: http://localhost:8084
+        read-timeout: 30
+      trusted-issuers-list:
+        path: "/"
+        url: http://localhost:8085
+        read-timeout: 30
 endpoints:
   metrics:
     enabled: false
@@ -18,7 +41,7 @@ loggers:
   levels:
     ROOT: TRACE
 general:
-  name: contract-management
+  name: local-host
   #basepath: "callback"
   til:
     credentialType: MyCredential
@@ -27,3 +50,14 @@ general:
         roles:
           - Consumer
           - Admin
+
+notification:
+  entities:
+    - entityType: "ProductOrder"
+      eventTypes: ["CREATE", "UPDATE", "DELETE", "STATE_CHANGE"]
+      apiAddress: "http://localhost:8081/tmf-api/productOrderingManagement/v4"
+    - entityType: "Catalog"
+      eventTypes: ["CREATE", "UPDATE", "DELETE", "STATE_CHANGE"]
+      apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"
+    - entityType: "ProductSpecification"
+      apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"
