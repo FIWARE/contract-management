@@ -379,6 +379,8 @@ components:
     NewCatalog:
       type: object
       properties:
+        '@id':
+          type: string
         'foaf:homepage':
           type: string
         'dct:conformsTo':
@@ -390,6 +392,8 @@ components:
     NewDataset:
       type: object
       properties:
+        '@id':
+          type: string
         'dct:conformsTo':
           type: string
         'dct:creator':
@@ -399,6 +403,8 @@ components:
     NewDistribution:
       type: object
       properties:
+        '@id':
+          type: string
         'dct:title':
           type: string
         'dcat:accessService':
@@ -406,6 +412,8 @@ components:
     NewDataservice:
       type: object
       properties:
+        '@id':
+          type: string
         'dct:conformsTo':
           type: string
         'dct:creator':
@@ -428,9 +436,13 @@ components:
         'dspace:extraFields':
           type: object
         'dcat:dataset':
-          $ref: '#/components/schemas/DataSet'
+          type: array
+          items:
+            $ref: '#/components/schemas/DataSet'
         'dcat:service':
-          $ref: '#/components/schemas/DataService'
+          type: array
+          items:
+            $ref: '#/components/schemas/DataService'
       allOf:
         - $ref: '#/components/schemas/ObjectHeaders'
         - $ref: '#/components/schemas/CatalogFoaf'
@@ -486,14 +498,14 @@ components:
           type: string
         'dct:issued':
           type: string
-          format: date-time
         'dct:modified':
           type: string
-          format: date-time
         'dct:title':
           type: string
         'dct:description':
-          type: string
+          type: array
+          items:
+            type: string
 
     DataSetDcat:
       type: object
@@ -514,14 +526,14 @@ components:
           type: string
         'dct:issued':
           type: string
-          format: date-time
         'dct:modified':
           type: string
-          format: date-time
         'dct:title':
           type: string
         'dct:description':
-          type: string
+          type: array
+          items:
+            type: string
 
     DataService:
       type: object
@@ -558,14 +570,14 @@ components:
           type: string
         'dct:issued':
           type: string
-          format: date-time
         'dct:modified':
           type: string
-          format: date-time
         'dct:title':
           type: string
         'dct:description':
-          type: string
+          type: array
+          items:
+            type: string
     CatalogFoaf:
       type: object
       properties:
@@ -589,14 +601,14 @@ components:
           type: string
         'dct:issued':
           type: string
-          format: date-time
         'dct:modified':
           type: string
-          format: date-time
         'dct:title':
           type: string
         'dct:description':
-          type: string
+          type: array
+          items:
+            type: string
     CatalogDspace:
       type: object
       properties:

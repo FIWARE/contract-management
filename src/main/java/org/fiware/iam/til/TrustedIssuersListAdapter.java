@@ -29,6 +29,13 @@ public class TrustedIssuersListAdapter {
 		CredentialsVO credentialToBeAdded = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
 
 		return getIssuer(issuerDid)
+				.onErrorResume(e -> {
+					if (e instanceof HttpClientResponseException hcr && hcr.getStatus() == HttpStatus.NOT_FOUND) {
+						log.debug("Requested issuer {} does not exist.", issuerDid);
+						return Mono.just(Optional.empty());
+					}
+					throw new TMForumException("Client error on issuer retrieval.", e);
+				})
 				.flatMap(optionalIssuer -> {
 					if (optionalIssuer.isPresent()) {
 						TrustedIssuerVO updatedIssuer = optionalIssuer.get().addCredentialsItem(credentialToBeAdded);
@@ -70,12 +77,6 @@ public class TrustedIssuersListAdapter {
 
 	private Mono<Optional<TrustedIssuerVO>> getIssuer(String issuerDid) {
 		return apiClient.getIssuer(issuerDid)
-				.onErrorResume(e -> {
-					if (e instanceof HttpClientResponseException hcr && hcr.getStatus() == HttpStatus.NOT_FOUND) {
-						throw new IllegalArgumentException("Requested issuer does not exist.");
-					}
-					throw new TMForumException("Client error on issuer retrieval.", e);
-				})
 				.map(trustedIssuerVOHttpResponse -> {
 					if (trustedIssuerVOHttpResponse.code() != HttpStatus.OK.getCode()) {
 						log.debug("Could not find issuer {} in Trusted Issuers List. Status {}", issuerDid, trustedIssuerVOHttpResponse.code());

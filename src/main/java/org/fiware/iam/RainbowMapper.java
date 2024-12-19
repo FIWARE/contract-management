@@ -15,6 +15,7 @@ import java.util.Optional;
 public interface RainbowMapper {
 
 	@Mapping(target = "dctColonTitle", source = "name")
+	@Mapping(target = "atId", source = "id")
 	NewCatalogVO map(CatalogVO catalogVO);
 
 }

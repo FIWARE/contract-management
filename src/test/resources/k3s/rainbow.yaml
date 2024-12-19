@@ -68,6 +68,7 @@ spec:
     spec:
       initContainers:
         - image: quay.io/wi_stefan/rainbow:latest
+          imagePullPolicy: Always
           name: rainbow-init
           args: [ "provider", "setup" ]
           env:
@@ -86,6 +87,7 @@ spec:
               value: "5432"
       containers:
         - image: quay.io/wi_stefan/rainbow:latest
+          imagePullPolicy: Always
           name: rainbow
           args: [ "provider", "start" ]
           env:

@@ -23,7 +23,7 @@ public class CatchAllExceptionHandler implements ExceptionHandler<Exception, Htt
 
     @Override
     public HttpResponse<ErrorVO> handle(HttpRequest request, Exception exception) {
-        log.warn("Received unexpected exception {} for request {}.", exception.getMessage(), request, exception);
+        log.warn("Received unexpected exception {} for request {}.", exception.getMessage(), request.getUri(), exception);
         if (exception instanceof DateTimeParseException dateTimeParseException) {
             return HttpResponse.status(HttpStatus.BAD_REQUEST)
                     .body(

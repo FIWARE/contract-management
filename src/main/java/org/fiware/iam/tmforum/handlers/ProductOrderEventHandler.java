@@ -102,9 +102,7 @@ public class ProductOrderEventHandler implements EventHandler {
 
 	private Mono<HttpResponse<?>> handelUpdateEvent(String organizationId, Map<String, Object> event) {
 		ProductOrderUpdateVO productOrderUpdateVO = objectMapper.convertValue(event, ProductOrderUpdateVO.class);
-
-//		if(event.containsKey("state"))
-
+		// TODO
 		return allowIssuer(organizationId);
 	}
 

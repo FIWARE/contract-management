@@ -12,7 +12,7 @@ micronaut:
     services:
       rainbow:
         path: "/"
-        url:  http://localhost:1234
+        url: http://localhost:1234
         read-timeout: 30
       party:
         path: "/tmf-api/party/v4"
@@ -54,10 +54,11 @@ general:
 notification:
   entities:
     - entityType: "ProductOrder"
-      eventTypes: ["CREATE", "UPDATE", "DELETE", "STATE_CHANGE"]
+      eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
       apiAddress: "http://localhost:8081/tmf-api/productOrderingManagement/v4"
-    - entityType: "Catalog"
-      eventTypes: ["CREATE", "UPDATE", "DELETE", "STATE_CHANGE"]
+    - entityType: "ProductOffering"
+      eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
       apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"
-    - entityType: "ProductSpecification"
+    - entityType: "Catalog"
+      eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
       apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"

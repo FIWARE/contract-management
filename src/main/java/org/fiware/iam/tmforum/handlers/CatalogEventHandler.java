@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.RainbowMapper;
 import org.fiware.iam.tmforum.productcatalog.model.*;
 import org.fiware.rainbow.api.CatalogApiClient;
+import org.fiware.rainbow.model.NewCatalogVO;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -50,12 +51,10 @@ public class CatalogEventHandler implements EventHandler {
 		CatalogVO catalogVO = Optional.ofNullable(catalogCreateEventVO.getEvent())
 				.map(CatalogCreateEventPayloadVO::getCatalog)
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a catalog."));
-		return catalogApiClient.createCatalog(rainbowMapper.map(catalogVO)).map(res -> {
-			if (res.getStatus().getCode() >= 200 && res.getStatus().getCode() < 300) {
-				return HttpResponse.noContent();
-			}
-			return HttpResponse.status(HttpStatus.BAD_GATEWAY);
-		});
+		NewCatalogVO rainbowCatalog = rainbowMapper.map(catalogVO);
+		return catalogApiClient.createCatalog(rainbowCatalog)
+				.onErrorMap(t -> new IllegalArgumentException("Was not able create the catalog %s".formatted(rainbowCatalog), t))
+				.map(HttpResponse::ok);
 	}
 
 

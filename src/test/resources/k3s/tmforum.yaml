@@ -50,7 +50,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productOrderingManagement/v4
-          image: quay.io/fiware/tmforum-product-ordering-management:0.30.0
+          image: quay.io/fiware/tmforum-product-ordering-management:0.30.2
           imagePullPolicy: Always
           name: product-ordering-management
           ports:
@@ -131,7 +131,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productCatalogManagement/v4
-          image: quay.io/fiware/tmforum-product-catalog:0.30.0
+          image: quay.io/fiware/tmforum-product-catalog:0.30.2
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-product-catalog
           ports:
@@ -212,7 +212,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/party/v4
-          image: quay.io/fiware/tmforum-party-catalog:0.30.0
+          image: quay.io/fiware/tmforum-party-catalog:0.30.2
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-party-catalog
           ports:
@@ -293,7 +293,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/serviceCatalogManagement/v4
-          image: quay.io/fiware/tmforum-service-catalog:0.30.0
+          image: quay.io/fiware/tmforum-service-catalog:0.30.2
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-service-catalog
           ports:
