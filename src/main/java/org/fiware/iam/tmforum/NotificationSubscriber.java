@@ -71,10 +71,10 @@ public class NotificationSubscriber {
 		Mono.from(httpClient.exchange(request, EventSubscriptionVO.class))
 				.onErrorResume(t -> {
 					if (t instanceof HttpClientResponseException e) {
-						log.error("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
+						log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
 						return Mono.empty();
 					}
-					log.error("Could not create subscription for {} in TM Forum API", entityType, t);
+					log.info("Could not create subscription for {} in TM Forum API", entityType, t);
 					return Mono.empty();
 				}).subscribe();
 
