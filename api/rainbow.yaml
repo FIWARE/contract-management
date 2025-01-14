@@ -6,6 +6,7 @@ info:
 tags:
   - name: catalog
   - name: idsa
+  - name: agreement
 paths:
   /api/v1/catalogs:
     get:
@@ -335,6 +336,46 @@ paths:
                 $ref: '#/components/schemas/DataSet'
         '404':
           description: No such dataset exists
+  /agreements:
+    post:
+      tags:
+        - agreement
+      operationId: createAgreement
+      summary: Create an Agreement
+      description: Create an agreement for the given data set
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementCreate'
+      responses:
+        '201':
+          description: Successfully created the agreement.
+        '400':
+          description: Bad Request
+        '404':
+          description: Catalog not found
+  /agreements/{agreementId}:
+    get:
+      tags:
+        - agreement
+      parameters:
+        - $ref: '#/components/parameters/AgreementId'
+      operationId: getAgreementById
+      summary: Get agreement by id
+      description: Get the agreement with the given id
+      responses:
+        '200':
+          description: Successfully retrieve the agreement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agreement'
+        '400':
+          description: Bad Request
+        '404':
+          description: Not found
 
 components:
   parameters:
@@ -366,7 +407,30 @@ components:
       schema:
         type: string
         example: urn:uuid:some-uuid
+    AgreementId:
+      name: agreementId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
   schemas:
+    Agreement:
+      type: object
+      properties:
+        agreement_id:
+          type: string
+        data_service_id:
+          type: string
+        identity:
+          type: string
+        identity_token:
+          type: string
+    AgreementCreate:
+      type: object
+      properties:
+        dataset:
+          type: string
     CatalogRequest:
       type: object
       properties:

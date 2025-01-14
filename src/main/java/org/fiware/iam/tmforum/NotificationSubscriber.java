@@ -16,6 +16,7 @@ import org.fiware.iam.tmforum.party.model.EventSubscriptionInputVO;
 import org.fiware.iam.tmforum.party.model.EventSubscriptionVO;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
@@ -52,8 +53,7 @@ public class NotificationSubscriber {
 						Optional.ofNullable(tmForumEntity.getEventTypes())
 								.orElse(List.of())
 								.forEach(eventType ->
-										createSubscription(tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress())
-								)
+										taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(5), Duration.ofSeconds(10), () -> createSubscription(tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress())))
 				);
 
 	}
