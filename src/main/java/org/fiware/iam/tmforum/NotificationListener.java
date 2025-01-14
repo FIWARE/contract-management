@@ -24,7 +24,7 @@ public class NotificationListener {
 
 	@Post("/listener/event")
 	public Mono<HttpResponse<?>> listenToEvent(@Body Map<String, Object> event) {
-		log.warn("Received an Event: {}", event);
+		log.info("Received an Event: {}", event);
 		if (!event.containsKey(EVENT_TYPE_KEY)) {
 			throw new IllegalArgumentException("Data did not contain the eventType.");
 		}
