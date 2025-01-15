@@ -42,7 +42,7 @@ public class NotificationSubscriber {
 	@Value("${micronaut.server.port:8080}")
 	private String servicePort;
 
-	@Value("${general.name:contract-management}")
+	@Value("${general.host:contract-management}")
 	private String serviceUrl;
 
 	@EventListener

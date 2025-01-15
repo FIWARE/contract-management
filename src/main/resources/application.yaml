@@ -36,8 +36,7 @@ micronaut:
         read-timeout: 30
 
 general:
-  name: contract-management
-  #basepath: "callback"
+  host: contract-management
   til:
     credentialType: MyCredential
     claims:

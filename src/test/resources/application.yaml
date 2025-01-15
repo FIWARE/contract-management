@@ -42,7 +42,6 @@ loggers:
     ROOT: TRACE
 general:
   name: local-host
-  #basepath: "callback"
   til:
     credentialType: MyCredential
     claims:

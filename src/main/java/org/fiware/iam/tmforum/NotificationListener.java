@@ -22,7 +22,7 @@ public class NotificationListener {
 	private final List<EventHandler> eventHandlers;
 
 
-	@Post("/listener/event")
+	@Post("listener/event")
 	public Mono<HttpResponse<?>> listenToEvent(@Body Map<String, Object> event) {
 		log.info("Received an Event: {}", event);
 		if (!event.containsKey(EVENT_TYPE_KEY)) {
