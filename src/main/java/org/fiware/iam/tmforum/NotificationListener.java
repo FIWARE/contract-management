@@ -3,6 +3,7 @@ package org.fiware.iam.tmforum;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.annotation.Body;
 import io.micronaut.http.annotation.Controller;
+import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Post;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,11 @@ public class NotificationListener {
 
 	private final List<EventHandler> eventHandlers;
 
+	@Get("test")
+	public Mono<HttpResponse<?>> get() {
+		log.warn("GET");
+		throw new IllegalArgumentException("Event type is invalid.");
+	}
 
 	@Post("listener/event")
 	public Mono<HttpResponse<?>> listenToEvent(@Body Map<String, Object> event) {
