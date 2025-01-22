@@ -336,7 +336,7 @@ paths:
                 $ref: '#/components/schemas/DataSet'
         '404':
           description: No such dataset exists
-  /agreements:
+  /api/v1/agreements:
     post:
       tags:
         - agreement
@@ -356,7 +356,7 @@ paths:
           description: Bad Request
         '404':
           description: Catalog not found
-  /agreements/{agreementId}:
+  /api/v1/agreements/{agreementId}:
     get:
       tags:
         - agreement
@@ -429,7 +429,9 @@ components:
     AgreementCreate:
       type: object
       properties:
-        dataset:
+        dataServiceId:
+          type: string
+        identity:
           type: string
     CatalogRequest:
       type: object

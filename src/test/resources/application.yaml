@@ -41,7 +41,7 @@ loggers:
   levels:
     ROOT: TRACE
 general:
-  name: local-host
+  host: local-host
   til:
     credentialType: MyCredential
     claims:

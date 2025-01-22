@@ -81,7 +81,7 @@ public class ProductOrderEventHandler implements EventHandler {
 			return Mono.just(HttpResponse.noContent());
 		}
 
-		return Mono.zipDelayError(createAgreement(productOrderVO), allowIssuer(organizationId))
+		return Mono.zipDelayError(createAgreement(productOrderVO, organizationId), allowIssuer(organizationId))
 				.map(tuple -> HttpResponse.noContent());
 	}
 
@@ -98,7 +98,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		if (isCompleted(productOrderVO)) {
-			return Mono.zipDelayError(createAgreement(productOrderVO), allowIssuer(organizationId))
+			return Mono.zipDelayError(createAgreement(productOrderVO, organizationId), allowIssuer(organizationId))
 					.map(tuple -> HttpResponse.noContent());
 		} else {
 			// TODO: add delete agreement once its supported by rainbow
@@ -110,13 +110,13 @@ public class ProductOrderEventHandler implements EventHandler {
 		throw new UnsupportedOperationException();
 	}
 
-	private Mono<HttpResponse<?>> createAgreement(ProductOrderVO productOrderVO) {
+	private Mono<HttpResponse<?>> createAgreement(ProductOrderVO productOrderVO, String organizationId) {
 
 		return Mono.zipDelayError(productOrderVO
 				.getProductOrderItem()
 				.stream()
 				.map(ProductOrderItemVO::getProductOffering)
-				.map(offering -> new AgreementCreateVO().dataset(offering.getId()))
+				.map(offering -> new AgreementCreateVO().identity(organizationId).dataServiceId(offering.getId()))
 				.map(agreementApiClient::createAgreement)
 				.toList(), res -> HttpResponse.noContent());
 	}

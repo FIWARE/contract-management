@@ -30,8 +30,8 @@
     </developers>
 
     <properties>
-        <jdk.version>17</jdk.version>
-        <release.version>17</release.version>
+        <jdk.version>21</jdk.version>
+        <release.version>21</release.version>
         <micronaut.version>4.7.1</micronaut.version>
 
         <!-- project info -->
@@ -97,7 +97,7 @@
 
         <!-- build -->
         <version.org.codehaus.mojo.build-helper-maven-plugin>3.4.0</version.org.codehaus.mojo.build-helper-maven-plugin>
-        <version.org.jacoco.maven-plugin>0.8.8</version.org.jacoco.maven-plugin>
+        <version.org.jacoco.maven-plugin>0.8.12</version.org.jacoco.maven-plugin>
         <version.org.eluder.coveralls.maven-plugin>4.3.0</version.org.eluder.coveralls.maven-plugin>
         <coveralls.token>myToken</coveralls.token>
         <jacoco.reportFolder>${project.build.directory}/jacoco/${artifactId}</jacoco.reportFolder>
@@ -857,6 +857,7 @@
                                         <portBinding>1026:1026</portBinding>
                                         <!-- rainbow -->
                                         <portBinding>1234:1234</portBinding>
+                                        <portBinding>1235:1235</portBinding>
                                     </portBindings>
                                 </configuration>
                             </execution>

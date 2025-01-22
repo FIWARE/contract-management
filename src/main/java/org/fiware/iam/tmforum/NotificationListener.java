@@ -22,12 +22,6 @@ public class NotificationListener {
 
 	private final List<EventHandler> eventHandlers;
 
-	@Get("test")
-	public Mono<HttpResponse<?>> get() {
-		log.warn("GET");
-		throw new IllegalArgumentException("Event type is invalid.");
-	}
-
 	@Post("listener/event")
 	public Mono<HttpResponse<?>> listenToEvent(@Body Map<String, Object> event) {
 		log.info("Received an Event: {}", event);

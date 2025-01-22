@@ -6,6 +6,7 @@ import kong.unirest.json.JSONArray;
 import kong.unirest.json.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.awaitility.Awaitility;
+import org.fiware.rainbow.model.AgreementVO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 public class ContractManagementIT {
 
 	private static final String TEST_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
+	private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 
 	@DisplayName("Test Happy Path")
 	@Test
@@ -30,14 +32,18 @@ public class ContractManagementIT {
 
 		String productSpecId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
 		System.out.println("productSpecId: " + productSpecId);
-		String productOfferingId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> createProductOffering(productSpecId, categoryId), Optional::isPresent).get();
+		String productOfferingId = createProductOffering(productSpecId, categoryId).get();
 		System.out.println("productOfferingId: " + productOfferingId);
 		String organizationId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createOrganization, Optional::isPresent).get();
 		System.out.println("organizationId: " + organizationId);
-		String productOrder = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> orderProduct(productOfferingId, organizationId), Optional::isPresent).get();
+		String productOrder = orderProduct(productOfferingId, organizationId).get();
 		System.out.println("productOrder: " + productOrder);
-		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> completeProductOrder(productOrder), Optional::isPresent).get();
+		completeProductOrder(productOrder).get();
 
+		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() ->
+				getAgreements().stream()
+						.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(productOfferingId))
+		);
 		JSONObject tilConfig = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent).get();
 		System.out.println("tilConfig: " + tilConfig);
 		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> changeStateProductOrder(productOrder), Optional::isPresent).get();
@@ -211,6 +217,16 @@ public class ContractManagementIT {
 		return Unirest.delete("http://localhost:8082/tmf-api/productCatalogManagement/v4/productOffering/%s".formatted(offeringId))
 				.asJson()
 				.isSuccess();
+	}
+
+	private List<AgreementVO> getAgreements() {
+		HttpResponse<List> response = Unirest.get("http://localhost:1234/api/v1/agreements").asObject(List.class);
+		if (response.isSuccess()) {
+			return response.getBody()
+					.stream()
+					.map(a -> OBJECT_MAPPER.convertValue(a, AgreementVO.class)).toList();
+		}
+		return List.of();
 	}
 
 	private Optional<String> createProductSpec() {

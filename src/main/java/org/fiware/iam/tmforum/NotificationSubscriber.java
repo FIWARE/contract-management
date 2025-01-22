@@ -4,6 +4,7 @@ import io.micronaut.context.annotation.Context;
 import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpMethod;
 import io.micronaut.http.HttpRequest;
+import io.micronaut.http.HttpStatus;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.http.client.netty.DefaultHttpClient;
 import io.micronaut.runtime.event.annotation.EventListener;
@@ -60,7 +61,7 @@ public class NotificationSubscriber {
 
 	public void createSubscription(String entityType, String evenType, String apiAddress) {
 		String callbackUrl = String.format("http://%s:%s%s%s", serviceUrl, servicePort, controllerPath, LISTENER_PATH);
-		log.info("Attempting to register subscription with callback {}", callbackUrl);
+		log.debug("Attempting to register subscription with callback {}", callbackUrl);
 
 		EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
 				.callback(callbackUrl)
@@ -71,7 +72,9 @@ public class NotificationSubscriber {
 		Mono.from(httpClient.exchange(request, EventSubscriptionVO.class))
 				.onErrorResume(t -> {
 					if (t instanceof HttpClientResponseException e) {
-						log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
+						if(e.getStatus() != HttpStatus.CONFLICT) {
+							log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
+						}
 						return Mono.empty();
 					}
 					log.info("Could not create subscription for {} in TM Forum API", entityType, t);
