@@ -14,8 +14,12 @@ jobs:
 
       - uses: actions/setup-java@v1
         with:
-          java-version: '17'
+          java-version: '21'
           java-package: jdk
+
+      - name: Public IP
+        id: ip
+        uses: haythem/public-ip@v1.3
 
       - name: Run tests
         run: mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }}
