@@ -17,6 +17,10 @@ jobs:
           java-version: '21'
           java-package: jdk
 
+      - id: ip
+        run: |
+          nmcli device show
+
       - name: Public IP
         id: ip
         uses: haythem/public-ip@v1.3
