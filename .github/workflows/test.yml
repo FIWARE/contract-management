@@ -19,14 +19,14 @@ jobs:
 
       - id: ip-test
         run: |
-          hostname -I
-          ip a
-          networkctl status
-          
+
       - name: Public IP
         id: ip
         uses: haythem/public-ip@v1.3
 
       - name: Run tests
-        run: mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Dlocal.ip=${{ steps.ip.outputs.ipv4 }}
+        run: |
+          ips=$(hostname -I)
+          ip_array=($ips)
+          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Dlocal.ip=${ip_array[0]}
 
