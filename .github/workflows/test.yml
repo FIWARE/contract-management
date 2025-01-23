@@ -28,7 +28,7 @@ jobs:
         run: |
           ips=$(hostname -I)
           i_a=($ips)
-          ip=${i_a[0]}
+          ip=${i_a[1]}
           echo $ip
           mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Dlocal.ip=$ip
 
