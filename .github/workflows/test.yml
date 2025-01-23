@@ -19,6 +19,8 @@ jobs:
 
       - id: ip-test
         run: |
+          ips=$(hostname -I)
+          echo($ips)
 
       - name: Public IP
         id: ip
@@ -26,7 +28,5 @@ jobs:
 
       - name: Run tests
         run: |
-          ips=$(hostname -I)
-          ip_array=($ips)
-          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Dlocal.ip=${ip_array[0]}
+          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }}
 

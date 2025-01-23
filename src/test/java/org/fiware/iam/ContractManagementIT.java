@@ -46,28 +46,31 @@ public class ContractManagementIT {
 					assertEquals(HealthStatus.UP, Mono.from(subscriptionHealthIndicator.getResult()).block().getStatus(), "The contract management should be up.");
 				});
 
-		String categoryId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createCategory, Optional::isPresent).get();
-		String catalogId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> createProductCatalog(categoryId), Optional::isPresent).get();
+		String categoryId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createCategory, Optional::isPresent).get();
+		String catalogId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> createProductCatalog(categoryId), Optional::isPresent).get();
 
-		String productSpecId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
+		String productSpecId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
 		System.out.println("productSpecId: " + productSpecId);
 		String productOfferingId = createProductOffering(productSpecId, categoryId).get();
 		System.out.println("productOfferingId: " + productOfferingId);
-		String organizationId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createOrganization, Optional::isPresent).get();
+		String organizationId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createOrganization, Optional::isPresent).get();
 		System.out.println("organizationId: " + organizationId);
 		String productOrder = orderProduct(productOfferingId, organizationId).get();
 		System.out.println("productOrder: " + productOrder);
 		completeProductOrder(productOrder).get();
 
-		Awaitility.await().atMost(2, TimeUnit.MINUTES).untilAsserted(() -> {
+		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
 					boolean match = getAgreements().stream()
 							.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(productOfferingId));
 					assertTrue(match, String.format("No agreement for %s", productOfferingId));
 				}
 		);
-		JSONObject tilConfig = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent).get();
+		JSONObject tilConfig = Awaitility.await()
+				.atMost(1, TimeUnit.MINUTES)
+				.until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent)
+				.get();
 		System.out.println("tilConfig: " + tilConfig);
-		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> changeStateProductOrder(productOrder), Optional::isPresent).get();
+		Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> changeStateProductOrder(productOrder), Optional::isPresent).get();
 		assertEquals("did:web:bunnyinc.dsba.fiware.dev:did", tilConfig.getString("did"));
 		JSONArray credentials = tilConfig.getJSONArray("credentials");
 		Assertions.assertNotNull(credentials);
