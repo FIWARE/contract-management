@@ -14,9 +14,8 @@ jobs:
 
       - id: ip-test
         run: |
-          ips=$(hostname -I)
-          i_a=($ips)
-          echo The ip ${i_a[0]}
+          
+          echo The ip 
 
       - uses: actions/setup-java@v1
         with:
@@ -29,5 +28,8 @@ jobs:
 
       - name: Run tests
         run: |
-          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }}
+          ips=$(hostname -I)
+          i_a=($ips)
+          ip=${i_a[0]}
+          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Dlocal.ip=$ip
 
