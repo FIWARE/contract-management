@@ -17,7 +17,7 @@ jobs:
           java-version: '21'
           java-package: jdk
 
-      - id: ip
+      - id: ip-test
         run: |
           nmcli device show
 
