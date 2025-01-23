@@ -53,7 +53,7 @@ general:
 notification:
   entities:
     - entityType: "ProductOrder"
-      eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
+      eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
       apiAddress: "http://localhost:8081/tmf-api/productOrderingManagement/v4"
     - entityType: "ProductOffering"
       eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]

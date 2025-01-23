@@ -1,32 +1,51 @@
 package org.fiware.iam;
 
+import io.micronaut.context.annotation.Value;
+import io.micronaut.health.HealthStatus;
+import io.micronaut.management.health.indicator.HealthResult;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import kong.unirest.*;
 import kong.unirest.json.JSONArray;
 import kong.unirest.json.JSONObject;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.awaitility.Awaitility;
+import org.fiware.iam.tmforum.SubscriptionHealthIndicator;
 import org.fiware.rainbow.model.AgreementVO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Slf4j
 @MicronautTest
+@RequiredArgsConstructor
 public class ContractManagementIT {
 
 	private static final String TEST_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
 	private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 
+	private final SubscriptionHealthIndicator subscriptionHealthIndicator;
+
 	@DisplayName("Test Happy Path")
 	@Test
 	public void testCreateProductOrder() {
+		Awaitility.await()
+				.atMost(1, TimeUnit.MINUTES)
+				.untilAsserted(() -> {
+					assertEquals(HealthStatus.UP, Mono.from(subscriptionHealthIndicator.getResult()).block().getStatus(), "The contract management should be up.");
+				});
+
 		String categoryId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(this::createCategory, Optional::isPresent).get();
 		String catalogId = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> createProductCatalog(categoryId), Optional::isPresent).get();
 
@@ -40,25 +59,27 @@ public class ContractManagementIT {
 		System.out.println("productOrder: " + productOrder);
 		completeProductOrder(productOrder).get();
 
-		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() ->
-				getAgreements().stream()
-						.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(productOfferingId))
+		Awaitility.await().atMost(2, TimeUnit.MINUTES).untilAsserted(() -> {
+					boolean match = getAgreements().stream()
+							.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(productOfferingId));
+					assertTrue(match, String.format("No agreement for %s", productOfferingId));
+				}
 		);
 		JSONObject tilConfig = Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent).get();
 		System.out.println("tilConfig: " + tilConfig);
 		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> changeStateProductOrder(productOrder), Optional::isPresent).get();
-		Assertions.assertEquals("did:web:bunnyinc.dsba.fiware.dev:did", tilConfig.getString("did"));
+		assertEquals("did:web:bunnyinc.dsba.fiware.dev:did", tilConfig.getString("did"));
 		JSONArray credentials = tilConfig.getJSONArray("credentials");
 		Assertions.assertNotNull(credentials);
-		Assertions.assertEquals(1, credentials.length());
+		assertEquals(1, credentials.length());
 		JSONObject credential = credentials.getJSONObject(0);
 
-		Assertions.assertEquals("MyCredential", credential.getString("credentialsType"));
+		assertEquals("MyCredential", credential.getString("credentialsType"));
 		JSONArray claims = credential.getJSONArray("claims");
-		Assertions.assertEquals(1, claims.length());
+		assertEquals(1, claims.length());
 		JSONObject claim = claims.getJSONObject(0);
-		Assertions.assertEquals("did:some:service", claim.getString("name"));
-		Assertions.assertEquals(List.of("Consumer", "Admin"), claim.getJSONArray("allowedValues").toList());
+		assertEquals("did:some:service", claim.getString("name"));
+		assertEquals(Set.of("Consumer", "Admin"), Set.of(claim.getJSONArray("allowedValues").toList().toArray()));
 
 		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> deleteProductOffering(productOfferingId));
 	}
@@ -221,12 +242,10 @@ public class ContractManagementIT {
 
 	private List<AgreementVO> getAgreements() {
 		HttpResponse<List> response = Unirest.get("http://localhost:1234/api/v1/agreements").asObject(List.class);
-		if (response.isSuccess()) {
-			return response.getBody()
-					.stream()
-					.map(a -> OBJECT_MAPPER.convertValue(a, AgreementVO.class)).toList();
-		}
-		return List.of();
+		assertTrue(response.isSuccess(), "The agreements should have been returned");
+		return response.getBody()
+				.stream()
+				.map(a -> OBJECT_MAPPER.convertValue(a, AgreementVO.class)).toList();
 	}
 
 	private Optional<String> createProductSpec() {

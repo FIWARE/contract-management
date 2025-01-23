@@ -54,5 +54,5 @@ notification:
       eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
       apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"
     - entityType: "Catalog"
-      eventTypes: [ "CREATE", "UPDATE", "DELETE", "STATE_CHANGE" ]
+      eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
       apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"

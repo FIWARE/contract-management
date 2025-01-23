@@ -31,10 +31,10 @@ public class NotificationSubscriber {
 	private static final String QUERY_TEMPLATE = "eventType=%s%s";
 	private static final String LISTENER_ADDRESS_TEMPLATE = "%s/hub";
 	private static final String LISTENER_PATH = "/listener/event";
+
+	private final SubscriptionHealthIndicator subscriptionHealthIndicator;
 	private final NotificationProperties notificationProperties;
-
 	private final DefaultHttpClient httpClient;
-
 	private final TaskScheduler taskScheduler;
 
 	@Value("${general.basepath:}")
@@ -53,10 +53,10 @@ public class NotificationSubscriber {
 				.forEach(tmForumEntity ->
 						Optional.ofNullable(tmForumEntity.getEventTypes())
 								.orElse(List.of())
-								.forEach(eventType ->
-										taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(5), Duration.ofSeconds(10), () -> createSubscription(tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress())))
-				);
-
+								.forEach(eventType -> {
+									subscriptionHealthIndicator.initiateSubscriptionInMap(tmForumEntity.getEntityType() + eventType.getValue());
+									taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(5), Duration.ofSeconds(10), () -> createSubscription(tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress()));
+								}));
 	}
 
 	public void createSubscription(String entityType, String evenType, String apiAddress) {
@@ -70,9 +70,13 @@ public class NotificationSubscriber {
 		HttpRequest<?> request = HttpRequest.create(HttpMethod.POST, String.format(LISTENER_ADDRESS_TEMPLATE, apiAddress)).body(subscription);
 
 		Mono.from(httpClient.exchange(request, EventSubscriptionVO.class))
+				.doOnSuccess(res -> subscriptionHealthIndicator.setSubscriptionHealthy(entityType + evenType))
 				.onErrorResume(t -> {
 					if (t instanceof HttpClientResponseException e) {
-						if(e.getStatus() != HttpStatus.CONFLICT) {
+						if (e.getStatus() == HttpStatus.CONFLICT) {
+							subscriptionHealthIndicator.setSubscriptionHealthy(entityType + evenType);
+						}
+						if (e.getStatus() != HttpStatus.CONFLICT) {
 							log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
 						}
 						return Mono.empty();
