@@ -19,8 +19,10 @@ jobs:
 
       - id: ip-test
         run: |
-          nmcli device show
-
+          hostname -I
+          ip a
+          networkctl status
+          
       - name: Public IP
         id: ip
         uses: haythem/public-ip@v1.3
