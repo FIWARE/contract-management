@@ -95,6 +95,9 @@
         <version.io.kokuwa.maven.k3s-plugin>1.2.2</version.io.kokuwa.maven.k3s-plugin>
         <version.org.awaitility>4.2.0</version.org.awaitility>
 
+        <!-- configure your local ip address here, in order to enable containers calling back the testinstance -->
+        <local.ip>192.168.2.224</local.ip>
+
         <!-- build -->
         <version.org.codehaus.mojo.build-helper-maven-plugin>3.4.0</version.org.codehaus.mojo.build-helper-maven-plugin>
         <version.org.jacoco.maven-plugin>0.8.12</version.org.jacoco.maven-plugin>
@@ -242,6 +245,13 @@
             <resource>
                 <directory>src/main/resources</directory>
                 <filtering>true</filtering>
+            </resource>
+            <resource>
+                <directory>src/test/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>k3s/**</include>
+                </includes>
             </resource>
         </resources>
         <plugins>
@@ -732,7 +742,7 @@
                         <artifactId>jib-maven-plugin</artifactId>
                         <configuration combine.self="override">
                             <from>
-                                <image>registry.access.redhat.com/ubi8/openjdk-17:1.15</image>
+                                <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
                             </from>
                             <to>
                                 <image>${image.registry}/${image.repository}/${project.artifactId}</image>
@@ -798,6 +808,16 @@
             </activation>
             <id>integration-test</id>
             <build>
+                <resources>
+                    <resource>
+                        <directory>src/main/resources</directory>
+                        <filtering>true</filtering>
+                    </resource>
+                    <resource>
+                        <directory>src/test/resources</directory>
+                        <filtering>true</filtering>
+                    </resource>
+                </resources>
                 <plugins>
                     <!-- run tests -->
                     <plugin>
@@ -841,9 +861,7 @@
                                 </goals>
                                 <configuration>
                                     <timeout>1200</timeout>
-                                    <streamLogs>true</streamLogs>
-                                    <manifests>src/test/resources/k3s/</manifests>
-                                    <command>kubectl apply -R -f .</command>
+                                    <manifests>${project.build.directory}/classes/k3s/</manifests>
                                     <portBindings>
                                         <!-- tm-forum-api-product-ordering-management -->
                                         <portBinding>8081:8081</portBinding>
