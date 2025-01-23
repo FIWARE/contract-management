@@ -20,7 +20,7 @@ jobs:
       - id: ip-test
         run: |
           ips=$(hostname -I)
-          echo($ips)
+          echo $ips
 
       - name: Public IP
         id: ip
