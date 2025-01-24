@@ -65,16 +65,16 @@ public class NotificationSubscriber {
 
 		EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
 				.callback(callbackUrl)
-				.query(String.format(QUERY_TEMPLATE, entityType, evenType));
+				.query(String.format(QUERY_TEMPLATE, entityType, eventType));
 
 		HttpRequest<?> request = HttpRequest.create(HttpMethod.POST, String.format(LISTENER_ADDRESS_TEMPLATE, apiAddress)).body(subscription);
 
 		Mono.from(httpClient.exchange(request, EventSubscriptionVO.class))
-				.doOnSuccess(res -> subscriptionHealthIndicator.setSubscriptionHealthy(entityType + evenType))
+				.doOnSuccess(res -> subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType))
 				.onErrorResume(t -> {
 					if (t instanceof HttpClientResponseException e) {
 						if (e.getStatus() == HttpStatus.CONFLICT) {
-							subscriptionHealthIndicator.setSubscriptionHealthy(entityType + evenType);
+							subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType);
 						}
 						if (e.getStatus() != HttpStatus.CONFLICT) {
 							log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
