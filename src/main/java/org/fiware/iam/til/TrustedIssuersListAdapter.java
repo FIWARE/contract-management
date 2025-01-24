@@ -70,7 +70,7 @@ public class TrustedIssuersListAdapter {
 					return Mono.just(HttpResponse.noContent());
 				})
 				.onErrorMap(e -> {
-					throw new TMForumException("Was not able to allow the issuer.", e);
+					throw new TMForumException("Was not able to deny the issuer.", e);
 				});
 
 	}
