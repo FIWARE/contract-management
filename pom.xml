@@ -92,10 +92,10 @@
 
         <!-- test -->
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
-        <version.io.kokuwa.maven.k3s-plugin>1.2.2</version.io.kokuwa.maven.k3s-plugin>
+        <version.io.kokuwa.maven.k3s-plugin>1.5.0</version.io.kokuwa.maven.k3s-plugin>
         <version.org.awaitility>4.2.0</version.org.awaitility>
 
-        <!-- configure your local ip address here, in order to enable containers calling back the testinstance -->
+        <!-- configure your local ip address here, in order to enable containers calling back the (local)test-instance -->
         <local.ip>192.168.2.224</local.ip>
 
         <!-- build -->
@@ -105,6 +105,7 @@
         <coveralls.token>myToken</coveralls.token>
         <jacoco.reportFolder>${project.build.directory}/jacoco/${artifactId}</jacoco.reportFolder>
         <jacoco.utReportFile>${jacoco.reportFolder}/test.exec</jacoco.utReportFile>
+
     </properties>
 
     <dependencies>
@@ -249,9 +250,6 @@
             <resource>
                 <directory>src/test/resources</directory>
                 <filtering>true</filtering>
-                <includes>
-                    <include>k3s/**</include>
-                </includes>
             </resource>
         </resources>
         <plugins>
@@ -723,6 +721,73 @@
                     </archive>
                 </configuration>
             </plugin>
+
+            <!-- run tests -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                    <failIfNoTests>true</failIfNoTests>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <phase>integration-test</phase>
+                        <goals>
+                            <goal>integration-test</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>verify</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.kokuwa.maven</groupId>
+                <artifactId>k3s-maven-plugin</artifactId>
+                <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-test-cluster</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>run</goal>
+                            <goal>image</goal>
+                            <goal>apply</goal>
+                        </goals>
+                        <configuration>
+                            <timeout>1200</timeout>
+                            <manifests>${project.build.directory}/classes/k3s/</manifests>
+                            <portBindings>
+                                <!-- tm-forum-api-product-ordering-management -->
+                                <portBinding>8081:8081</portBinding>
+                                <!-- tm-forum-api-product-catalog -->
+                                <portBinding>8082:8082</portBinding>
+                                <!-- tm-forum-api-party-catalog -->
+                                <portBinding>8083:8083</portBinding>
+                                <!-- trusted-issuers-list -->
+                                <portBinding>8085:8085</portBinding>
+                                <!-- orion -->
+                                <portBinding>1026:1026</portBinding>
+                                <!-- rainbow -->
+                                <portBinding>1234:1234</portBinding>
+                                <portBinding>1235:1235</portBinding>
+                            </portBindings>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
     <profiles>
@@ -803,46 +868,121 @@
             </build>
         </profile>
         <profile>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>
-            <id>integration-test</id>
+            <!-- can be used to spin up a local dev environment -->
+            <id>dev</id>
             <build>
-                <resources>
-                    <resource>
-                        <directory>src/main/resources</directory>
-                        <filtering>true</filtering>
-                    </resource>
-                    <resource>
-                        <directory>src/test/resources</directory>
-                        <filtering>true</filtering>
-                    </resource>
-                </resources>
                 <plugins>
                     <!-- run tests -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <configuration>
-                            <failIfNoTests>true</failIfNoTests>
-                            <includes>
-                                <include>**/*IT.java</include>
-                            </includes>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>io.kokuwa.maven</groupId>
+                        <artifactId>k3s-maven-plugin</artifactId>
+                        <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <id>integration-test</id>
+            <build>
+                <plugins>
+                    <!-- run tests -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>io.kokuwa.maven</groupId>
+                        <artifactId>k3s-maven-plugin</artifactId>
+                        <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                        <configuration>
+                            <skip>false</skip>
                         </configuration>
                         <executions>
                             <execution>
-                                <id>test</id>
-                                <phase>integration-test</phase>
+                                <id>clean</id>
+                                <phase>post-integration-test</phase>
                                 <goals>
-                                    <goal>integration-test</goal>
+                                    <goal>rm</goal>
                                 </goals>
                             </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <id>in-container</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                            <systemPropertyVariables>
+                                <micronaut.environments>ga</micronaut.environments>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>com.google.cloud.tools</groupId>
+                        <artifactId>jib-maven-plugin</artifactId>
+                        <executions>
                             <execution>
-                                <id>verify</id>
-                                <phase>verify</phase>
+                                <phase>package</phase>
                                 <goals>
-                                    <goal>verify</goal>
+                                    <goal>dockerBuild</goal>
                                 </goals>
+                                <configuration combine.self="override">
+                                    <from>
+                                        <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
+                                    </from>
+                                    <to>
+                                        <image>contract-management</image>
+                                    </to>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-resources-trust-anchor</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.directory}/classes/k3s</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <includes>
+                                                <include>contract-management.yaml</include>
+                                            </includes>
+                                            <directory>${project.basedir}/src/test/resources/</directory>
+                                        </resource>
+                                    </resources>
+                                </configuration>
                             </execution>
                         </executions>
                     </plugin>
@@ -850,43 +990,11 @@
                         <groupId>io.kokuwa.maven</groupId>
                         <artifactId>k3s-maven-plugin</artifactId>
                         <version>${version.io.kokuwa.maven.k3s-plugin}</version>
-                        <executions>
-                            <execution>
-                                <id>prepare-test-cluster</id>
-                                <phase>pre-integration-test</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                    <goal>image</goal>
-                                    <goal>apply</goal>
-                                </goals>
-                                <configuration>
-                                    <timeout>1200</timeout>
-                                    <manifests>${project.build.directory}/classes/k3s/</manifests>
-                                    <portBindings>
-                                        <!-- tm-forum-api-product-ordering-management -->
-                                        <portBinding>8081:8081</portBinding>
-                                        <!-- tm-forum-api-product-catalog -->
-                                        <portBinding>8082:8082</portBinding>
-                                        <!-- tm-forum-api-party-catalog -->
-                                        <portBinding>8083:8083</portBinding>
-                                        <!-- trusted-issuers-list -->
-                                        <portBinding>8085:8085</portBinding>
-                                        <!-- orion -->
-                                        <portBinding>1026:1026</portBinding>
-                                        <!-- rainbow -->
-                                        <portBinding>1234:1234</portBinding>
-                                        <portBinding>1235:1235</portBinding>
-                                    </portBindings>
-                                </configuration>
-                            </execution>
-                            <!--                            <execution>-->
-                            <!--                                <id>clean</id>-->
-                            <!--                                <phase>post-integration-test</phase>-->
-                            <!--                                <goals>-->
-                            <!--                                    <goal>rm</goal>-->
-                            <!--                                </goals>-->
-                            <!--                            </execution>-->
-                        </executions>
+                        <configuration>
+                            <dockerImages>
+                                <dockerImage>contract-management</dockerImage>
+                            </dockerImages>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>

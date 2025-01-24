@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/name: contract-management
+  name: contract-management
+data:
+  application.yaml: |
+    micronaut:
+      server:
+        port: 8080
+      http:
+        services:
+          rainbow:
+            path: "/"
+            url: http://rainbow:1234
+            read-timeout: 30
+          party:
+            path: "/tmf-api/party/v4"
+            url: http://tm-forum-api-party-catalog:8083
+            read-timeout: 30
+          product-catalog:
+            path: "/tmf-api/productCatalogManagement/v4"
+            url: http://tm-forum-api-product-catalog:8082
+            read-timeout: 30
+          service-catalog:
+            path: "/tmf-api/serviceCatalogManagement/v4"
+            url: http://tm-forum-api-service-catalog:8084
+            read-timeout: 30
+          trusted-issuers-list:
+            path: "/"
+            url: http://trusted-issuers-list:8085
+            read-timeout: 30
+    ---
+    endpoints:
+      all:
+        port: 9090
+      health:
+        enabled: true
+    ---
+    general:
+      host: contract-management
+      port: 8080
+      til:
+        credentialType: MyCredential
+
+    notification:
+      entities:
+        - entityType: "ProductOrder"
+          eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
+          apiAddress: "http://tm-forum-api-product-ordering-management:8081/tmf-api/productOrderingManagement/v4"
+        - entityType: "ProductOffering"
+          eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
+          apiAddress: "http://tm-forum-api-product-catalog:8082/tmf-api/productCatalogManagement/v4"
+        - entityType: "Catalog"
+          eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
+          apiAddress: "http://tm-forum-api-product-catalog:8082/tmf-api/productCatalogManagement/v4"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: contract-management
+  name: contract-management
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: contract-management
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: contract-management
+    spec:
+      containers:
+        - image: contract-management
+          imagePullPolicy: IfNotPresent
+          name: contract-management
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - name: http-health
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 31
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 30
+          env:
+            - name: MICRONAUT_CONFIG_FILES
+              value: "/application.yaml"
+          volumeMounts:
+            - name: application-yaml
+              mountPath: /application.yaml
+              subPath: application.yaml
+      volumes:
+        - name: application-yaml
+          configMap:
+            name: contract-management
+            items:
+              - key: application.yaml
+                path: application.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contract-management
+  labels:
+    app.kubernetes.io/name: contract-management
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: health
+  selector:
+    app.kubernetes.io/name: contract-management

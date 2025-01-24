@@ -12,13 +12,6 @@ jobs:
 
       - uses: actions/checkout@v2
 
-      - id: run
-        run: |
-          ips=$(hostname -I)
-          i_a=($ips)
-          ip=${i_a[0]}
-          echo $ip
-
       - uses: actions/setup-java@v1
         with:
           java-version: '21'
@@ -26,9 +19,5 @@ jobs:
 
       - name: Run tests
         run: |
-          ips=$(hostname -I)
-          i_a=($ips)
-          ip=${i_a[1]}
-          echo $ip
-          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Dlocal.ip=$ip
+          mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Pintegration-test,in-container
 

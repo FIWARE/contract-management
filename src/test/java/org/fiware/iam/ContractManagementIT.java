@@ -1,8 +1,6 @@
 package org.fiware.iam;
 
-import io.micronaut.context.annotation.Value;
-import io.micronaut.health.HealthStatus;
-import io.micronaut.management.health.indicator.HealthResult;
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import kong.unirest.*;
 import kong.unirest.json.JSONArray;
@@ -10,16 +8,13 @@ import kong.unirest.json.JSONObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.awaitility.Awaitility;
-import org.fiware.iam.tmforum.SubscriptionHealthIndicator;
 import org.fiware.rainbow.model.AgreementVO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -28,26 +23,29 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Slf4j
-@MicronautTest
-@RequiredArgsConstructor
-public class ContractManagementIT {
+public abstract class ContractManagementIT {
 
 	private static final String TEST_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
 	private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 
-	private final SubscriptionHealthIndicator subscriptionHealthIndicator;
+	protected final TestConfiguration testConfiguration;
+
+	protected ContractManagementIT(TestConfiguration testConfiguration) {
+		this.testConfiguration = testConfiguration;
+	}
+
+	/**
+	 * Checks if the contract management is running and healthy
+	 */
+	abstract void contractManagementHealthy();
 
 	@DisplayName("Test Happy Path")
 	@Test
 	public void testCreateProductOrder() {
-		Awaitility.await()
-				.atMost(1, TimeUnit.MINUTES)
-				.untilAsserted(() -> {
-					assertEquals(HealthStatus.UP, Mono.from(subscriptionHealthIndicator.getResult()).block().getStatus(), "The contract management should be up.");
-				});
+		contractManagementHealthy();
 
 		String categoryId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createCategory, Optional::isPresent).get();
-		String catalogId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> createProductCatalog(categoryId), Optional::isPresent).get();
+		Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> createProductCatalog(categoryId), Optional::isPresent).get();
 
 		String productSpecId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
 		System.out.println("productSpecId: " + productSpecId);
@@ -89,14 +87,13 @@ public class ContractManagementIT {
 
 	@BeforeEach
 	public void waitTilReady() throws Exception {
-		Awaitility.await().atMost(5, TimeUnit.MINUTES).until(this::subscriptionExists);
 		Awaitility.await().atMost(5, TimeUnit.MINUTES).until(this::trustedIssuersListServiceReady);
 
 	}
 
 	private boolean trustedIssuersListServiceReady() {
 		try {
-			return Optional.ofNullable(Unirest.get("http://localhost:8085/v4/issuers/")
+			return Optional.ofNullable(Unirest.get(testConfiguration.getTilHost() + "/v4/issuers/")
 							.asJson())
 					.filter(HttpResponse::isSuccess)
 					.isPresent();
@@ -106,27 +103,9 @@ public class ContractManagementIT {
 		}
 	}
 
-	private boolean subscriptionExists() {
-		try {
-			return Optional.ofNullable(Unirest
-							.get("http://localhost:1026/ngsi-ld/v1/entities")
-							.queryString(Map.of("type", "subscription"))
-							.header("type", "application/ld+json")
-							.asJson())
-					.map(HttpResponse::getBody)
-					.map(JsonNode::getArray)
-					.map(JSONArray::length)
-					.filter(length -> length > 0)
-					.isPresent();
-		} catch (UnirestException e) {
-			//System.err.println(e);
-			return false;
-		}
-	}
-
 	private Optional<JSONObject> getTrustedIssuersListEntry(String did) {
 		try {
-			return Optional.ofNullable(Unirest.get("http://localhost:8085/issuer/" + did)
+			return Optional.ofNullable(Unirest.get(testConfiguration.getTilHost() + "/issuer/" + did)
 							.asJson())
 					.filter(HttpResponse::isSuccess)
 					.map(HttpResponse::getBody)
@@ -138,7 +117,7 @@ public class ContractManagementIT {
 	}
 
 	private Optional<String> orderProduct(String productOfferingId, String organizationId) {
-		return getResponseId(Unirest.post("http://localhost:8081/tmf-api/productOrderingManagement/v4/productOrder")
+		return getResponseId(Unirest.post(testConfiguration.getProductOrderingManagementHost() + "/tmf-api/productOrderingManagement/v4/productOrder")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\n" +
 						"    \"productOrderItem\": [\n" +
@@ -162,7 +141,7 @@ public class ContractManagementIT {
 
 	private Optional<String> completeProductOrder(String productOrderId) {
 		return getResponseId(
-				Unirest.patch("http://localhost:8081/tmf-api/productOrderingManagement/v4/productOrder/%s".formatted(productOrderId))
+				Unirest.patch(testConfiguration.getProductOrderingManagementHost() + "/tmf-api/productOrderingManagement/v4/productOrder/%s".formatted(productOrderId))
 						.header("Content-Type", "application/json")
 						.body(String.format("{\n" +
 								"    \"state\": \"completed\" " +
@@ -171,13 +150,13 @@ public class ContractManagementIT {
 
 
 	private Optional<String> changeStateProductOrder(String productOrderId) {
-		return getResponseId(Unirest.patch("http://localhost:8081/tmf-api/productOrderingManagement/v4/productOrder/" + productOrderId)
+		return getResponseId(Unirest.patch(testConfiguration.getProductOrderingManagementHost() + "/tmf-api/productOrderingManagement/v4/productOrder/" + productOrderId)
 				.header("Content-Type", "application/json")
 				.body("{\"state\": \"cancelled\" }"));
 	}
 
 	private Optional<String> updateProductOrder(String productOrderId) {
-		return getResponseId(Unirest.patch("http://localhost:8081/tmf-api/productOrderingManagement/v4/productOrder/" + productOrderId)
+		return getResponseId(Unirest.patch(testConfiguration.getProductOrderingManagementHost() + "/tmf-api/productOrderingManagement/v4/productOrder/" + productOrderId)
 				.header("Content-Type", "application/json")
 				.body(String.format("{\n" +
 						"    \"state\": \"completed\",\n" +
@@ -186,7 +165,7 @@ public class ContractManagementIT {
 	}
 
 	private Optional<String> createOrganization() {
-		return getResponseId(Unirest.post("http://localhost:8083/tmf-api/party/v4/organization")
+		return getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\n" +
 						"    \"name\": \"BunnyInc\",\n" +
@@ -202,7 +181,7 @@ public class ContractManagementIT {
 	}
 
 	private Optional<String> createProductCatalog(String category) {
-		return getResponseId(Unirest.post("http://localhost:8082/tmf-api/productCatalogManagement/v4/catalog")
+		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/catalog")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\"description\": \"My catalog\",\"name\": \"my Catalog\",\n" +
 						"\"category\": [ {" +
@@ -212,13 +191,13 @@ public class ContractManagementIT {
 	}
 
 	private Optional<String> createCategory() {
-		return getResponseId(Unirest.post("http://localhost:8082/tmf-api/productCatalogManagement/v4/category")
+		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/category")
 				.header("Content-Type", "application/json")
 				.body("{\"description\": \"My category\",\"name\": \"my category\"\n}"));
 	}
 
 	private Optional<String> createProductOffering(String productSpec, String categoryId) {
-		return getResponseId(Unirest.post("http://localhost:8082/tmf-api/productCatalogManagement/v4/productOffering")
+		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productOffering")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\n" +
 						"    \"description\": \"My Offering description\",\n" +
@@ -238,13 +217,13 @@ public class ContractManagementIT {
 	}
 
 	private boolean deleteProductOffering(String offeringId) {
-		return Unirest.delete("http://localhost:8082/tmf-api/productCatalogManagement/v4/productOffering/%s".formatted(offeringId))
+		return Unirest.delete(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productOffering/%s".formatted(offeringId))
 				.asJson()
 				.isSuccess();
 	}
 
 	private List<AgreementVO> getAgreements() {
-		HttpResponse<List> response = Unirest.get("http://localhost:1234/api/v1/agreements").asObject(List.class);
+		HttpResponse<List> response = Unirest.get(testConfiguration.getProviderRainbowHost() + "/api/v1/agreements").asObject(List.class);
 		assertTrue(response.isSuccess(), "The agreements should have been returned");
 		return response.getBody()
 				.stream()
@@ -252,7 +231,7 @@ public class ContractManagementIT {
 	}
 
 	private Optional<String> createProductSpec() {
-		return getResponseId(Unirest.post("http://localhost:8082/tmf-api/productCatalogManagement/v4/productSpecification")
+		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productSpecification")
 				.header("Content-Type", "application/json")
 				.body("{\n" +
 						"    \"name\": \"Packet Delivery Premium Service Spec\",\n" +

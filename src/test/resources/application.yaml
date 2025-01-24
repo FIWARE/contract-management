@@ -31,10 +31,10 @@ micronaut:
         url: http://localhost:8085
         read-timeout: 30
 endpoints:
-  metrics:
-    enabled: false
+  all:
+    port: 9090
   health:
-    enabled: false
+    enabled: true
 
 ---
 loggers:
