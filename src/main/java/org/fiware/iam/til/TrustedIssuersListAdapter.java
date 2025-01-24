@@ -54,7 +54,7 @@ public class TrustedIssuersListAdapter {
 	}
 
 	public Mono<?> denyIssuer(String issuerDid) {
-		CredentialsVO credentialToBeAdded = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
+		CredentialsVO credentialToBeRemoved = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
 
 		return getIssuer(issuerDid)
 				.onErrorResume(e -> {
@@ -63,7 +63,7 @@ public class TrustedIssuersListAdapter {
 				})
 				.flatMap(optionalIssuer -> {
 					if (optionalIssuer.isPresent()) {
-						TrustedIssuerVO updatedIssuer = optionalIssuer.get().removeCredentialsItem(credentialToBeAdded);
+						TrustedIssuerVO updatedIssuer = optionalIssuer.get().removeCredentialsItem(credentialToBeRemoved);
 						log.debug("Updating existing issuer with {}", updatedIssuer);
 						return apiClient.updateIssuer(issuerDid, updatedIssuer);
 					}

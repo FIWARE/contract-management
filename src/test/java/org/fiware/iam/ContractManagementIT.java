@@ -1,15 +1,12 @@
 package org.fiware.iam;
 
-import io.micronaut.context.annotation.Requires;
-import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
+import io.micronaut.context.annotation.Value;
 import kong.unirest.*;
 import kong.unirest.json.JSONArray;
 import kong.unirest.json.JSONObject;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.awaitility.Awaitility;
 import org.fiware.rainbow.model.AgreementVO;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,16 +16,20 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 @Slf4j
 public abstract class ContractManagementIT {
 
 	private static final String TEST_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
+	private static final String TEST_SERVICE = "did:some:service";
 	private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 
 	protected final TestConfiguration testConfiguration;
+
+	@Value("${general.til.credentialType}")
+	private String credentialType;
+
 
 	protected ContractManagementIT(TestConfiguration testConfiguration) {
 		this.testConfiguration = testConfiguration;
@@ -44,45 +45,36 @@ public abstract class ContractManagementIT {
 	public void testCreateProductOrder() {
 		contractManagementHealthy();
 
-		String categoryId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createCategory, Optional::isPresent).get();
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> createProductCatalog(categoryId), Optional::isPresent).get();
+		String organizationId = createOrganization();
+		String offeringId = createTestOffer();
+		String productOrder = orderProduct(offeringId, organizationId);
+		completeProductOrder(productOrder);
 
-		String productSpecId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createProductSpec, Optional::isPresent).get();
-		System.out.println("productSpecId: " + productSpecId);
-		String productOfferingId = createProductOffering(productSpecId, categoryId).get();
-		System.out.println("productOfferingId: " + productOfferingId);
-		String organizationId = Awaitility.await().atMost(1, TimeUnit.MINUTES).until(this::createOrganization, Optional::isPresent).get();
-		System.out.println("organizationId: " + organizationId);
-		String productOrder = orderProduct(productOfferingId, organizationId).get();
-		System.out.println("productOrder: " + productOrder);
-		completeProductOrder(productOrder).get();
+		assertAgreementCreated(offeringId);
+		assertTilEntry(TEST_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
+	}
 
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
-					boolean match = getAgreements().stream()
-							.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(productOfferingId));
-					assertTrue(match, String.format("No agreement for %s", productOfferingId));
-				}
-		);
+	private void assertTilEntry(String expectedDid, String expectedCredentialsType, String expectedService, Set<String> expectedValues) {
 		JSONObject tilConfig = Awaitility.await()
 				.atMost(1, TimeUnit.MINUTES)
 				.until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent)
 				.get();
-		System.out.println("tilConfig: " + tilConfig);
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> changeStateProductOrder(productOrder), Optional::isPresent).get();
-		assertEquals("did:web:bunnyinc.dsba.fiware.dev:did", tilConfig.getString("did"));
+
+		assertEquals(expectedDid, tilConfig.getString("did"), "Trusted Issuer should be properly properly configured");
+
 		JSONArray credentials = tilConfig.getJSONArray("credentials");
-		Assertions.assertNotNull(credentials);
-		assertEquals(1, credentials.length());
+		assertNotNull(credentials, "No credentials entry was included in the TIL Config.");
+		assertEquals(1, credentials.length(), "Exactly one credential should be included in the config.");
+
 		JSONObject credential = credentials.getJSONObject(0);
+		assertEquals(expectedCredentialsType, credential.getString("credentialsType"), "Correct credentials type should have been configured.");
 
-		assertEquals("MyCredential", credential.getString("credentialsType"));
 		JSONArray claims = credential.getJSONArray("claims");
-		assertEquals(1, claims.length());
-		JSONObject claim = claims.getJSONObject(0);
-		assertEquals("did:some:service", claim.getString("name"));
-		assertEquals(Set.of("Consumer", "Admin"), Set.of(claim.getJSONArray("allowedValues").toList().toArray()));
+		assertEquals(1, claims.length(), "Exactly one claim should be configured.");
 
-		Awaitility.await().atMost(2, TimeUnit.MINUTES).until(() -> deleteProductOffering(productOfferingId));
+		JSONObject claim = claims.getJSONObject(0);
+		assertEquals(expectedService, claim.getString("name"), "The ordered service should have been included.");
+		assertEquals(expectedValues, Set.of(claim.getJSONArray("allowedValues").toList().toArray()), "The requested roles should have been configured.");
 	}
 
 	@BeforeEach
@@ -116,7 +108,17 @@ public abstract class ContractManagementIT {
 		}
 	}
 
-	private Optional<String> orderProduct(String productOfferingId, String organizationId) {
+	private void assertAgreementCreated(String offerId) {
+
+		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
+					boolean match = getAgreements().stream()
+							.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(offerId));
+					assertTrue(match, String.format("No agreement for %s", offerId));
+				}
+		);
+	}
+
+	private String orderProduct(String productOfferingId, String organizationId) {
 		return getResponseId(Unirest.post(testConfiguration.getProductOrderingManagementHost() + "/tmf-api/productOrderingManagement/v4/productOrder")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\n" +
@@ -135,12 +137,12 @@ public abstract class ContractManagementIT {
 						"            \"name\": \"BunnyInc\"\n" +
 						"        }\n" +
 						"    ]\n" +
-						"}", productOfferingId, organizationId)));
+						"}", productOfferingId, organizationId))).get();
 	}
 
 
-	private Optional<String> completeProductOrder(String productOrderId) {
-		return getResponseId(
+	private void completeProductOrder(String productOrderId) {
+		getResponseId(
 				Unirest.patch(testConfiguration.getProductOrderingManagementHost() + "/tmf-api/productOrderingManagement/v4/productOrder/%s".formatted(productOrderId))
 						.header("Content-Type", "application/json")
 						.body(String.format("{\n" +
@@ -164,55 +166,68 @@ public abstract class ContractManagementIT {
 						"}")));
 	}
 
-	private Optional<String> createOrganization() {
-		return getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
-				.header("Content-Type", "application/json")
-				.body(String.format("{\n" +
-						"    \"name\": \"BunnyInc\",\n" +
-						"    \"tradingName\": \"BunnyInc\",\n" +
-						"    \"partyCharacteristic\": [\n" +
-						"        {\n" +
-						"            \"name\": \"did\",\n" +
-						"            \"valueType\": \"string\",\n" +
-						"            \"value\": \"%s\"\n" +
-						"        }\n" +
-						"    ]\n" +
-						"}", TEST_DID)));
+	private String createTestOffer() {
+		String categoryId = createCategory();
+		createProductCatalog(categoryId);
+		String productSpecId = createProductSpec();
+		return createProductOffering(productSpecId, categoryId);
 	}
 
-	private Optional<String> createProductCatalog(String category) {
-		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/catalog")
+	private String createOrganization() {
+
+		return Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() ->
+						getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
+								.header("Content-Type", "application/json")
+								.body(String.format("{\n" +
+										"    \"name\": \"BunnyInc\",\n" +
+										"    \"tradingName\": \"BunnyInc\",\n" +
+										"    \"partyCharacteristic\": [\n" +
+										"        {\n" +
+										"            \"name\": \"did\",\n" +
+										"            \"valueType\": \"string\",\n" +
+										"            \"value\": \"%s\"\n" +
+										"        }\n" +
+										"    ]\n" +
+										"}", TEST_DID))),
+				Optional::isPresent).get();
+
+	}
+
+	private void createProductCatalog(String category) {
+		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/catalog")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\"description\": \"My catalog\",\"name\": \"my Catalog\",\n" +
 						"\"category\": [ {" +
 						"\"id\": \"%s\"" +
 						"} ]" +
-						"}", category)));
+						"}", category))));
 	}
 
-	private Optional<String> createCategory() {
-		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/category")
-				.header("Content-Type", "application/json")
-				.body("{\"description\": \"My category\",\"name\": \"my category\"\n}"));
+	private String createCategory() {
+		return Awaitility.await().atMost(1, TimeUnit.MINUTES).until(
+				() -> getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/category")
+						.header("Content-Type", "application/json")
+						.body("{\"description\": \"My category\",\"name\": \"my category\"\n}")), Optional::isPresent).get();
 	}
 
-	private Optional<String> createProductOffering(String productSpec, String categoryId) {
-		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productOffering")
-				.header("Content-Type", "application/json")
-				.body(String.format("{\n" +
-						"    \"description\": \"My Offering description\",\n" +
-						"    \"isBundle\": false,\n" +
-						"    \"isSellable\": true,\n" +
-						"    \"lifecycleStatus\": \"Active\",\n" +
-						"    \"name\": \"Packet Delivery Premium Service\",\n" +
-						"    \"productSpecification\": {\n" +
-						"        \"id\": \"%s\",\n" +
-						"        \"name\": \"Packet Delivery Premium Service Spec\"\n" +
-						"    },\n" +
-						"    \"category\": [{\n" +
-						"        \"id\": \"%s\"\n" +
-						"    }]\n" +
-						"}", productSpec, categoryId)));
+	private String createProductOffering(String productSpec, String categoryId) {
+		return Awaitility.await().atMost(1, TimeUnit.MINUTES).until(
+				() -> getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productOffering")
+						.header("Content-Type", "application/json")
+						.body(String.format("{\n" +
+								"    \"description\": \"My Offering description\",\n" +
+								"    \"isBundle\": false,\n" +
+								"    \"isSellable\": true,\n" +
+								"    \"lifecycleStatus\": \"Active\",\n" +
+								"    \"name\": \"Packet Delivery Premium Service\",\n" +
+								"    \"productSpecification\": {\n" +
+								"        \"id\": \"%s\",\n" +
+								"        \"name\": \"Packet Delivery Premium Service Spec\"\n" +
+								"    },\n" +
+								"    \"category\": [{\n" +
+								"        \"id\": \"%s\"\n" +
+								"    }]\n" +
+								"}", productSpec, categoryId))), Optional::isPresent).get();
 
 	}
 
@@ -230,8 +245,8 @@ public abstract class ContractManagementIT {
 				.map(a -> OBJECT_MAPPER.convertValue(a, AgreementVO.class)).toList();
 	}
 
-	private Optional<String> createProductSpec() {
-		return getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productSpecification")
+	private String createProductSpec() {
+		return Awaitility.await().atMost(1, TimeUnit.MINUTES).until(() -> getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productSpecification")
 				.header("Content-Type", "application/json")
 				.body("{\n" +
 						"    \"name\": \"Packet Delivery Premium Service Spec\",\n" +
@@ -258,24 +273,19 @@ public abstract class ContractManagementIT {
 						"			]\n" +
 						"        }\n" +
 						"    ]\n" +
-						"}"));
+						"}")), Optional::isPresent).get();
 	}
 
 	private Optional<String> getResponseId(RequestBodyEntity request) {
-		try {
-			HttpResponse<JsonNode> response = request.asJson();
-			if (!response.isSuccess()) {
-				log.info("Req was {} Response {}: {}", response.getStatus(), response.getBody().toPrettyString());
-			}
 
-			return Optional.ofNullable(response)
-					.filter(HttpResponse::isSuccess)
-					.map(HttpResponse::getBody)
-					.map(JsonNode::getObject)
-					.map(obj -> obj.getString("id"));
-		} catch (UnirestException e) {
-			log.warn("Error.", e);
-			return Optional.empty();
-		}
+		HttpResponse<JsonNode> response = request.asJson();
+		assertTrue(response.isSuccess(),
+				String.format("Req was %s Response %s: %s", request.getUrl(), response.getStatus(), response.getBody().toPrettyString()));
+
+		return Optional.of(response)
+				.filter(HttpResponse::isSuccess)
+				.map(HttpResponse::getBody)
+				.map(JsonNode::getObject)
+				.map(obj -> obj.getString("id"));
 	}
 }
