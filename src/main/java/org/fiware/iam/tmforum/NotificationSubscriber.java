@@ -59,7 +59,7 @@ public class NotificationSubscriber {
 								}));
 	}
 
-	public void createSubscription(String entityType, String evenType, String apiAddress) {
+	public void createSubscription(String entityType, String eventType, String apiAddress) {
 		String callbackUrl = String.format("http://%s:%s%s%s", serviceUrl, servicePort, controllerPath, LISTENER_PATH);
 		log.debug("Attempting to register subscription with callback {}", callbackUrl);
 
