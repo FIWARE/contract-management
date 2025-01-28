@@ -15,6 +15,10 @@ data:
             path: "/"
             url: http://rainbow:1234
             read-timeout: 30
+          product-order:
+            path: "/tmf-api/productOrderingManagement/v4"
+            url: http://tm-forum-api-product-ordering-management:8081
+            read-timeout: 30
           party:
             path: "/tmf-api/party/v4"
             url: http://tm-forum-api-party-catalog:8083
@@ -30,6 +34,10 @@ data:
           trusted-issuers-list:
             path: "/"
             url: http://trusted-issuers-list:8085
+            read-timeout: 30
+          tmforum-agreement-api:
+            path: "/tmf-api/agreementManagement/v4"
+            url: http://tm-forum-api-agreement:8086
             read-timeout: 30
     ---
     endpoints:
