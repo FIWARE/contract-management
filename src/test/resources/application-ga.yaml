@@ -6,7 +6,7 @@ test:
   partyCatalogHost: http://localhost:8083
   productCatalogHost: http://localhost:8082
   providerRainbowHost: http://localhost:1234
-
+  agreementHost: http://localhost:8086
 
 general:
   host: contract-management

@@ -6,6 +6,7 @@ import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import org.fiware.iam.exception.TMForumException;
+import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
@@ -45,7 +46,7 @@ class TrustedIssuersListAdapterTest {
 		when(apiClient.getIssuer(anyString())).thenReturn(Mono.just(HttpResponse.notFound()));
 		when(apiClient.createTrustedIssuer(any())).thenReturn(Mono.just(HttpResponse.ok()));
 		doThrow(new HttpClientException("test")).when(apiClient).createTrustedIssuer(any());
-		Assertions.assertThrows(TMForumException.class, () -> classUnderTest.allowIssuer("testDID").block());
+		Assertions.assertThrows(TrustedIssuersException.class, () -> classUnderTest.allowIssuer("testDID").block());
 	}
 
 	@Test
@@ -70,7 +71,7 @@ class TrustedIssuersListAdapterTest {
 								.credentialsType("existingCredentialType")
 								.addClaimsItem(new ClaimVO().name("target1").addAllowedValuesItem("Role1"))))));
 		doThrow(new HttpClientException("test")).when(apiClient).updateIssuer(anyString(), any());
-		Assertions.assertThrows(TMForumException.class, () -> classUnderTest.allowIssuer("testDID").block());
+		Assertions.assertThrows(TrustedIssuersException.class, () -> classUnderTest.allowIssuer("testDID").block());
 	}
 
 }

@@ -7,18 +7,24 @@ import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.TMFMapper;
+import org.fiware.iam.dsp.RainbowAdapter;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.tmforum.OrganizationResolver;
+import org.fiware.iam.tmforum.TMForumAdapter;
+import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
 import org.fiware.iam.tmforum.productorder.model.*;
-import org.fiware.rainbow.api.AgreementApiClient;
-import org.fiware.rainbow.model.AgreementCreateVO;
+import org.fiware.rainbow.model.AgreementVO;
 import reactor.core.publisher.Mono;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
+
+/**
+ * Handle all incoming events in connection to ProductOrder
+ */
 @RequiredArgsConstructor
 @Singleton
 @Slf4j
@@ -33,7 +39,10 @@ public class ProductOrderEventHandler implements EventHandler {
 	private final ObjectMapper objectMapper;
 	private final OrganizationResolver organizationResolver;
 	private final TrustedIssuersListAdapter trustedIssuersListAdapter;
-	private final AgreementApiClient agreementApiClient;
+	private final RainbowAdapter rainbowAdapter;
+	private final TMForumAdapter tmForumAdapter;
+
+	private final TMFMapper tmfMapper;
 
 	@Override
 	public boolean isEventTypeSupported(String eventType) {
@@ -62,7 +71,7 @@ public class ProductOrderEventHandler implements EventHandler {
 		return switch (eventType) {
 			case CREATE_EVENT -> handelCreateEvent(orgId, event);
 			case STATE_CHANGE_EVENT -> handelStateChangeEvent(orgId, event);
-			case DELETE_EVENT -> handelDeleteEvent(orgId);
+			case DELETE_EVENT -> handelDeleteEvent(orgId, event);
 			default -> throw new IllegalArgumentException("Invalid event type received.");
 		};
 
@@ -76,7 +85,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		boolean isCompleted = isCompleted(productOrderVO);
-		if (isCompleted) {
+		if (!isCompleted) {
 			log.debug("The received event is not in state completed.");
 			return Mono.just(HttpResponse.noContent());
 		}
@@ -98,27 +107,87 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		if (isCompleted(productOrderVO)) {
-			return Mono.zipDelayError(createAgreement(productOrderVO, organizationId), allowIssuer(organizationId))
+			return Mono.zipDelayError(
+							createAgreement(productOrderVO, organizationId),
+							allowIssuer(organizationId))
 					.map(tuple -> HttpResponse.noContent());
 		} else {
-			// TODO: add delete agreement once its supported by rainbow
-			return denyIssuer(organizationId);
+			return handleStopEvent(organizationId, event);
 		}
 	}
 
-	private Mono<HttpResponse<?>> handelDeleteEvent(String organizationId) {
-		throw new UnsupportedOperationException();
+	private Mono<HttpResponse<?>> handleStopEvent(String organizationId, Map<String, Object> event) {
+		ProductOrderStateChangeEventVO productOrderStateChangeEventVO = objectMapper.convertValue(event, ProductOrderStateChangeEventVO.class);
+		ProductOrderVO productOrderVO = Optional.ofNullable(productOrderStateChangeEventVO.getEvent())
+				.map(ProductOrderStateChangeEventPayloadVO::getProductOrder)
+				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
+
+		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
+		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId);
+
+		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
+				.filter(HttpResponse.class::isInstance)
+				.map(HttpResponse.class::cast)
+				.filter(response -> response.status().getCode() > 299)
+				.findAny()
+				.orElse(HttpResponse.ok()));
 	}
 
-	private Mono<HttpResponse<?>> createAgreement(ProductOrderVO productOrderVO, String organizationId) {
+	private Mono<HttpResponse<?>> handelDeleteEvent(String organizationId, Map<String, Object> event) {
+		ProductOrderDeleteEventVO productOrderDeleteEventVO = objectMapper.convertValue(event, ProductOrderDeleteEventVO.class);
+		ProductOrderVO productOrderVO = Optional.ofNullable(productOrderDeleteEventVO.getEvent())
+				.map(ProductOrderDeleteEventPayloadVO::getProductOrder)
+				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
-		return Mono.zipDelayError(productOrderVO
-				.getProductOrderItem()
+		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
+		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId);
+
+		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
+				.filter(HttpResponse.class::isInstance)
+				.map(HttpResponse.class::cast)
+				.filter(response -> response.status().getCode() > 299)
+				.findAny()
+				.orElse(HttpResponse.ok()));
+	}
+
+
+	private Mono<?> createAgreement(ProductOrderVO productOrderVO, String organizationId) {
+
+		List<RelatedPartyTmfVO> relatedPartyTmfVOS = productOrderVO
+				.getRelatedParty()
 				.stream()
-				.map(ProductOrderItemVO::getProductOffering)
-				.map(offering -> new AgreementCreateVO().identity(organizationId).dataServiceId(offering.getId()))
-				.map(agreementApiClient::createAgreement)
-				.toList(), res -> HttpResponse.noContent());
+				.map(tmfMapper::map)
+				.toList();
+
+		return Mono.zipDelayError(
+						productOrderVO
+								.getProductOrderItem()
+								.stream()
+								.map(ProductOrderItemVO::getProductOffering)
+								.filter(Objects::nonNull)
+								.map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
+								.toList(),
+						res -> {
+							List<AgreementVO> agreementVOS = Arrays.stream(res).filter(Objects::nonNull).filter(AgreementVO.class::isInstance).map(AgreementVO.class::cast).toList();
+							return updateProductOrder(productOrderVO, agreementVOS, relatedPartyTmfVOS);
+						})
+				.flatMap(Function.identity());
+	}
+
+	private Mono<HttpResponse<ProductOrderVO>> updateProductOrder(ProductOrderVO productOrderVO, List<AgreementVO> agreementVOS, List<RelatedPartyTmfVO> relatedPartyTmfVOS) {
+		return Mono.zipDelayError(
+				agreementVOS.stream()
+						.map(agreementVO ->
+								tmForumAdapter.createAgreement(productOrderVO.getId(), agreementVO.getDataServiceId(), agreementVO.getAgreementId(), relatedPartyTmfVOS))
+						.toList(),
+				agreements -> {
+					List<String> agreementIds = Arrays.stream(agreements)
+							.filter(String.class::isInstance)
+							.map(String.class::cast)
+							.toList();
+					return tmForumAdapter.addAgreementToOrder(productOrderVO.getId(), agreementIds);
+				}).flatMap(Function.identity());
+
 	}
 
 	private Mono<HttpResponse<?>> allowIssuer(String organizationId) {
@@ -127,9 +196,23 @@ public class ProductOrderEventHandler implements EventHandler {
 				.map(issuer -> HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED));
 	}
 
+	private Mono<HttpResponse<?>> deleteAgreement(ProductOrderVO productOrderVO) {
+		List<Mono<Boolean>> deletionMonos = productOrderVO.getAgreement()
+				.stream()
+				.map(AgreementRefVO::getId)
+				.map(rainbowAdapter::deleteAgreement)
+				.toList();
+		return Mono.zipDelayError(deletionMonos, deletions -> {
+			if (Set.of(deletions).contains(false)) {
+				log.warn("Was not able to delete the agreement for order {}.", productOrderVO);
+				HttpResponse.status(HttpStatus.BAD_GATEWAY);
+			}
+			return HttpResponse.status(HttpStatus.ACCEPTED);
+		});
+	}
+
 	private Mono<HttpResponse<?>> denyIssuer(String organizationId) {
 		return organizationResolver.getDID(organizationId)
-				.flatMap(trustedIssuersListAdapter::allowIssuer)
-				.map(issuer -> HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED));
+				.flatMap(trustedIssuersListAdapter::denyIssuer);
 	}
 }

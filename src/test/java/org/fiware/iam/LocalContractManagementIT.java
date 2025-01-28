@@ -1,6 +1,7 @@
 package org.fiware.iam;
 
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.health.HealthStatus;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
@@ -24,8 +25,8 @@ public class LocalContractManagementIT extends ContractManagementIT {
 
 	private final SubscriptionHealthIndicator subscriptionHealthIndicator;
 
-	public LocalContractManagementIT(SubscriptionHealthIndicator subscriptionHealthIndicator, TestConfiguration testConfiguration) {
-		super(testConfiguration);
+	public LocalContractManagementIT(SubscriptionHealthIndicator subscriptionHealthIndicator, TestConfiguration testConfiguration, ObjectMapper objectMapper) {
+		super(objectMapper, testConfiguration);
 		this.subscriptionHealthIndicator = subscriptionHealthIndicator;
 	}
 

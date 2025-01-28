@@ -18,6 +18,10 @@ micronaut:
         path: "/"
         url: http://localhost:1234
         read-timeout: 30
+      product-order:
+        path: "/tmf-api/productOrderingManagement/v4"
+        url: http://localhost:8081
+        read-timeout: 30
       party:
         path: "/tmf-api/party/v4"
         url: http://localhost:8083
@@ -33,6 +37,10 @@ micronaut:
       trusted-issuers-list:
         path: "/"
         url: http://localhost:8085
+        read-timeout: 30
+      tmforum-agreement-api:
+        path: "/tmf-api/agreementManagement/v4"
+        url: http://localhost:8086
         read-timeout: 30
 
 general:

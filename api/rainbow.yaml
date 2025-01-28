@@ -376,6 +376,19 @@ paths:
           description: Bad Request
         '404':
           description: Not found
+    delete:
+      tags:
+        - agreement
+      parameters:
+        - $ref: '#/components/parameters/AgreementId'
+      operationId: deleteAgreementById
+      summary: Delete agreement by id
+      description: Delete the agreement with the given id
+      responses:
+        '202':
+          description: Agreement deleted
+        '400':
+          description: Bad Request
 
 components:
   parameters:

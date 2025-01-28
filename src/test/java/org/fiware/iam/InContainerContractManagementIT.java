@@ -1,5 +1,6 @@
 package org.fiware.iam;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import lombok.extern.slf4j.Slf4j;
@@ -13,8 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class InContainerContractManagementIT extends ContractManagementIT {
 
-	protected InContainerContractManagementIT(TestConfiguration testConfiguration) {
-		super(testConfiguration);
+	protected InContainerContractManagementIT(TestConfiguration testConfiguration, ObjectMapper objectMapper) {
+		super(objectMapper, testConfiguration);
 	}
 
 	@Override

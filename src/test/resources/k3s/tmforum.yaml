@@ -50,7 +50,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productOrderingManagement/v4
-          image: quay.io/fiware/tmforum-product-ordering-management:0.30.2
+          image: quay.io/fiware/tmforum-product-ordering-management:0.30.7
           imagePullPolicy: Always
           name: product-ordering-management
           ports:
@@ -131,7 +131,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productCatalogManagement/v4
-          image: quay.io/fiware/tmforum-product-catalog:0.30.2
+          image: quay.io/fiware/tmforum-product-catalog:0.30.7
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-product-catalog
           ports:
@@ -212,7 +212,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/party/v4
-          image: quay.io/fiware/tmforum-party-catalog:0.30.2
+          image: quay.io/fiware/tmforum-party-catalog:0.30.7
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-party-catalog
           ports:
@@ -293,7 +293,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/serviceCatalogManagement/v4
-          image: quay.io/fiware/tmforum-service-catalog:0.30.2
+          image: quay.io/fiware/tmforum-service-catalog:0.30.7
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-service-catalog
           ports:
@@ -322,4 +322,81 @@ spec:
       name: http
   selector:
     app.kubernetes.io/name: tm-forum-api-service-catalog
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tm-forum-api-agreement
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tm-forum-api-agreement
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tm-forum-api-agreement
+    spec:
+      containers:
+        - env:
+            - name: ENDPOINTS_ALL_PORT
+              value: "9090"
+            - name: MICRONAUT_SERVER_PORT
+              value: "8080"
+            - name: MICRONAUT_METRICS_ENABLED
+              value: "true"
+            - name: ENDPOINTS_HEALTH_ENABLED
+              value: "true"
+            - name: LOGGER_LEVELS_ROOT
+              value: TRACE
+            - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
+              value: "1000"
+            - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
+              value: 2s
+            - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_ACCESS
+              value: 2s
+            - name: MICRONAUT_HTTP_SERVICES_READ_TIMEOUT
+              value: 30s
+            - name: MICRONAUT_HTTP_SERVICES_NGSI_PATH
+              value: ngsi-ld/v1
+            - name: MICRONAUT_HTTP_SERVICES_NGSI_URL
+              value: http://scorpio:1026
+            - name: GENERAL_BASEPATH
+              value: /tmf-api/agreementManagement/v4
+          image: quay.io/fiware/tmforum-agreement:0.30.7
+          imagePullPolicy: Always
+          name: tm-forum-api-agreement
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: http-health
+              protocol: TCP
+          resources: { }
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tm-forum-api-agreement
+  labels:
+    app.kubernetes.io/name: tm-forum-api-agreement
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 8086
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: tm-forum-api-agreement
 ---

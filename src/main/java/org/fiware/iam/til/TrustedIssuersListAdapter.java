@@ -8,14 +8,14 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.exception.TMForumException;
+import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.til.model.TrustedIssuerVO;
 import reactor.core.publisher.Mono;
 
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Singleton
 @RequiredArgsConstructor
@@ -34,13 +34,27 @@ public class TrustedIssuersListAdapter {
 						log.debug("Requested issuer {} does not exist.", issuerDid);
 						return Mono.just(Optional.empty());
 					}
-					throw new TMForumException("Client error on issuer retrieval.", e);
+					throw new TrustedIssuersException("Client error on issuer retrieval.", e);
 				})
 				.flatMap(optionalIssuer -> {
 					if (optionalIssuer.isPresent()) {
-						TrustedIssuerVO updatedIssuer = optionalIssuer.get().addCredentialsItem(credentialToBeAdded);
-						log.debug("Updating existing issuer with {}", updatedIssuer);
-						return apiClient.updateIssuer(issuerDid, updatedIssuer);
+						CredentialsVO cvo = optionalIssuer.get().getCredentials()
+								.stream()
+								.filter(credentialsVO -> credentialsVO.getCredentialsType().equals(credentialToBeAdded.getCredentialsType()))
+								.findAny()
+								.orElse(credentialToBeAdded);
+						TrustedIssuerVO trustedIssuerVO = optionalIssuer.get();
+
+						// convert to set, to prevent duplicates
+						Set<ClaimVO> claimSet = new HashSet<>(cvo.getClaims());
+						claimSet.addAll(credentialToBeAdded.getClaims());
+						cvo.claims(new ArrayList<>(claimSet));
+
+						Set<CredentialsVO> credentialsVOSet = new HashSet<>(trustedIssuerVO.getCredentials());
+						credentialsVOSet.add(cvo);
+						trustedIssuerVO.setCredentials(new ArrayList<>(credentialsVOSet));
+						log.debug("Updating existing issuer with {}", trustedIssuerVO);
+						return apiClient.updateIssuer(issuerDid, trustedIssuerVO);
 					} else {
 						TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(issuerDid).addCredentialsItem(credentialToBeAdded);
 						log.debug("Adding new issuer with {}", newIssuer);
@@ -48,12 +62,12 @@ public class TrustedIssuersListAdapter {
 					}
 				})
 				.onErrorMap(e -> {
-					throw new TMForumException("Was not able to allow the issuer.", e);
+					throw new TrustedIssuersException("Was not able to allow the issuer.", e);
 				});
 
 	}
 
-	public Mono<?> denyIssuer(String issuerDid) {
+	public Mono<HttpResponse<?>> denyIssuer(String issuerDid) {
 		CredentialsVO credentialToBeRemoved = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
 
 		return getIssuer(issuerDid)
@@ -70,7 +84,7 @@ public class TrustedIssuersListAdapter {
 					return Mono.just(HttpResponse.noContent());
 				})
 				.onErrorMap(e -> {
-					throw new TMForumException("Was not able to deny the issuer.", e);
+					throw new TrustedIssuersException("Was not able to deny the issuer.", e);
 				});
 
 	}

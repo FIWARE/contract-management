@@ -66,6 +66,9 @@
         <tmforum.party.api.url>
             https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/party-catalog/api.json
         </tmforum.party.api.url>
+        <tmforum.agreement.api.url>
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/agreement/api.json
+        </tmforum.agreement.api.url>
 
         <!-- Rainbow API -->
         <rainbow.api>${project.basedir}/api/rainbow.yaml</rainbow.api>
@@ -179,6 +182,13 @@
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/com.fasterxml.jackson.datatype/jackson-datatype-jsr310 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.18.2</version>
         </dependency>
 
         <!-- Tests -->
@@ -325,39 +335,6 @@
                         </configuration>
                     </execution>
                     <execution>
-                        <id>openapi-product-ordering-api-client</id>
-                        <phase>generate-sources</phase>
-                        <goals>
-                            <goal>generate</goal>
-                        </goals>
-                        <configuration>
-                            <inputSpec>${tmforum.productorder.api.url}</inputSpec>
-                            <apiPackage>org.fiware.iam.tmforum.productorder.api</apiPackage>
-                            <strictSpec>true</strictSpec>
-                            <modelPackage>org.fiware.iam.tmforum.productorder.model</modelPackage>
-                            <generatorName>micronaut</generatorName>
-                            <modelNameSuffix>VO</modelNameSuffix>
-                            <output>${project.build.directory}</output>
-                            <generateSupportingFiles>false</generateSupportingFiles>
-                            <apisToGenerate>EventsSubscription</apisToGenerate>
-                            <configOptions>
-                                <clientId>product-order</clientId>
-                                <fullJavaUtil>true</fullJavaUtil>
-                                <useOptional>false</useOptional>
-                                <useGenericResponse>true</useGenericResponse>
-                                <useLombokGenerated>true</useLombokGenerated>
-                                <introspected>true</introspected>
-                                <useBeanValidation>false</useBeanValidation>
-                                <supportAsync>false</supportAsync>
-                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
-                                <generateExamples>true</generateExamples>
-                            </configOptions>
-                            <typeMappings>
-                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
-                            </typeMappings>
-                        </configuration>
-                    </execution>
-                    <execution>
                         <id>openapi-product-ordering-api</id>
                         <phase>generate-sources</phase>
                         <goals>
@@ -367,19 +344,52 @@
                             <inputSpec>${tmforum.productorder.api.url}</inputSpec>
                             <strictSpec>true</strictSpec>
                             <modelPackage>org.fiware.iam.tmforum.productorder.model</modelPackage>
+                            <apiPackage>org.fiware.iam.tmforum.productorder.api</apiPackage>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <generateSupportingFiles>false</generateSupportingFiles>
-                            <generateApis>false</generateApis>
-                            <generateApiTests>false</generateApiTests>
-                            <generateModels>true</generateModels>
                             <configOptions>
+                                <clientId>product-order</clientId>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
                                 <useLombokGenerated>true</useLombokGenerated>
                                 <introspected>true</introspected>
                                 <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-agreement-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${tmforum.agreement.api.url}</inputSpec>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.tmforum.agreement.model</modelPackage>
+                            <apiPackage>org.fiware.iam.tmforum.agreement.api</apiPackage>
+                            <generateAliasAsModel>true</generateAliasAsModel>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>TmfVO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <configOptions>
+                                <clientId>tmforum-agreement-api</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
                             </configOptions>
                             <typeMappings>
@@ -778,6 +788,8 @@
                                 <portBinding>8083:8083</portBinding>
                                 <!-- trusted-issuers-list -->
                                 <portBinding>8085:8085</portBinding>
+                                <!-- tm-forum-api-agreement -->
+                                <portBinding>8086:8086</portBinding>
                                 <!-- orion -->
                                 <portBinding>1026:1026</portBinding>
                                 <!-- rainbow -->

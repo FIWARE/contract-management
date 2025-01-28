@@ -3,12 +3,9 @@ package org.fiware.iam.tmforum.handlers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
-import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.RainbowMapper;
-import org.fiware.iam.tmforum.productcatalog.api.CategoryApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.*;
 import org.fiware.rainbow.api.CatalogApiClient;
@@ -20,6 +17,9 @@ import reactor.core.publisher.Mono;
 import java.util.*;
 import java.util.function.Function;
 
+/**
+ * Handle all incoming events in connection to ProductOfferings
+ */
 @RequiredArgsConstructor
 @Singleton
 @Slf4j
@@ -69,7 +69,7 @@ public class ProductOfferingEventHandler implements EventHandler {
 
 		Mono<NewDataserviceVO> dataserviceVOMono = prepareNewDataservice(productOfferingVO);
 		Mono<List<String>> catalogsMono = getCatalogsForProductOffering(productOfferingVO);
-		return Mono.zip(dataserviceVOMono, catalogsMono, (dataservice, idList) -> createDataservice(dataservice, idList)).
+		return Mono.zip(dataserviceVOMono, catalogsMono, this::createDataservice).
 				flatMap(Function.identity());
 	}
 
