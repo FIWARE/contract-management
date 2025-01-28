@@ -34,9 +34,9 @@ public class RainbowAdapter {
 
 		return agreementApiClient
 				.createAgreement(agreementCreateVO)
-				.onErrorMap(t -> new RainbowException("Was not able to create agreement"))
 				.map(HttpResponse::body)
-				.map(body -> objectMapper.convertValue(body, AgreementVO.class));
+				.map(body -> objectMapper.convertValue(body, AgreementVO.class))
+				.onErrorMap(t -> new RainbowException("Was not able to create agreement"));
 	}
 
 	/**
@@ -50,7 +50,9 @@ public class RainbowAdapter {
 					}
 					return false;
 				})
-				.onErrorReturn(false);
+				.onErrorResume(t -> {
+					return Mono.just(false);
+				});
 	}
 
 }

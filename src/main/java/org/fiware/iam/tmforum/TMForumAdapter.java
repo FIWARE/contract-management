@@ -51,11 +51,11 @@ public class TMForumAdapter {
 
 		return agreementApiClient
 				.createAgreement(agreementCreateTmfVO)
+				.map(HttpResponse::body)
+				.map(AgreementTmfVO::getId)
 				.onErrorMap(t -> {
 					throw new TMForumException("Was not able to create agreement", t);
-				})
-				.map(HttpResponse::body)
-				.map(AgreementTmfVO::getId);
+				});
 	}
 
 	/**

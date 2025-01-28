@@ -5,7 +5,6 @@ import io.micronaut.http.client.exceptions.HttpClientException;
 import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
-import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
@@ -14,8 +13,6 @@ import org.fiware.iam.til.model.TrustedIssuerVO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
-
-import java.util.List;
 
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.*;

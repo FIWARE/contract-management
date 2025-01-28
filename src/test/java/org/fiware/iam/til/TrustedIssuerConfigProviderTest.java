@@ -3,15 +3,12 @@ package org.fiware.iam.til;
 import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
-import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-
-import static org.mockito.Mockito.mock;
 
 @MicronautTest(packages = {"org.fiware.iam.til"})
 class TrustedIssuerConfigProviderTest {
