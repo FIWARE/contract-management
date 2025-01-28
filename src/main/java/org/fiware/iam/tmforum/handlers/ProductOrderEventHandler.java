@@ -174,7 +174,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.flatMap(Function.identity());
 	}
 
-	private Mono<HttpResponse<ProductOrderVO>> updateProductOrder(ProductOrderVO productOrderVO, List<AgreementVO> agreementVOS, List<RelatedPartyTmfVO> relatedPartyTmfVOS) {
+	private Mono<ProductOrderVO> updateProductOrder(ProductOrderVO productOrderVO, List<AgreementVO> agreementVOS, List<RelatedPartyTmfVO> relatedPartyTmfVOS) {
 		return Mono.zipDelayError(
 				agreementVOS.stream()
 						.map(agreementVO ->

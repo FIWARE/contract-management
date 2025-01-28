@@ -61,13 +61,14 @@ public class TMForumAdapter {
 	/**
 	 * Add the id of agreements(from rainbow) to the given product order
 	 */
-	public Mono<HttpResponse<ProductOrderVO>> addAgreementToOrder(String productOrderId, List<String> agreementIds) {
+	public Mono<ProductOrderVO> addAgreementToOrder(String productOrderId, List<String> agreementIds) {
 		List<AgreementRefVO> agreementRefVOS = agreementIds.stream()
 				.map(id -> new AgreementRefVO().id(id))
 				.toList();
 		ProductOrderUpdateVO productOrderUpdateVO = new ProductOrderUpdateVO().agreement(agreementRefVOS);
 		return productOrderApiClient
 				.patchProductOrder(productOrderId, productOrderUpdateVO)
+				.map(HttpResponse::body)
 				.onErrorMap(t -> new TMForumException("Was not able to update the product order"));
 	}
 

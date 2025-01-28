@@ -19,13 +19,15 @@ import static org.mockito.Mockito.when;
 
 public class RainbowAdapterTest {
 
-	private AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
 	private ObjectMapper objectMapper = new ObjectMapper();
+	private AgreementApiClient agreementApiClient;
 
 	private RainbowAdapter rainbowAdapter;
 
 	@BeforeEach
 	public void prepare() {
+		agreementApiClient = mock(AgreementApiClient.class);
+
 		rainbowAdapter = new RainbowAdapter(agreementApiClient, objectMapper);
 	}
 
@@ -66,7 +68,7 @@ public class RainbowAdapterTest {
 
 		assertTrue(rainbowAdapter.deleteAgreement("the-id").block(), "The agreement should have been deleted.");
 	}
-	
+
 	@Test
 	public void test_deleteAgreement_invalidResponse() {
 		when(agreementApiClient.deleteAgreementById(any())).thenReturn(Mono.just(HttpResponse.badRequest()));
