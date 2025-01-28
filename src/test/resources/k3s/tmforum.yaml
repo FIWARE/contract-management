@@ -1,140 +1,4 @@
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongo
-  labels:
-    app.kubernetes.io/name: mongo
-    app.kubernetes.io/instance: mongo
-spec:
-  type: ClusterIP
-  ports:
-    - port: 27017
-      targetPort: 27017
-      protocol: TCP
-      name: mongo
-  selector:
-    app.kubernetes.io/name: mongo
-    app.kubernetes.io/instance: mongo
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: orion-ld
-  labels:
-    app.kubernetes.io/name: orion-ld
-    app.kubernetes.io/instance: orion-ld
-spec:
-  type: LoadBalancer
-  ports:
-    - port: 1026
-      targetPort: 1026
-      protocol: TCP
-      name: http
-  selector:
-    app.kubernetes.io/name: orion-ld
-    app.kubernetes.io/instance: orion-ld
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mongo
-  labels:
-    app.kubernetes.io/name: mongo
-    app.kubernetes.io/instance: mongo
-spec:
-  replicas: 1
-  revisionHistoryLimit: 3
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-    type: RollingUpdate
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: mongo
-      app.kubernetes.io/instance: mongo
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: mongo
-        app.kubernetes.io/instance: mongo
-    spec:
-      containers:
-        - name: mongo-db
-          imagePullPolicy: IfNotPresent
-          image: "quay.io/opencloudio/ibm-mongodb:4.0.24"
-          securityContext:
-            runAsUser: 999
-          ports:
-            - name: mongo
-              containerPort: 27017
-              protocol: TCP
-          livenessProbe:
-            exec:
-              command:
-                - bash
-                - -ec
-                - |
-                  mongo --eval 'db.runCommand("ping").ok' 127.0.0.1:27017/test && echo 0 || echo 1
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          readinessProbe:
-            exec:
-              command:
-                - bash
-                - -ec
-                - |
-                  mongo --eval 'db.runCommand("ping").ok' 127.0.0.1:27017/test && echo 0 || echo 1
-            initialDelaySeconds: 5
-            periodSeconds: 5
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: orion-ld
-  labels:
-    app.kubernetes.io/name: orion-ld
-    app.kubernetes.io/instance: orion-ld
-spec:
-  replicas: 1
-  revisionHistoryLimit: 3
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-    type: RollingUpdate
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: orion-ld
-      app.kubernetes.io/instance: orion-ld
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: orion-ld
-        app.kubernetes.io/instance: orion-ld
-    spec:
-      serviceAccountName: default
-      containers:
-        - name: orion-ld
-          imagePullPolicy: IfNotPresent
-          image: "quay.io/fiware/orion-ld:1.1.0"
-          ports:
-            - name: http
-              containerPort: 1026
-              protocol: TCP
-          env:
-            # db
-            - name: ORIONLD_MONGO_HOST
-              value: mongo:27017
-            - name: ORIONLD_MONGO_DB
-              value: orion
-            # logging
-            - name: ORIONLD_LOG_LEVEL
-              value: "DEBUG"
-            - name: ORIONLD_TMP_TRACES
-              value: "TRUE"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -156,6 +20,10 @@ spec:
       labels:
         app.kubernetes.io/name: tm-forum-api-product-ordering-management
     spec:
+      hostAliases:
+        - ip: "192.168.2.224"  # Replace with your host's IP
+          hostnames:
+            - "local-host"
       containers:
         - env:
             - name: ENDPOINTS_ALL_PORT
@@ -167,7 +35,7 @@ spec:
             - name: ENDPOINTS_HEALTH_ENABLED
               value: "true"
             - name: LOGGER_LEVELS_ROOT
-              value: DEBUG
+              value: TRACE
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
               value: "1000"
             - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
@@ -179,13 +47,11 @@ spec:
             - name: MICRONAUT_HTTP_SERVICES_NGSI_PATH
               value: ngsi-ld/v1
             - name: MICRONAUT_HTTP_SERVICES_NGSI_URL
-              value: http://orion-ld:1026
+              value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productOrderingManagement/v4
-            - name: GENERAL_CONTEXT_URL
-              value: https://smartdatamodels.org/context.jsonld
-          image: quay.io/beknazar/tmforum-product-ordering-management:2.0.5
-          imagePullPolicy: IfNotPresent
+          image: quay.io/fiware/tmforum-product-ordering-management:0.30.7
+          imagePullPolicy: Always
           name: product-ordering-management
           ports:
             - containerPort: 8080
@@ -194,7 +60,7 @@ spec:
             - containerPort: 9090
               name: http-health
               protocol: TCP
-          resources: {}
+          resources: { }
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
 ---
@@ -235,6 +101,10 @@ spec:
       labels:
         app.kubernetes.io/name: tm-forum-api-product-catalog
     spec:
+      hostAliases:
+        - ip: "192.168.2.224"  # Replace with your host's IP
+          hostnames:
+            - "local-host"
       containers:
         - env:
             - name: ENDPOINTS_ALL_PORT
@@ -258,12 +128,10 @@ spec:
             - name: MICRONAUT_HTTP_SERVICES_NGSI_PATH
               value: ngsi-ld/v1
             - name: MICRONAUT_HTTP_SERVICES_NGSI_URL
-              value: http://orion-ld:1026
+              value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productCatalogManagement/v4
-            - name: GENERAL_CONTEXT_URL
-              value: https://smartdatamodels.org/context.jsonld
-          image: quay.io/beknazar/tmforum-product-catalog:2.0.5
+          image: quay.io/fiware/tmforum-product-catalog:0.30.7
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-product-catalog
           ports:
@@ -273,7 +141,7 @@ spec:
             - containerPort: 9090
               name: http-health
               protocol: TCP
-          resources: {}
+          resources: { }
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
 ---
@@ -314,6 +182,10 @@ spec:
       labels:
         app.kubernetes.io/name: tm-forum-api-party-catalog
     spec:
+      hostAliases:
+        - ip: ${local.ip}  # Replace with your host's IP
+          hostnames:
+            - "local-host"
       containers:
         - env:
             - name: ENDPOINTS_ALL_PORT
@@ -337,12 +209,10 @@ spec:
             - name: MICRONAUT_HTTP_SERVICES_NGSI_PATH
               value: ngsi-ld/v1
             - name: MICRONAUT_HTTP_SERVICES_NGSI_URL
-              value: http://orion-ld:1026
+              value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/party/v4
-            - name: GENERAL_CONTEXT_URL
-              value: https://smartdatamodels.org/context.jsonld
-          image: quay.io/beknazar/tmforum-party-catalog:2.0.5
+          image: quay.io/fiware/tmforum-party-catalog:0.30.7
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-party-catalog
           ports:
@@ -352,7 +222,7 @@ spec:
             - containerPort: 9090
               name: http-health
               protocol: TCP
-          resources: {}
+          resources: { }
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
 ---
@@ -371,4 +241,162 @@ spec:
       name: http
   selector:
     app.kubernetes.io/name: tm-forum-api-party-catalog
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tm-forum-api-service-catalog
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tm-forum-api-service-catalog
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tm-forum-api-service-catalog
+    spec:
+      hostAliases:
+        - ip: ${local.ip}   # Replace with your host's IP
+          hostnames:
+            - "local-host"
+      containers:
+        - env:
+            - name: ENDPOINTS_ALL_PORT
+              value: "9090"
+            - name: MICRONAUT_SERVER_PORT
+              value: "8080"
+            - name: MICRONAUT_METRICS_ENABLED
+              value: "true"
+            - name: ENDPOINTS_HEALTH_ENABLED
+              value: "true"
+            - name: LOGGER_LEVELS_ROOT
+              value: DEBUG
+            - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
+              value: "1000"
+            - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
+              value: 2s
+            - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_ACCESS
+              value: 2s
+            - name: MICRONAUT_HTTP_SERVICES_READ_TIMEOUT
+              value: 30s
+            - name: MICRONAUT_HTTP_SERVICES_NGSI_PATH
+              value: ngsi-ld/v1
+            - name: MICRONAUT_HTTP_SERVICES_NGSI_URL
+              value: http://scorpio:1026
+            - name: GENERAL_BASEPATH
+              value: /tmf-api/serviceCatalogManagement/v4
+          image: quay.io/fiware/tmforum-service-catalog:0.30.7
+          imagePullPolicy: IfNotPresent
+          name: tm-forum-api-service-catalog
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: http-health
+              protocol: TCP
+          resources: { }
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tm-forum-api-service-catalog
+  labels:
+    app.kubernetes.io/name: tm-forum-api-service-catalog
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 8084
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: tm-forum-api-service-catalog
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tm-forum-api-agreement
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tm-forum-api-agreement
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tm-forum-api-agreement
+    spec:
+      containers:
+        - env:
+            - name: ENDPOINTS_ALL_PORT
+              value: "9090"
+            - name: MICRONAUT_SERVER_PORT
+              value: "8080"
+            - name: MICRONAUT_METRICS_ENABLED
+              value: "true"
+            - name: ENDPOINTS_HEALTH_ENABLED
+              value: "true"
+            - name: LOGGER_LEVELS_ROOT
+              value: TRACE
+            - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
+              value: "1000"
+            - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
+              value: 2s
+            - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_ACCESS
+              value: 2s
+            - name: MICRONAUT_HTTP_SERVICES_READ_TIMEOUT
+              value: 30s
+            - name: MICRONAUT_HTTP_SERVICES_NGSI_PATH
+              value: ngsi-ld/v1
+            - name: MICRONAUT_HTTP_SERVICES_NGSI_URL
+              value: http://scorpio:1026
+            - name: GENERAL_BASEPATH
+              value: /tmf-api/agreementManagement/v4
+          image: quay.io/fiware/tmforum-agreement:0.30.7
+          imagePullPolicy: Always
+          name: tm-forum-api-agreement
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: http-health
+              protocol: TCP
+          resources: { }
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tm-forum-api-agreement
+  labels:
+    app.kubernetes.io/name: tm-forum-api-agreement
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 8086
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: tm-forum-api-agreement
 ---

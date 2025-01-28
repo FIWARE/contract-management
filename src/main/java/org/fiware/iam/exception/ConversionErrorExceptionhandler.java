@@ -10,7 +10,7 @@ import io.micronaut.http.annotation.Produces;
 import io.micronaut.http.server.exceptions.ExceptionHandler;
 import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.tmforum.product.server.model.ErrorVO;
+import org.fiware.iam.tmforum.productorder.model.ErrorVO;
 
 @Produces
 @Singleton

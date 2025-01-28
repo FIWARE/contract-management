@@ -1,0 +1,12 @@
+test:
+  inContainer: true
+  brokerHost: http://localhost:1026
+  tilHost: http://localhost:8085
+  productOrderingManagementHost: http://localhost:8081
+  partyCatalogHost: http://localhost:8083
+  productCatalogHost: http://localhost:8082
+  providerRainbowHost: http://localhost:1234
+  agreementHost: http://localhost:8086
+
+general:
+  host: contract-management
