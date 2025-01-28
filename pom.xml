@@ -4,9 +4,9 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.micronaut</groupId>
+        <groupId>io.micronaut.platform</groupId>
         <artifactId>micronaut-parent</artifactId>
-        <version>3.9.1</version>
+        <version>4.7.1</version>
     </parent>
 
     <groupId>org.fiware.iam</groupId>
@@ -30,9 +30,9 @@
     </developers>
 
     <properties>
-        <jdk.version>17</jdk.version>
-        <release.version>17</release.version>
-        <micronaut.version>3.9.1</micronaut.version>
+        <jdk.version>21</jdk.version>
+        <release.version>21</release.version>
+        <micronaut.version>4.7.1</micronaut.version>
 
         <!-- project info -->
         <project.author.name>Tim Smyth</project.author.name>
@@ -52,14 +52,30 @@
 
         <!-- TM Forum APIs -->
         <tmforum.productorder.api.url>
-            https://tmf-open-api-table-documents.s3.eu-west-1.amazonaws.com/OpenApiTable/4.0.0/swagger/TMF622-ProductOrder-v4.0.0.swagger.json
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/product-ordering-management/api.json
         </tmforum.productorder.api.url>
+        <tmforum.productcatalog.api.url>
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/product-catalog/api.json
+        </tmforum.productcatalog.api.url>
+        <tmforum.servicecatalog.api.url>
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/service-catalog/api.json
+        </tmforum.servicecatalog.api.url>
+        <tmforum.resourcecatalog.api.url>
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/resource-catalog/api.json
+        </tmforum.resourcecatalog.api.url>
         <tmforum.party.api.url>
-            https://tmf-open-api-table-documents.s3.eu-west-1.amazonaws.com/OpenApiTable/4.0.0/swagger/TMF632-Party-v4.0.0.swagger.json
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/party-catalog/api.json
         </tmforum.party.api.url>
+        <tmforum.agreement.api.url>
+            https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/agreement/api.json
+        </tmforum.agreement.api.url>
+
+        <!-- Rainbow API -->
+        <rainbow.api>${project.basedir}/api/rainbow.yaml</rainbow.api>
 
         <!-- Trusted Issuers List API -->
-        <til.api.url>https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/main/api/trusted-issuers-list.yaml</til.api.url>
+        <til.api.url>https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/main/api/trusted-issuers-list.yaml
+        </til.api.url>
 
         <!-- oci -->
         <exec.mainClass>org.fiware.iam.Application</exec.mainClass>
@@ -68,7 +84,7 @@
 
         <!-- lazy dev -->
         <version.org.mapstruct>1.5.3.Final</version.org.mapstruct>
-        <version.org.projectlombok>1.18.26</version.org.projectlombok>
+        <version.org.projectlombok>1.18.36</version.org.projectlombok>
 
         <!-- logging -->
         <version.io.kokuwa.micronaut.logging>3.1.0</version.io.kokuwa.micronaut.logging>
@@ -79,16 +95,20 @@
 
         <!-- test -->
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
-        <version.io.kokuwa.maven.k3s-plugin>1.2.2</version.io.kokuwa.maven.k3s-plugin>
+        <version.io.kokuwa.maven.k3s-plugin>1.5.0</version.io.kokuwa.maven.k3s-plugin>
         <version.org.awaitility>4.2.0</version.org.awaitility>
+
+        <!-- configure your local ip address here, in order to enable containers calling back the (local)test-instance -->
+        <local.ip>192.168.2.224</local.ip>
 
         <!-- build -->
         <version.org.codehaus.mojo.build-helper-maven-plugin>3.4.0</version.org.codehaus.mojo.build-helper-maven-plugin>
-        <version.org.jacoco.maven-plugin>0.8.8</version.org.jacoco.maven-plugin>
+        <version.org.jacoco.maven-plugin>0.8.12</version.org.jacoco.maven-plugin>
         <version.org.eluder.coveralls.maven-plugin>4.3.0</version.org.eluder.coveralls.maven-plugin>
         <coveralls.token>myToken</coveralls.token>
         <jacoco.reportFolder>${project.build.directory}/jacoco/${artifactId}</jacoco.reportFolder>
         <jacoco.utReportFile>${jacoco.reportFolder}/test.exec</jacoco.utReportFile>
+
     </properties>
 
     <dependencies>
@@ -128,11 +148,6 @@
         </dependency>
         <dependency>
             <groupId>io.micronaut</groupId>
-            <artifactId>micronaut-validation</artifactId>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.micronaut</groupId>
             <artifactId>micronaut-http-server-netty</artifactId>
             <scope>compile</scope>
         </dependency>
@@ -141,12 +156,39 @@
             <artifactId>micronaut-http-client</artifactId>
             <scope>compile</scope>
         </dependency>
-
+        <dependency>
+            <groupId>io.micronaut.validation</groupId>
+            <artifactId>micronaut-validation</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micronaut</groupId>
+            <artifactId>micronaut-jackson-databind</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micronaut.reactor</groupId>
+            <artifactId>micronaut-reactor</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <!-- required for config micronaut > 4.x -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <scope>runtime</scope>
+        </dependency>
         <!-- logging -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/com.fasterxml.jackson.datatype/jackson-datatype-jsr310 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.18.2</version>
         </dependency>
 
         <!-- Tests -->
@@ -215,6 +257,10 @@
                 <directory>src/main/resources</directory>
                 <filtering>true</filtering>
             </resource>
+            <resource>
+                <directory>src/test/resources</directory>
+                <filtering>true</filtering>
+            </resource>
         </resources>
         <plugins>
             <!-- generate sources from openapi spec -->
@@ -223,6 +269,38 @@
                 <artifactId>openapi-generator-maven-plugin</artifactId>
                 <version>${version.org.openapitools.generator-maven-plugin}</version>
                 <executions>
+                    <execution>
+                        <id>rainbow</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${rainbow.api}</inputSpec>
+                            <apiPackage>org.fiware.rainbow.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.rainbow.model</modelPackage>
+                            <generateAliasAsModel>true</generateAliasAsModel>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <configOptions>
+                                <clientId>rainbow</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>til</id>
                         <phase>generate-sources</phase>
@@ -240,47 +318,14 @@
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <configOptions>
-                                <clientId>til</clientId>
+                                <clientId>trusted-issuers-list</clientId>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>
                                 <useGenericResponse>true</useGenericResponse>
                                 <useLombokGenerated>true</useLombokGenerated>
                                 <introspected>true</introspected>
                                 <useBeanValidation>false</useBeanValidation>
-                                <supportAsync>false</supportAsync>
-                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
-                                <generateExamples>true</generateExamples>
-                            </configOptions>
-                            <typeMappings>
-                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
-                            </typeMappings>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>openapi-product-ordering-api-client</id>
-                        <phase>generate-sources</phase>
-                        <goals>
-                            <goal>generate</goal>
-                        </goals>
-                        <configuration>
-                            <inputSpec>${tmforum.productorder.api.url}</inputSpec>
-                            <apiPackage>org.fiware.iam.tmforum.product.client.api</apiPackage>
-                            <strictSpec>true</strictSpec>
-                            <modelPackage>org.fiware.iam.tmforum.product.client.model</modelPackage>
-                            <generatorName>micronaut</generatorName>
-                            <modelNameSuffix>VO</modelNameSuffix>
-                            <output>${project.build.directory}</output>
-                            <generateSupportingFiles>false</generateSupportingFiles>
-                            <apisToGenerate>EventsSubscription</apisToGenerate>
-                            <configOptions>
-                                <clientId>product</clientId>
-                                <fullJavaUtil>true</fullJavaUtil>
-                                <useOptional>false</useOptional>
-                                <useGenericResponse>true</useGenericResponse>
-                                <useLombokGenerated>true</useLombokGenerated>
-                                <introspected>true</introspected>
-                                <useBeanValidation>false</useBeanValidation>
-                                <supportAsync>false</supportAsync>
+                                <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
                                 <generateExamples>true</generateExamples>
                             </configOptions>
@@ -297,22 +342,119 @@
                         </goals>
                         <configuration>
                             <inputSpec>${tmforum.productorder.api.url}</inputSpec>
-                            <apiPackage>org.fiware.iam.tmforum.product.server.api</apiPackage>
                             <strictSpec>true</strictSpec>
-                            <modelPackage>org.fiware.iam.tmforum.product.server.model</modelPackage>
+                            <modelPackage>org.fiware.iam.tmforum.productorder.model</modelPackage>
+                            <apiPackage>org.fiware.iam.tmforum.productorder.api</apiPackage>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
                             <generateSupportingFiles>false</generateSupportingFiles>
-                            <apisToGenerate>NotificationListenersClientSide</apisToGenerate>
                             <configOptions>
+                                <clientId>product-order</clientId>
                                 <fullJavaUtil>true</fullJavaUtil>
                                 <useOptional>false</useOptional>
                                 <useGenericResponse>true</useGenericResponse>
                                 <useLombokGenerated>true</useLombokGenerated>
                                 <introspected>true</introspected>
                                 <useBeanValidation>false</useBeanValidation>
-                                <supportAsync>false</supportAsync>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-agreement-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${tmforum.agreement.api.url}</inputSpec>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.tmforum.agreement.model</modelPackage>
+                            <apiPackage>org.fiware.iam.tmforum.agreement.api</apiPackage>
+                            <generateAliasAsModel>true</generateAliasAsModel>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>TmfVO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <configOptions>
+                                <clientId>tmforum-agreement-api</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-product-catalog-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${tmforum.productcatalog.api.url}</inputSpec>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.tmforum.productcatalog.model</modelPackage>
+                            <apiPackage>org.fiware.iam.tmforum.productcatalog.api</apiPackage>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <generateModels>true</generateModels>
+                            <configOptions>
+                                <clientId>product-catalog</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-service-catalog-api</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${tmforum.servicecatalog.api.url}</inputSpec>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.tmforum.servicecatalog.model</modelPackage>
+                            <apiPackage>org.fiware.iam.tmforum.servicecatalog.api</apiPackage>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <generateModels>true</generateModels>
+                            <configOptions>
+                                <clientId>service-catalog</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
                                 <generateExamples>true</generateExamples>
                             </configOptions>
@@ -345,7 +487,7 @@
                                 <useLombokGenerated>true</useLombokGenerated>
                                 <introspected>true</introspected>
                                 <useBeanValidation>false</useBeanValidation>
-                                <supportAsync>false</supportAsync>
+                                <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
                                 <generateExamples>true</generateExamples>
                             </configOptions>
@@ -396,7 +538,7 @@
                 </executions>
             </plugin>
             <plugin>
-                <groupId>io.micronaut.build</groupId>
+                <groupId>io.micronaut.maven</groupId>
                 <artifactId>micronaut-maven-plugin</artifactId>
             </plugin>
             <plugin>
@@ -406,10 +548,20 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} --add-opens java.base/java.lang=ALL-UNNAMED --add-opens
+                        java.base/java.time=ALL-UNNAMED
+                    </argLine>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} --add-opens java.base/java.lang=ALL-UNNAMED --add-opens
+                        java.base/java.time=ALL-UNNAMED
+                    </argLine>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>
@@ -480,7 +632,7 @@
                 <configuration>
                     <!-- Uncomment to enable incremental compilation -->
                     <!-- <useIncrementalCompilation>false</useIncrementalCompilation> -->
-                    <annotationProcessorPaths>
+                    <annotationProcessorPaths combine.self="override">
                         <path>
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
@@ -507,9 +659,9 @@
                             <version>${micronaut.version}</version>
                         </path>
                         <path>
-                            <groupId>io.micronaut</groupId>
+                            <groupId>io.micronaut.validation</groupId>
                             <artifactId>micronaut-validation</artifactId>
-                            <version>${micronaut.version}</version>
+                            <version>4.8.0</version>
                         </path>
                     </annotationProcessorPaths>
                     <compilerArgs>
@@ -526,7 +678,7 @@
                         <configuration>
                             <!-- Uncomment to enable incremental compilation -->
                             <!-- <useIncrementalCompilation>false</useIncrementalCompilation> -->
-                            <annotationProcessorPaths>
+                            <annotationProcessorPaths combine.self="override">
                                 <path>
                                     <groupId>org.projectlombok</groupId>
                                     <artifactId>lombok</artifactId>
@@ -553,9 +705,9 @@
                                     <version>${micronaut.version}</version>
                                 </path>
                                 <path>
-                                    <groupId>io.micronaut</groupId>
+                                    <groupId>io.micronaut.validation</groupId>
                                     <artifactId>micronaut-validation</artifactId>
-                                    <version>${micronaut.version}</version>
+                                    <version>4.8.0</version>
                                 </path>
                             </annotationProcessorPaths>
                             <compilerArgs>
@@ -579,6 +731,75 @@
                     </archive>
                 </configuration>
             </plugin>
+
+            <!-- run tests -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                    <failIfNoTests>true</failIfNoTests>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <phase>integration-test</phase>
+                        <goals>
+                            <goal>integration-test</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>verify</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.kokuwa.maven</groupId>
+                <artifactId>k3s-maven-plugin</artifactId>
+                <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-test-cluster</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>run</goal>
+                            <goal>image</goal>
+                            <goal>apply</goal>
+                        </goals>
+                        <configuration>
+                            <timeout>1200</timeout>
+                            <manifests>${project.build.directory}/classes/k3s/</manifests>
+                            <portBindings>
+                                <!-- tm-forum-api-product-ordering-management -->
+                                <portBinding>8081:8081</portBinding>
+                                <!-- tm-forum-api-product-catalog -->
+                                <portBinding>8082:8082</portBinding>
+                                <!-- tm-forum-api-party-catalog -->
+                                <portBinding>8083:8083</portBinding>
+                                <!-- trusted-issuers-list -->
+                                <portBinding>8085:8085</portBinding>
+                                <!-- tm-forum-api-agreement -->
+                                <portBinding>8086:8086</portBinding>
+                                <!-- orion -->
+                                <portBinding>1026:1026</portBinding>
+                                <!-- rainbow -->
+                                <portBinding>1234:1234</portBinding>
+                                <portBinding>1235:1235</portBinding>
+                            </portBindings>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
     <profiles>
@@ -598,7 +819,7 @@
                         <artifactId>jib-maven-plugin</artifactId>
                         <configuration combine.self="override">
                             <from>
-                                <image>registry.access.redhat.com/ubi8/openjdk-17:1.15</image>
+                                <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
                             </from>
                             <to>
                                 <image>${image.registry}/${image.repository}/${project.artifactId}</image>
@@ -659,79 +880,52 @@
             </build>
         </profile>
         <profile>
+            <!-- can be used to spin up a local dev environment -->
+            <id>dev</id>
+            <build>
+                <plugins>
+                    <!-- run tests -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>io.kokuwa.maven</groupId>
+                        <artifactId>k3s-maven-plugin</artifactId>
+                        <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <activation>
                 <activeByDefault>true</activeByDefault>
             </activation>
             <id>integration-test</id>
             <build>
                 <plugins>
-<!--                    &lt;!&ndash; only run integration tests &ndash;&gt;-->
-<!--                    <plugin>-->
-<!--                        <groupId>org.apache.maven.plugins</groupId>-->
-<!--                        <artifactId>maven-surefire-plugin</artifactId>-->
-<!--                        <configuration>-->
-<!--                            <skip>true</skip>-->
-<!--                        </configuration>-->
-<!--                    </plugin>-->
                     <!-- run tests -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <configuration>
-                            <failIfNoTests>true</failIfNoTests>
-                            <includes>
-                                <include>**/*IT.java</include>
-                            </includes>
+                            <skip>false</skip>
                         </configuration>
-                        <executions>
-                            <execution>
-                                <id>test</id>
-                                <phase>integration-test</phase>
-                                <goals>
-                                    <goal>integration-test</goal>
-                                </goals>
-                            </execution>
-                            <execution>
-                                <id>verify</id>
-                                <phase>verify</phase>
-                                <goals>
-                                    <goal>verify</goal>
-                                </goals>
-                            </execution>
-                        </executions>
                     </plugin>
                     <plugin>
                         <groupId>io.kokuwa.maven</groupId>
                         <artifactId>k3s-maven-plugin</artifactId>
                         <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
                         <executions>
-                            <execution>
-                                <id>prepare-test-cluster</id>
-                                <phase>pre-integration-test</phase>
-                                <goals>
-                                    <goal>run</goal>
-                                    <goal>image</goal>
-                                    <goal>apply</goal>
-                                </goals>
-                                <configuration>
-                                    <timeout>1200</timeout>
-                                    <streamLogs>true</streamLogs>
-                                    <manifests>src/test/resources/k3s/</manifests>
-                                    <command>kubectl apply -R -f .</command>
-                                    <portBindings>
-                                        <!-- tm-forum-api-product-ordering-management -->
-                                        <portBinding>8081:8081</portBinding>
-                                        <!-- tm-forum-api-product-catalog -->
-                                        <portBinding>8082:8082</portBinding>
-                                        <!-- tm-forum-api-party-catalog -->
-                                        <portBinding>8083:8083</portBinding>
-                                        <!-- trusted-issuers-list -->
-                                        <portBinding>8085:8085</portBinding>
-                                        <!-- orion -->
-                                        <portBinding>1026:1026</portBinding>
-                                    </portBindings>
-                                </configuration>
-                            </execution>
                             <execution>
                                 <id>clean</id>
                                 <phase>post-integration-test</phase>
@@ -740,6 +934,79 @@
                                 </goals>
                             </execution>
                         </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <id>in-container</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                            <systemPropertyVariables>
+                                <micronaut.environments>ga</micronaut.environments>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>com.google.cloud.tools</groupId>
+                        <artifactId>jib-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>dockerBuild</goal>
+                                </goals>
+                                <configuration combine.self="override">
+                                    <from>
+                                        <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
+                                    </from>
+                                    <to>
+                                        <image>contract-management</image>
+                                    </to>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-resources-trust-anchor</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.directory}/classes/k3s</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <includes>
+                                                <include>contract-management.yaml</include>
+                                            </includes>
+                                            <directory>${project.basedir}/src/test/resources/</directory>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>io.kokuwa.maven</groupId>
+                        <artifactId>k3s-maven-plugin</artifactId>
+                        <version>${version.io.kokuwa.maven.k3s-plugin}</version>
+                        <configuration>
+                            <dockerImages>
+                                <dockerImage>contract-management</dockerImage>
+                            </dockerImages>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>
