@@ -123,20 +123,20 @@ public abstract class ContractManagementIT {
 		// state offered
 		changeQuoteState(quoteId, "approved");
 
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:OFFERED"));
+		Awaitility.await().alias("Negotiation state should be OFFERED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:OFFERED"));
 
 		// state accepted
 		changeQuoteState(quoteId, "accepted");
 		// ACCEPTED only happens implicitly, since the provider takes the "ACCEPTED", validates it and sets it to "AGREED"
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:AGREED"));
+		Awaitility.await().alias("Negotiation state should be AGREED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:AGREED"));
 
 		// state verified
 		String orderId = orderProductWithQuote(organizationId, quoteId);
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:VERIFIED"));
+		Awaitility.await().alias("Negotiation state should be VERIFIED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:VERIFIED"));
 
 		// state finalized
 		completeProductOrder(orderId);
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:FINALIZED"));
+		Awaitility.await().alias("Negotiation state should be FINALIZED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:FINALIZED"));
 
 		assertAgreementCreated(offeringId);
 		assertAgreementReferenced(orderId);
@@ -212,7 +212,7 @@ public abstract class ContractManagementIT {
 
 	private void assertAgreementCreated(String offerId) {
 
-		Awaitility.await().atMost(30, TimeUnit.SECONDS).untilAsserted(() -> {
+		Awaitility.await().alias("The agreement was not created.").atMost(30, TimeUnit.SECONDS).untilAsserted(() -> {
 					boolean match = getAgreements().stream()
 							.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(offerId));
 					assertTrue(match, String.format("No agreement for %s", offerId));
@@ -222,7 +222,9 @@ public abstract class ContractManagementIT {
 
 
 	private void assertAgreementReferenced(String orderId) {
-		Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
+		Awaitility.await()
+				.alias("The agreement was not referenced.")
+				.atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
 					ProductOrderVO productOrderVO = getProductOrder(orderId);
 					assertNotNull(productOrderVO.getAgreement(), "An agreement should be linked to the order.");
 					assertTrue(
