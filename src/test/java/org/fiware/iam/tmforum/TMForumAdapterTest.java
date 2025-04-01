@@ -1,5 +1,6 @@
 package org.fiware.iam.tmforum;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import org.fiware.iam.exception.TMForumException;
@@ -7,6 +8,7 @@ import org.fiware.iam.tmforum.agreement.api.AgreementApiClient;
 import org.fiware.iam.tmforum.agreement.model.AgreementTmfVO;
 import org.fiware.iam.tmforum.productorder.api.ProductOrderApiClient;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
+import org.fiware.iam.tmforum.quote.api.QuoteApiClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -23,6 +25,7 @@ public class TMForumAdapterTest {
 
 	private ProductOrderApiClient productOrderApiClient;
 	private AgreementApiClient agreementApiClient;
+	private QuoteApiClient quoteApiClient;
 
 	private TMForumAdapter tmForumAdapter;
 
@@ -30,8 +33,9 @@ public class TMForumAdapterTest {
 	public void prepare() {
 		productOrderApiClient = mock(ProductOrderApiClient.class);
 		agreementApiClient = mock(AgreementApiClient.class);
+		quoteApiClient = mock(QuoteApiClient.class);
 
-		tmForumAdapter = new TMForumAdapter(productOrderApiClient, agreementApiClient);
+		tmForumAdapter = new TMForumAdapter(new ObjectMapper(), productOrderApiClient, agreementApiClient, quoteApiClient);
 	}
 
 	@Test

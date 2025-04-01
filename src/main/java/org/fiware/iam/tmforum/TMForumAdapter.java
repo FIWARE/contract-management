@@ -1,9 +1,11 @@
 package org.fiware.iam.tmforum;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.exception.RainbowException;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.agreement.api.AgreementApiClient;
 import org.fiware.iam.tmforum.agreement.model.*;
@@ -11,9 +13,14 @@ import org.fiware.iam.tmforum.productorder.api.ProductOrderApiClient;
 import org.fiware.iam.tmforum.productorder.model.AgreementRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderUpdateVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
+import org.fiware.iam.tmforum.quote.api.QuoteApiClient;
+import org.fiware.iam.tmforum.quote.model.QuoteUpdateVO;
+import org.fiware.iam.tmforum.quote.model.QuoteVO;
+import org.fiware.rainbow.model.NegotiationProcessVO;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Adapter to handle communication with TMForum APIs.
@@ -25,8 +32,11 @@ public class TMForumAdapter {
 
 	public static final String DATA_SPACE_PROTOCOL_AGREEMENT_ID = "Data-Space-Protocol-Agreement-Id";
 
+	private final ObjectMapper objectMapper;
+
 	private final ProductOrderApiClient productOrderApiClient;
 	private final AgreementApiClient agreementApiClient;
+	private final QuoteApiClient quoteApiClient;
 
 	/**
 	 * Create a TMForum Agreement and connect it with product order its coming from.
@@ -58,6 +68,7 @@ public class TMForumAdapter {
 				});
 	}
 
+
 	/**
 	 * Add the id of agreements(from rainbow) to the given product order
 	 */
@@ -70,6 +81,29 @@ public class TMForumAdapter {
 				.patchProductOrder(productOrderId, productOrderUpdateVO)
 				.map(HttpResponse::body)
 				.onErrorMap(t -> new TMForumException("Was not able to update the product order"));
+	}
+
+	/**
+	 * Update the externalId of a quote.
+	 */
+	public Mono<QuoteVO> updateExternalId(QuoteVO quoteVO, String externalId) {
+		QuoteUpdateVO quoteUpdateVO = objectMapper.convertValue(quoteVO.externalId(externalId), QuoteUpdateVO.class);
+		return quoteApiClient.patchQuote(quoteVO.getId(), quoteUpdateVO)
+				.onErrorMap(t -> new TMForumException(String.format("Was not able to update the quote %s.", quoteVO.getId()), t))
+				.map(HttpResponse::body);
+
+
+	}
+
+	/**
+	 * Return the quote with the given id.
+	 */
+	public Mono<QuoteVO> getQuoteById(String id) {
+		return quoteApiClient.retrieveQuote(id, null)
+				.onErrorMap(t -> {
+					throw new TMForumException(String.format("Was not able to get the quote %s.", id), t);
+				})
+				.map(HttpResponse::body);
 	}
 
 }

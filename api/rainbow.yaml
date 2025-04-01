@@ -389,9 +389,85 @@ paths:
           description: Agreement deleted
         '400':
           description: Bad Request
+  /negotiations/request:
+    post:
+      tags:
+        - contract
+      operationId: createRequest
+      summary: Request a contract negotiation
+      description: Request a contract negotiation for the given offer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NegotiationRequest'
+      responses:
+        '201':
+          description: Successfully created the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Negotiation'
+        '400':
+          description: Bad Request
+        '404':
+          description: Catalog not found
+  /api/v1/contract-negotiation/processes/provider/{providerId}:
+    get:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProviderId'
+      operationId: getProcessById
+      summary: Request a contract negotiation
+      description: Request a contract negotiation for the given offer
+      responses:
+        '201':
+          description: Successfully created the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderNegotiation'
+        '404':
+          description: Not found
+  /api/v1/contract-negotiation/processes/{processId}:
+    put:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+      operationId: updateProcessById
+      summary: Update the process
+      description: Update the states of the running negotiation process
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NegotiationProcess'
+      responses:
+        '200':
+          description: Successfully updated the request.
+        '400':
+          description: Bad Request
 
 components:
   parameters:
+    ProcessId:
+      name: processId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
     CatalogId:
       name: catalogId
       in: path
@@ -428,6 +504,79 @@ components:
         type: string
         example: urn:uuid:some-uuid
   schemas:
+    NegotiationRequest:
+      type: object
+      properties:
+        '@context':
+          type: string
+          default: https://w3id.org/dspace/2025/1/context.jsonld
+        '@type':
+          type: string
+          default: dspace:ContractNegotiation
+        'dspace:consumerPid':
+          type: string
+        'dspace:state':
+          type: string
+        'dspace:offer':
+          $ref: '#/components/schemas/Offer'
+        'dspace:callbackAddress':
+          type: string
+    Negotiation:
+      type: object
+      properties:
+        '@context':
+          type: string
+          default: https://w3id.org/dspace/2024/1/context.json
+        '@type':
+          type: string
+          default: dspace:ContractRequestMessage
+        'dspace:providerPid':
+          type: string
+        'dspace:consumerPid':
+          type: string
+        'dspace:state':
+          type: string
+    NegotiationProcess:
+      type: object
+      properties:
+        'dspace:providerPid':
+          type: string
+        'dspace:consumerPid':
+          type: string
+        'dspace:state':
+          type: string
+    ProviderNegotiation:
+      type: object
+      properties:
+        'cn_process_id':
+          type: string
+        'provider_id':
+          type: string
+        'consumer_id':
+          type: string
+        'state':
+          type: string
+    Offer:
+      type: object
+      properties:
+        '@type':
+          type: string
+          default: "dspace:Offer"
+        '@id':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:permission':
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+    Permission:
+      type: object
+      properties:
+        'odrl:assigner':
+          type: string
+        'odrl:action':
+          type: string
     Agreement:
       type: object
       properties:

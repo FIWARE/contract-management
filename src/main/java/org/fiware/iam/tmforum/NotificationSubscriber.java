@@ -27,7 +27,6 @@ import java.util.Optional;
 @Slf4j
 public class NotificationSubscriber {
 
-	private static final List<String> EVENT_TYPES = List.of("CreateEvent");//, "DeleteEvent", "StateChangeEvent");
 	private static final String QUERY_TEMPLATE = "eventType=%s%s";
 	private static final String LISTENER_ADDRESS_TEMPLATE = "%s/hub";
 	private static final String LISTENER_PATH = "/listener/event";

@@ -9,12 +9,17 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.TMFMapper;
 import org.fiware.iam.dsp.RainbowAdapter;
+import org.fiware.iam.exception.RainbowException;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.tmforum.OrganizationResolver;
 import org.fiware.iam.tmforum.TMForumAdapter;
 import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
 import org.fiware.iam.tmforum.productorder.model.*;
+import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
+import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.rainbow.model.AgreementVO;
+import org.graalvm.compiler.nodes.calc.IntegerDivRemNode;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
@@ -33,8 +38,10 @@ public class ProductOrderEventHandler implements EventHandler {
 	private static final String CREATE_EVENT = "ProductOrderCreateEvent";
 	private static final String DELETE_EVENT = "ProductOrderDeleteEvent";
 	private static final String STATE_CHANGE_EVENT = "ProductOrderStateChangeEvent";
-
 	private static final List<String> SUPPORTED_EVENT_TYPES = List.of(CREATE_EVENT, DELETE_EVENT, STATE_CHANGE_EVENT);
+
+	private static final String STATE_VERIFIED = "dspace:VERIFIED";
+	private static final String STATE_FINALIZED = "dspace:FINALIZED";
 
 	private final ObjectMapper objectMapper;
 	private final OrganizationResolver organizationResolver;
@@ -85,20 +92,56 @@ public class ProductOrderEventHandler implements EventHandler {
 				.map(ProductOrderCreateEventPayloadVO::getProductOrder)
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
+		if (isNotRejected(productOrderVO) && containsQuote(productOrderVO)) {
+			return updateNegotiation(productOrderVO);
+		}
+
 		boolean isCompleted = isCompleted(productOrderVO);
 		if (!isCompleted) {
 			log.debug("The received event is not in state completed.");
 			return Mono.just(HttpResponse.noContent());
 		}
 
-		return Mono.zipDelayError(createAgreement(productOrderVO, organizationId), allowIssuer(organizationId))
+		return Mono.zipDelayError(handleComplete(productOrderVO, organizationId), allowIssuer(organizationId))
 				.map(tuple -> HttpResponse.noContent());
+	}
+
+	private Mono<HttpResponse<?>> updateNegotiation(ProductOrderVO productOrderVO) {
+
+		return tmForumAdapter
+				.getQuoteById(getQuoteRef(productOrderVO).getId())
+				.flatMap(quoteVO -> {
+					if (quoteVO.getState() != QuoteStateTypeVO.ACCEPTED) {
+						throw new TMForumException(String.format("The quote is not in state accepted, cannot be used for product ordering. %s:%s.", quoteVO.getId(), quoteVO.getState()));
+					}
+					return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), STATE_VERIFIED);
+				})
+				.map(t -> HttpResponse.noContent());
+
+	}
+
+	private static QuoteRefVO getQuoteRef(ProductOrderVO productOrderVO) {
+		// integration with IDSA Contract Negotiation is only supported for productOrders with a single quote.
+		if (productOrderVO.getQuote().size() != 1) {
+			throw new RainbowException("IDSA Contract Negotiation does not support the inclusion of multiple processes into one product.");
+		}
+		return productOrderVO.getQuote().get(0);
+	}
+
+	private static boolean containsQuote(ProductOrderVO productOrderVO) {
+		return productOrderVO.getQuote() != null && !productOrderVO.getQuote().isEmpty();
 	}
 
 	private static boolean isCompleted(ProductOrderVO productOrderVO) {
 		return Optional.ofNullable(productOrderVO.getState())
 				.filter(ProductOrderStateTypeVO.COMPLETED::equals)
 				.isPresent();
+	}
+
+	private static boolean isNotRejected(ProductOrderVO productOrderVO) {
+		return Optional.ofNullable(productOrderVO.getState())
+				.filter(state -> state == ProductOrderStateTypeVO.REJECTED)
+				.isEmpty();
 	}
 
 	private Mono<HttpResponse<?>> handelStateChangeEvent(String organizationId, Map<String, Object> event) {
@@ -109,7 +152,7 @@ public class ProductOrderEventHandler implements EventHandler {
 
 		if (isCompleted(productOrderVO)) {
 			return Mono.zipDelayError(
-							createAgreement(productOrderVO, organizationId),
+							handleComplete(productOrderVO, organizationId),
 							allowIssuer(organizationId))
 					.map(tuple -> HttpResponse.noContent());
 		} else {
@@ -152,7 +195,7 @@ public class ProductOrderEventHandler implements EventHandler {
 	}
 
 
-	private Mono<?> createAgreement(ProductOrderVO productOrderVO, String organizationId) {
+	private Mono<?> handleComplete(ProductOrderVO productOrderVO, String organizationId) {
 
 		List<RelatedPartyTmfVO> relatedPartyTmfVOS = productOrderVO
 				.getRelatedParty()
@@ -160,19 +203,53 @@ public class ProductOrderEventHandler implements EventHandler {
 				.map(tmfMapper::map)
 				.toList();
 
-		return Mono.zipDelayError(
-						productOrderVO
-								.getProductOrderItem()
-								.stream()
-								.map(ProductOrderItemVO::getProductOffering)
-								.filter(Objects::nonNull)
-								.map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
-								.toList(),
-						res -> {
-							List<AgreementVO> agreementVOS = Arrays.stream(res).filter(Objects::nonNull).filter(AgreementVO.class::isInstance).map(AgreementVO.class::cast).toList();
-							return updateProductOrder(productOrderVO, agreementVOS, relatedPartyTmfVOS);
-						})
-				.flatMap(Function.identity());
+		if (!containsQuote(productOrderVO)) {
+			return Mono.zipDelayError(
+							productOrderVO
+									.getProductOrderItem()
+									.stream()
+									.map(ProductOrderItemVO::getProductOffering)
+									.filter(Objects::nonNull)
+									.map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
+									.toList(),
+							res -> {
+								List<AgreementVO> agreementVOS = Arrays.stream(res).filter(Objects::nonNull).filter(AgreementVO.class::isInstance).map(AgreementVO.class::cast).toList();
+								return updateProductOrder(productOrderVO, agreementVOS, relatedPartyTmfVOS);
+							})
+					.flatMap(Function.identity());
+		} else {
+			return tmForumAdapter.getQuoteById(getQuoteRef(productOrderVO).getId())
+					.flatMap(quoteVO -> {
+						Mono<?> agreementMono = Mono.zipDelayError(
+										quoteVO.getQuoteItem()
+												.stream()
+												.filter(quoteItemVO -> !quoteItemVO.getState().equals("rejected"))
+												.map(QuoteItemVO::getProductOffering)
+												.filter(Objects::nonNull)
+												.map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
+												.toList(), res -> {
+											List<AgreementVO> agreementVOS = Arrays.stream(res).filter(Objects::nonNull).filter(AgreementVO.class::isInstance).map(AgreementVO.class::cast).toList();
+											return updateProductOrder(productOrderVO, agreementVOS, relatedPartyTmfVOS);
+										})
+								.flatMap(Function.identity());
+
+						Mono<?> negotiationMono = rainbowAdapter.getNegotiationProcessState(quoteVO.getExternalId())
+								.flatMap(state -> {
+									if (state.equals(STATE_FINALIZED)) {
+										// nothing to do here, but we want the chain to continue
+										return Mono.just(Optional.empty());
+									}
+									if (!state.equals(STATE_VERIFIED)) {
+										throw new RainbowException(String.format("Negotiation process %s is in state %s. Not allowed for order completion.", quoteVO.getExternalId(), state));
+									}
+									return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:FINALIZED");
+								});
+						return Mono.zipDelayError(agreementMono, negotiationMono);
+					})
+					.onErrorMap(t -> {
+						throw new RainbowException("Was not able to update the negotiation.");
+					});
+		}
 	}
 
 	private Mono<ProductOrderVO> updateProductOrder(ProductOrderVO productOrderVO, List<AgreementVO> agreementVOS, List<RelatedPartyTmfVO> relatedPartyTmfVOS) {

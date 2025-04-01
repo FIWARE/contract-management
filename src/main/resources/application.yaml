@@ -42,6 +42,11 @@ micronaut:
         path: "/tmf-api/agreementManagement/v4"
         url: http://localhost:8086
         read-timeout: 30
+      quote:
+        path: "/tmf-api/quote/v4"
+        url: http://localhost:8087
+        read-timeout: 30
+
 
 general:
   host: contract-management
@@ -66,3 +71,6 @@ notification:
     - entityType: "Catalog"
       eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
       apiAddress: "http://localhost:8082/tmf-api/productCatalogManagement/v4"
+    - entityType: "Quote"
+      eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE", "ATTRIBUTE_CHANGE" ]
+      apiAddress: "http://localhost:8087/tmf-api/quote/v4"
