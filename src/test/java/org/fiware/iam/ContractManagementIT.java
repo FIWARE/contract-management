@@ -112,7 +112,7 @@ public abstract class ContractManagementIT {
 		// state requested
 		String quoteId = createQuote(offeringId, priceId);
 
-		Awaitility.await().atMost(1, TimeUnit.MINUTES)
+		Awaitility.await().alias("Quote was not properly updated.").atMost(1, TimeUnit.MINUTES)
 				.until(() -> getQuote(quoteId).getExternalId() != null && !getQuote(quoteId).getExternalId().isEmpty());
 
 		QuoteVO theCreatedQuote = getQuote(quoteId);
