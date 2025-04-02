@@ -39,6 +39,10 @@ data:
             path: "/tmf-api/agreementManagement/v4"
             url: http://tm-forum-api-agreement:8086
             read-timeout: 30
+          quote:
+            path: "/tmf-api/quote/v4"
+            url: http://tm-forum-api-quote:8087
+            read-timeout: 30
     ---
     endpoints:
       all:
@@ -63,6 +67,9 @@ data:
         - entityType: "Catalog"
           eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
           apiAddress: "http://tm-forum-api-product-catalog:8082/tmf-api/productCatalogManagement/v4"
+        - entityType: "Quote"
+          eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE", "ATTRIBUTE_CHANGE" ]
+          apiAddress: "http://tm-forum-api-quote:8087/tmf-api/quote/v4"
 ---
 apiVersion: apps/v1
 kind: Deployment

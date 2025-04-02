@@ -76,7 +76,9 @@ public abstract class ContractManagementIT {
 	}
 
 	@BeforeEach
-	public void cleanUp() {
+	public void cleanUpAndWait() {
+		contractManagementHealthy();
+
 		Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_DID).asString();
 	}
 
@@ -93,7 +95,6 @@ public abstract class ContractManagementIT {
 	@DisplayName("Test Happy Path")
 	@Test
 	public void testCreateProductOrder() {
-		contractManagementHealthy();
 
 		String organizationId = createOrganization();
 		String offeringId = createTestOffer(Optional.empty());
@@ -108,7 +109,6 @@ public abstract class ContractManagementIT {
 	@DisplayName("Test Contract Negotiation")
 	@Test
 	public void testContractNegotiation() {
-		contractManagementHealthy();
 
 		String organizationId = createOrganization();
 		String priceId = createPrice();
@@ -117,31 +117,44 @@ public abstract class ContractManagementIT {
 		// state requested
 		String quoteId = createQuote(offeringId, priceId);
 
-		Awaitility.await().alias("Quote was not properly updated.").atMost(2, TimeUnit.MINUTES)
+		Awaitility.await()
+				.alias("Quote was not properly updated.")
+				.atMost(2, TimeUnit.MINUTES)
 				.until(() -> getQuote(quoteId).getExternalId() != null && !getQuote(quoteId).getExternalId().isEmpty());
 
 		QuoteVO theCreatedQuote = getQuote(quoteId);
 
 		assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:REQUESTED");
 
-		ProviderNegotiationVO negotiationVO = getNegotiationByProviderId(theCreatedQuote.getExternalId());
 		// state offered
 		changeQuoteState(quoteId, "approved");
 
-		Awaitility.await().alias("Negotiation state should be OFFERED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:OFFERED"));
+		Awaitility.await()
+				.alias("Negotiation state should be OFFERED.")
+				.atMost(1, TimeUnit.MINUTES)
+				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:OFFERED"));
 
 		// state accepted
 		changeQuoteState(quoteId, "accepted");
 		// ACCEPTED only happens implicitly, since the provider takes the "ACCEPTED", validates it and sets it to "AGREED"
-		Awaitility.await().alias("Negotiation state should be AGREED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:AGREED"));
+		Awaitility.await()
+				.alias("Negotiation state should be AGREED.")
+				.atMost(1, TimeUnit.MINUTES)
+				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:AGREED"));
 
 		// state verified
 		String orderId = orderProductWithQuote(organizationId, quoteId);
-		Awaitility.await().alias("Negotiation state should be VERIFIED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:VERIFIED"));
+		Awaitility.await()
+				.alias("Negotiation state should be VERIFIED.")
+				.atMost(1, TimeUnit.MINUTES)
+				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:VERIFIED"));
 
 		// state finalized
 		completeProductOrder(orderId);
-		Awaitility.await().alias("Negotiation state should be FINALIZED.").atMost(1, TimeUnit.MINUTES).untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:FINALIZED"));
+		Awaitility.await()
+				.alias("Negotiation state should be FINALIZED.")
+				.atMost(1, TimeUnit.MINUTES)
+				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:FINALIZED"));
 
 		assertAgreementCreated(offeringId);
 		assertAgreementReferenced(orderId);
@@ -230,22 +243,22 @@ public abstract class ContractManagementIT {
 		Awaitility.await()
 				.alias("The agreement was not referenced.")
 				.atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
-					ProductOrderVO productOrderVO = getProductOrder(orderId);
-					assertNotNull(productOrderVO.getAgreement(), "An agreement should be linked to the order.");
-					assertTrue(
-							productOrderVO.getAgreement()
-									.stream()
-									.map(AgreementRefVO::getId)
-									.map(this::getTmfAgreement)
-									.map(AgreementTmfVO::getCharacteristic)
-									.flatMap(List::stream)
-									.filter(characteristicTmfVO -> Objects.nonNull(characteristicTmfVO.getName()))
-									.anyMatch(characteristicTmfVO ->
-											characteristicTmfVO.getName().equals(TMForumAdapter.DATA_SPACE_PROTOCOL_AGREEMENT_ID)
-									),
-							"An agreement should be linked in the order.");
-				}
-		);
+							ProductOrderVO productOrderVO = getProductOrder(orderId);
+							assertNotNull(productOrderVO.getAgreement(), "An agreement should be linked to the order.");
+							assertTrue(
+									productOrderVO.getAgreement()
+											.stream()
+											.map(AgreementRefVO::getId)
+											.map(this::getTmfAgreement)
+											.map(AgreementTmfVO::getCharacteristic)
+											.flatMap(List::stream)
+											.filter(characteristicTmfVO -> Objects.nonNull(characteristicTmfVO.getName()))
+											.anyMatch(characteristicTmfVO ->
+													characteristicTmfVO.getName().equals(TMForumAdapter.DATA_SPACE_PROTOCOL_AGREEMENT_ID)
+											),
+									"An agreement should be linked in the order.");
+						}
+				);
 	}
 
 	private QuoteVO getQuote(String quoteId) {
