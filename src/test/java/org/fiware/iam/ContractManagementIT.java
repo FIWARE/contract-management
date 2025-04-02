@@ -75,6 +75,11 @@ public abstract class ContractManagementIT {
 		});
 	}
 
+	@BeforeEach
+	public void cleanUp() {
+		Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_DID).asString();
+	}
+
 	protected ContractManagementIT(com.fasterxml.jackson.databind.ObjectMapper objectMapper, TestConfiguration testConfiguration) {
 		this.objectMapper = objectMapper;
 		this.testConfiguration = testConfiguration;
