@@ -49,6 +49,7 @@ micronaut:
 
 
 general:
+  did: did:test:did
   host: contract-management
   til:
     credentialType: MyCredential

@@ -6,6 +6,8 @@ import io.micronaut.http.HttpStatus;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.agreement.api.AgreementApiClient;
 import org.fiware.iam.tmforum.agreement.model.AgreementTmfVO;
+import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
+import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productorder.api.ProductOrderApiClient;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
 import org.fiware.iam.tmforum.quote.api.QuoteApiClient;
@@ -23,19 +25,24 @@ import static org.mockito.Mockito.when;
 
 public class TMForumAdapterTest {
 
+	private OrganizationResolver organizationResolver;
 	private ProductOrderApiClient productOrderApiClient;
 	private AgreementApiClient agreementApiClient;
+	private ProductSpecificationApiClient productSpecificationApiClient;
+	private ProductOfferingApiClient productOfferingApiClient;
 	private QuoteApiClient quoteApiClient;
 
 	private TMForumAdapter tmForumAdapter;
 
 	@BeforeEach
 	public void prepare() {
+		organizationResolver = mock(OrganizationResolver.class);
 		productOrderApiClient = mock(ProductOrderApiClient.class);
 		agreementApiClient = mock(AgreementApiClient.class);
 		quoteApiClient = mock(QuoteApiClient.class);
-
-		tmForumAdapter = new TMForumAdapter(new ObjectMapper(), productOrderApiClient, agreementApiClient, quoteApiClient);
+		productSpecificationApiClient = mock(ProductSpecificationApiClient.class);
+		productOfferingApiClient = mock(ProductOfferingApiClient.class);
+		tmForumAdapter = new TMForumAdapter(new ObjectMapper(), organizationResolver, productOrderApiClient, productOfferingApiClient, productSpecificationApiClient, agreementApiClient, quoteApiClient);
 	}
 
 	@Test

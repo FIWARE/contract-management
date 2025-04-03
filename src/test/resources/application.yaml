@@ -53,6 +53,7 @@ loggers:
   levels:
     ROOT: TRACE
 general:
+  did: did:test:did
   host: local-host
   til:
     credentialType: MyCredential

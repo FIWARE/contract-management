@@ -8,6 +8,7 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.TMFMapper;
+import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.dsp.RainbowAdapter;
 import org.fiware.iam.exception.RainbowException;
 import org.fiware.iam.exception.TMForumException;
@@ -18,7 +19,9 @@ import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
 import org.fiware.iam.tmforum.productorder.model.*;
 import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
 import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
+import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import org.fiware.rainbow.model.AgreementVO;
+import org.fiware.rainbow.model.ProviderNegotiationVO;
 import org.graalvm.compiler.nodes.calc.IntegerDivRemNode;
 import reactor.core.publisher.Mono;
 
@@ -44,6 +47,7 @@ public class ProductOrderEventHandler implements EventHandler {
 	private static final String STATE_FINALIZED = "dspace:FINALIZED";
 
 	private final ObjectMapper objectMapper;
+	private final GeneralProperties generalProperties;
 	private final OrganizationResolver organizationResolver;
 	private final TrustedIssuersListAdapter trustedIssuersListAdapter;
 	private final RainbowAdapter rainbowAdapter;
@@ -220,18 +224,13 @@ public class ProductOrderEventHandler implements EventHandler {
 		} else {
 			return tmForumAdapter.getQuoteById(getQuoteRef(productOrderVO).getId())
 					.flatMap(quoteVO -> {
-						Mono<?> agreementMono = Mono.zipDelayError(
-										quoteVO.getQuoteItem()
-												.stream()
-												.filter(quoteItemVO -> !quoteItemVO.getState().equals("rejected"))
-												.map(QuoteItemVO::getProductOffering)
-												.filter(Objects::nonNull)
-												.map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
-												.toList(), res -> {
-											List<AgreementVO> agreementVOS = Arrays.stream(res).filter(Objects::nonNull).filter(AgreementVO.class::isInstance).map(AgreementVO.class::cast).toList();
-											return updateProductOrder(productOrderVO, agreementVOS, relatedPartyTmfVOS);
-										})
-								.flatMap(Function.identity());
+						String offerId = getOfferIdFromQuote(quoteVO);
+
+						Mono<?> agreementMono = rainbowAdapter.getNegotiationProcess(quoteVO.getExternalId())
+								.map(ProviderNegotiationVO::getCnProcessId)
+								.flatMap(rainbowAdapter::getAgreement)
+								.map(avo -> avo.dataServiceId(offerId))
+								.flatMap(agreementVO -> updateProductOrder(productOrderVO, List.of(agreementVO), relatedPartyTmfVOS));
 
 						Mono<?> negotiationMono = rainbowAdapter.getNegotiationProcessState(quoteVO.getExternalId())
 								.flatMap(state -> {
@@ -293,4 +292,16 @@ public class ProductOrderEventHandler implements EventHandler {
 		return organizationResolver.getDID(organizationId)
 				.flatMap(trustedIssuersListAdapter::denyIssuer);
 	}
+
+	private String getOfferIdFromQuote(QuoteVO quoteVO) {
+		return quoteVO
+				.getQuoteItem()
+				.stream()
+				.filter(qi -> qi.getState().equals("accepted"))
+				.map(QuoteItemVO::getProductOffering)
+				.map(org.fiware.iam.tmforum.quote.model.ProductOfferingRefVO::getId)
+				.findFirst()
+				.orElseThrow(() -> new IllegalArgumentException("The event does not reference an offer."));
+	}
+
 }

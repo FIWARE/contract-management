@@ -1,0 +1,107 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odrl-postgres
+  labels:
+    app.kubernetes.io/name: odrl-postgres
+    app.kubernetes.io/instance: odrl-postgres
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: odrl-postgres
+  selector:
+    app.kubernetes.io/name: odrl-postgres
+    app.kubernetes.io/instance: odrl-postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odrl-postgres
+  labels:
+    app.kubernetes.io/name: odrl-postgres
+    app.kubernetes.io/instance: odrl-postgres
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: odrl-postgres
+      app.kubernetes.io/instance: odrl-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: odrl-postgres
+        app.kubernetes.io/instance: odrl-postgres
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: odrl-postgres
+          imagePullPolicy: IfNotPresent
+          # as by scropio doc, no version provided
+          image: "postgres:17.4"
+          ports:
+            - name: http
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: "pap"
+            - name: POSTGRES_PASSWORD
+              value: "pap"
+            - name: POSTGRES_DB
+              value: "pap"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odrl-pap
+spec:
+  ports:
+    - port: 8088
+  selector:
+    app.kubernetes.io/name: odrl-pap
+  type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odrl-pap
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: odrl-pap
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: odrl-pap
+    spec:
+      containers:
+        - image: quay.io/fiware/odrl-pap:0.2.0
+          imagePullPolicy: Always
+          name:  odrl-pap
+          env:
+            # Use secret in real usage
+            - name: GENERAL_ORGANIZATION_DID
+              value: did:test:did
+            - name: QUARKUS_DATASOURCE_DB_KIND
+              value: postgresql
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://odrl-postgres:5432/pap
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: pap
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              value: pap
+          ports:
+            - containerPort: 8088
+              name: http

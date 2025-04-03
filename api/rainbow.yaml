@@ -451,9 +451,118 @@ paths:
           description: Successfully updated the request.
         '400':
           description: Bad Request
-
+  /api/v1/contract-negotiation/processes/{processId}/agreement:
+    get:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+      operationId: getAgreement
+      summary: Get the agreement
+      description: Get the agreement for the given negotiation process
+      responses:
+        '200':
+          description: Successfully updated the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agreement'
+        '400':
+          description: Bad Request
+  /api/v1/contract-negotiation/processes/{processId}/messages/{messageId}/agreements:
+    post:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+        - $ref: '#/components/parameters/MessageId'
+      operationId: createAgreementForProcess
+      summary: Create the agreement
+      description: Create the agreement for the negotiation process
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementRequest'
+      responses:
+        '200':
+          description: Successfully updated the request.
+        '400':
+          description: Bad Request
+  /api/v1/contract-negotiation/processes/{processId}/offers/last:
+    get:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+      operationId: getLastOfferForProcess
+      summary: Request the last offer
+      description: Request the last offer from the given negotiation process
+      responses:
+        '200':
+          description: The last offer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LastOffer'
+        '404':
+          description: Not found
+  /api/v1/participants:
+    post:
+      tags:
+        - participant
+      operationId: createParticipant
+      summary: Create the participant
+      description: Create the participant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Participant'
+      responses:
+        '200':
+          description: The participant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Participant'
+        '404':
+          description: Not found
+  /api/v1/participants/{participantId}:
+    get:
+      tags:
+        - participant
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+      operationId: getParticipantById
+      summary: Get the participant
+      description: Return the participant with the given id
+      responses:
+        '200':
+          description: The participant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Participant'
+        '404':
+          description: Not found
 components:
   parameters:
+    ParticipantId:
+      name: participantId
+      in: path
+      required: true
+      schema:
+        type: string
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
     ProcessId:
       name: processId
       in: path
@@ -504,6 +613,46 @@ components:
         type: string
         example: urn:uuid:some-uuid
   schemas:
+    Participant:
+      type: object
+      properties:
+        'dspace:participantId':
+          type: string
+        'dspace:participantType':
+          type: string
+        'dspace:participantBaseUrl':
+          type: string
+        'dspace:extraFields':
+          type: object
+    OdrlAgreement:
+      type: object
+      properties:
+        '@type':
+          type: string
+          default: "odrl:Agreement"
+        '@id':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:assignee':
+          type: string
+        'odrl:assigner':
+          type: string
+        'odrl:permission':
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+    LastOffer:
+      type: object
+      properties:
+        'offer_id':
+          type: string
+        'cn_message_id':
+          type: string
+        'created_at':
+          type: string
+        'offer_content':
+          $ref: '#/components/schemas/Offer'
     NegotiationRequest:
       type: object
       properties:
@@ -577,6 +726,26 @@ components:
           type: string
         'odrl:action':
           type: string
+    AgreementRequest:
+      type: object
+      properties:
+        'dspace:consumerParticipantId':
+          type: string
+        'dspace:providerParticipantId':
+          type: string
+        'odrl:agreement':
+          $ref: '#/components/schemas/OdrlAgreement'
+    ContractAgreement:
+      type: object
+      properties:
+        'agreement_id':
+          type: string
+        'provider_participant_id':
+          type: string
+        'consumer_participant_id':
+          type: string
+        'agreement_content':
+          $ref: '#/components/schemas/OdrlAgreement'
     Agreement:
       type: object
       properties:

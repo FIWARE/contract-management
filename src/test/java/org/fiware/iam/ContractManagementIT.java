@@ -15,10 +15,11 @@ import org.fiware.iam.tmforum.TMForumAdapter;
 import org.fiware.iam.tmforum.agreement.model.AgreementTmfVO;
 import org.fiware.iam.tmforum.productorder.model.AgreementRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
+import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
+import org.fiware.iam.tmforum.quote.model.QuoteUpdateVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
-import org.fiware.rainbow.model.AgreementVO;
+import org.fiware.rainbow.model.ContractAgreementVO;
 import org.fiware.rainbow.model.NegotiationVO;
-import org.fiware.rainbow.model.ProviderNegotiationVO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,8 +36,10 @@ import static org.junit.jupiter.api.Assertions.*;
 @Slf4j
 public abstract class ContractManagementIT {
 
-	private static final String TEST_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
+	private static final String TEST_CONSUMER_DID = "did:web:bunnyinc.dsba.fiware.dev:did";
+	private static final String TEST_PROVIDER_DID = "did:test:did";
 	private static final String TEST_SERVICE = "did:some:service";
+	private static final String TEST_ENDPOINT = "https://the-service.org";
 	private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
 	protected final TestConfiguration testConfiguration;
@@ -79,7 +82,7 @@ public abstract class ContractManagementIT {
 	public void cleanUpAndWait() {
 		contractManagementHealthy();
 
-		Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_DID).asString();
+		Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_CONSUMER_DID).asString();
 	}
 
 	protected ContractManagementIT(com.fasterxml.jackson.databind.ObjectMapper objectMapper, TestConfiguration testConfiguration) {
@@ -101,9 +104,9 @@ public abstract class ContractManagementIT {
 		String productOrder = orderProduct(offeringId, organizationId);
 		completeProductOrder(productOrder);
 
-		assertAgreementCreated(offeringId);
+		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
 		assertAgreementReferenced(productOrder);
-		assertTilEntry(TEST_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
+		assertTilEntry(TEST_CONSUMER_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
 	}
 
 	@DisplayName("Test Contract Negotiation")
@@ -115,7 +118,7 @@ public abstract class ContractManagementIT {
 		String offeringId = createTestOffer(Optional.of(priceId));
 
 		// state requested
-		String quoteId = createQuote(offeringId, priceId);
+		String quoteId = createQuote(organizationId, offeringId, priceId);
 
 		Awaitility.await()
 				.alias("Quote was not properly updated.")
@@ -135,13 +138,13 @@ public abstract class ContractManagementIT {
 				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:OFFERED"));
 
 		// state accepted
-		changeQuoteState(quoteId, "accepted");
+		changeQuoteAndItemState(quoteId, QuoteStateTypeVO.ACCEPTED, "accepted");
 		// ACCEPTED only happens implicitly, since the provider takes the "ACCEPTED", validates it and sets it to "AGREED"
 		Awaitility.await()
 				.alias("Negotiation state should be AGREED.")
 				.atMost(1, TimeUnit.MINUTES)
 				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:AGREED"));
-
+		// TODO: ->"create agreement"
 		// state verified
 		String orderId = orderProductWithQuote(organizationId, quoteId);
 		Awaitility.await()
@@ -156,16 +159,16 @@ public abstract class ContractManagementIT {
 				.atMost(1, TimeUnit.MINUTES)
 				.untilAsserted(() -> assertNegotiationInState(theCreatedQuote.getExternalId(), "dspace:FINALIZED"));
 
-		assertAgreementCreated(offeringId);
+		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
 		assertAgreementReferenced(orderId);
-		assertTilEntry(TEST_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
+		assertTilEntry(TEST_CONSUMER_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
 	}
 
 
 	private void assertTilEntry(String expectedDid, String expectedCredentialsType, String expectedService, Set<String> expectedValues) {
 		JSONObject tilConfig = Awaitility.await()
 				.atMost(1, TimeUnit.MINUTES)
-				.until(() -> getTrustedIssuersListEntry(TEST_DID), Optional::isPresent)
+				.until(() -> getTrustedIssuersListEntry(TEST_CONSUMER_DID), Optional::isPresent)
 				.get();
 
 		assertEquals(expectedDid, tilConfig.getString("did"), "Trusted Issuer should be properly properly configured");
@@ -188,7 +191,6 @@ public abstract class ContractManagementIT {
 	@BeforeEach
 	public void waitTilReady() throws Exception {
 		Awaitility.await().atMost(5, TimeUnit.MINUTES).until(this::trustedIssuersListServiceReady);
-
 	}
 
 	private boolean trustedIssuersListServiceReady() {
@@ -214,13 +216,6 @@ public abstract class ContractManagementIT {
 		}
 	}
 
-	private ProviderNegotiationVO getNegotiationByProviderId(String providerId) {
-		HttpResponse<ProviderNegotiationVO> response = Unirest.get(testConfiguration.getProviderRainbowHost() + "/api/v1/contract-negotiation/processes/provider/" + providerId)
-				.asObject(ProviderNegotiationVO.class);
-		assertTrue(response.isSuccess());
-		return response.getBody();
-	}
-
 	private void assertNegotiationInState(String providerId, String expectedState) {
 		HttpResponse<NegotiationVO> response = Unirest.get(testConfiguration.getProviderRainbowHost() + "/negotiations/" + providerId)
 				.asObject(NegotiationVO.class);
@@ -228,12 +223,15 @@ public abstract class ContractManagementIT {
 		assertEquals(expectedState, response.getBody().getDspaceColonState(), String.format("The negotiation should be in state %s.", expectedState));
 	}
 
-	private void assertAgreementCreated(String offerId) {
+	private void assertAgreementCreated(String consumerId, String providerId, String target) {
 
 		Awaitility.await().alias("The agreement was not created.").atMost(30, TimeUnit.SECONDS).untilAsserted(() -> {
 					boolean match = getAgreements().stream()
-							.anyMatch(agreementVO -> agreementVO.getDataServiceId().equals(offerId));
-					assertTrue(match, String.format("No agreement for %s", offerId));
+							.anyMatch(agreementVO ->
+									agreementVO.getConsumerParticipantId().equals("urn:" + consumerId)
+											&& agreementVO.getProviderParticipantId().equals("urn:" + providerId)
+											&& agreementVO.getAgreementContent().getOdrlColonTarget().equals(target));
+					assertTrue(match, "No agreement found.");
 				}
 		);
 	}
@@ -280,6 +278,19 @@ public abstract class ContractManagementIT {
 				.body(String.format("{ \n" +
 						"    \"state\": \"%s\"     \n" +
 						"}", state))
+				.asString()
+				.isSuccess());
+
+	}
+
+	private void changeQuoteAndItemState(String quoteId, QuoteStateTypeVO quoteState, String itemState) {
+		QuoteVO quoteVO = getQuote(quoteId)
+				.state(quoteState);
+		quoteVO.setQuoteItem(quoteVO.getQuoteItem().stream().map(qi -> qi.state(itemState)).toList());
+
+		assertTrue(Unirest.patch(testConfiguration.getQuoteHost() + "/tmf-api/quote/v4/quote/" + quoteId)
+				.header("Content-Type", "application/json")
+				.body(objectMapper.convertValue(quoteVO, QuoteUpdateVO.class))
 				.asString()
 				.isSuccess());
 
@@ -342,12 +353,16 @@ public abstract class ContractManagementIT {
 	}
 
 
-	private String createQuote(String offeringId, String priceId) {
+	private String createQuote(String organizationId, String offeringId, String priceId) {
 		return getResponseId(Unirest.post(testConfiguration.getQuoteHost() + "/tmf-api/quote/v4/quote")
 				.header("Content-Type", "application/json")
 				.body(String.format("{\n" +
 						"        \"description\": \"Request for Test Offering\",\n" +
 						"        \"version\": \"1\",\n" +
+						"		 \"relatedParty\":[{ " +
+						"          \"id\":\"" + organizationId + "\"," +
+						"          \"role\":\"Consumer\"" +
+						"        }], " +
 						"        \"quoteItem\": [\n" +
 						"            {\n" +
 						"                \"id\": \"item-id\",\n" +
@@ -437,7 +452,7 @@ public abstract class ContractManagementIT {
 						"            \"value\": \"%s\"\n" +
 						"        }\n" +
 						"    ]\n" +
-						"}", TEST_DID)));
+						"}", TEST_CONSUMER_DID)));
 		return optionalId.get();
 	}
 
@@ -503,12 +518,12 @@ public abstract class ContractManagementIT {
 		return productOfferingId.get();
 	}
 
-	private List<AgreementVO> getAgreements() {
-		HttpResponse<List> response = Unirest.get(testConfiguration.getProviderRainbowHost() + "/api/v1/agreements").asObject(List.class);
+	private List<ContractAgreementVO> getAgreements() {
+		HttpResponse<List> response = Unirest.get(testConfiguration.getProviderRainbowHost() + "/api/v1/contract-negotiation/agreements").asObject(List.class);
 		assertTrue(response.isSuccess(), "The agreements should have been returned");
 		return response.getBody()
 				.stream()
-				.map(a -> objectMapper.convertValue(a, AgreementVO.class)).toList();
+				.map(a -> objectMapper.convertValue(a, ContractAgreementVO.class)).toList();
 	}
 
 	private String createProductSpec() {
@@ -523,7 +538,18 @@ public abstract class ContractManagementIT {
 						"            \"valueType\": \"endpointUrl\",\n" +
 						"            \"productSpecCharacteristicValue\": [\n" +
 						"                {\n" +
-						"                    \"value\": \"https://the-service.org\",\n" +
+						"                    \"value\": \"" + TEST_ENDPOINT + "\",\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        },\n" +
+						"        {\n" +
+						"            \"id\": \"allowedAction\",\n" +
+						"            \"name\": \"Allowed Action\",\n" +
+						"            \"valueType\": \"allowedAction\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\": \"odrl:use\",\n" +
 						"                    \"isDefault\": true\n" +
 						"                }" +
 						"			]\n" +
@@ -534,7 +560,8 @@ public abstract class ContractManagementIT {
 						"            \"valueType\": \"endpointDescription\",\n" +
 						"            \"productSpecCharacteristicValue\": [\n" +
 						"                {\n" +
-						"                    \"value\": \"The service\"\n" +
+						"                    \"value\": \"The service\",\n" +
+						"                    \"isDefault\": true\n" +
 						"                }" +
 						"			]\n" +
 						"        }\n" +
