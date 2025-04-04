@@ -25,6 +25,5 @@
       "type": ["object","string"],
       "description": "Right operand for constraint expression."
     }
-  },
-  "required": ["odrl:operator", "odrl:leftOperand", "odrl:rightOperand"]
+  }
 }

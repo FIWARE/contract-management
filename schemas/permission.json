@@ -37,6 +37,5 @@
       }
     }
 
-  },
-  "required": ["odrl:target", "odrl:assigner", "odrl:assignee", "odrl:action"]
+  }
 }
