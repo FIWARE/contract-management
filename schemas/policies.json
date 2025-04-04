@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/FIWARE/contract-management/tree/main/schemas/policies.json",
+  "$id": "policies.json",
   "title": "Policy Extension",
   "description": "Allows to extend TMForum Entities with odrl:policies.",
   "type": "object",

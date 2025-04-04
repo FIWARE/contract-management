@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/FIWARE/contract-management/tree/main/schemas/policy.json",
+  "$id": "policy.json",
   "title": "Schema of an ODRL Policy",
   "description": "Definition of an ODRL Policy.",
   "type": "object",

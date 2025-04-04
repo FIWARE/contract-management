@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/FIWARE/contract-management/tree/main/schemas/permission.json",
+  "$id": "permission.json",
   "title": "Schema of an odrl:permission",
   "description": "Definition of an ODRL Permission, describes the ability to perform an Action over an Asset.",
   "type": "object",

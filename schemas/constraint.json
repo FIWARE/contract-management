@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/FIWARE/contract-management/tree/main/schemas/constraint.json",
+  "$id": "constraint.json",
   "title": "Schema of an odrl:constraint",
   "description": "Definition of an ODRL Constraint, see https://w3c.github.io/poe/vocab/#term-Constraint.",
   "type": "object",

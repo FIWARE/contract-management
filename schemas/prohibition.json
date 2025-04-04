@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/FIWARE/contract-management/tree/main/schemas/prohibition.json",
+  "$id": "prohibition.json",
   "title": "Schema of an odrl:prohibition",
   "description": "Definition of an ODRL Prohibition, describes the inability to perform an Action over an Asset.",
   "type": "object",
