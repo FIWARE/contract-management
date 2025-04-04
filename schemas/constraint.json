@@ -14,15 +14,15 @@
       "description": "Id of the constraint."
     },
     "odrl:operator": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "The operator function applied to operands of a Constraint."
     },
     "odrl:leftOperand": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "The left operand in a constraint expression."
     },
     "odrl:rightOperand": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "Right operand for constraint expression."
     }
   },

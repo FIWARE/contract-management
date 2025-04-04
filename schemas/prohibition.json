@@ -14,19 +14,19 @@
       "description": "Id of the prohibition"
     },
     "odrl:action": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "Action of the prohibition."
     },
     "odrl:assigner": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "Assigner of the prohibition."
     },
     "odrl:assignee": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "Assignee of the prohibition."
     },
     "odrl:target": {
-      "type": "object",
+      "type": ["object","string"],
       "description": "Target of the prohibition."
     },
     "odrl:constraint": {
