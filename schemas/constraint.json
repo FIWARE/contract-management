@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/FIWARE/contract-management/tree/main/schemas/constraint.json",
+  "title": "Schema of an odrl:constraint",
+  "description": "Definition of an ODRL Constraint, see https://w3c.github.io/poe/vocab/#term-Constraint.",
+  "type": "object",
+  "properties": {
+    "@type": {
+      "type": "string",
+      "description": "Type of the constraint."
+    },
+    "@id": {
+      "type": "string",
+      "description": "Id of the constraint."
+    },
+    "odrl:operator": {
+      "type": "object",
+      "description": "The operator function applied to operands of a Constraint."
+    },
+    "odrl:leftOperand": {
+      "type": "object",
+      "description": "The left operand in a constraint expression."
+    },
+    "odrl:rightOperand": {
+      "type": "object",
+      "description": "Right operand for constraint expression."
+    }
+  },
+  "required": ["odrl:operator", "odrl:leftOperand", "odrl:rightOperand"]
+}
