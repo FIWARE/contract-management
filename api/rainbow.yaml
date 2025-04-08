@@ -642,6 +642,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Permission'
+        'odrl:obligation':
+          type: array
+          items:
+            $ref: '#/components/schemas/Obligation'
     LastOffer:
       type: object
       properties:
@@ -719,13 +723,53 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Permission'
+        'odrl:prohibition':
+          type: array
+          items:
+            $ref: '#/components/schemas/Prohibition'
+        'odrl:obligation':
+          type: array
+          items:
+            $ref: '#/components/schemas/Obligation'
+    Obligation:
+      type: object
+      properties:
+        'odrl:action':
+          type: string
+        'odrl:constraint':
+          type: array
+          items:
+            type: object
     Permission:
       type: object
       properties:
         'odrl:assigner':
           type: string
+        'odrl:assignee':
+          type: string
+        'odrl:target':
+          type: string
         'odrl:action':
           type: string
+        'odrl:constraint':
+          type: array
+          items:
+            type: object
+    Prohibition:
+      type: object
+      properties:
+        'odrl:assigner':
+          type: string
+        'odrl:assignee':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:action':
+          type: string
+        'odrl:constraint':
+          type: array
+          items:
+            type: object
     AgreementRequest:
       type: object
       properties:
@@ -828,6 +872,36 @@ components:
     Catalog:
       type: object
       properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        '@id':
+          type: string
+        'foaf:homepage':
+          type: string
+        'dcat:theme':
+          type: string
+        'dcat:keyword':
+          type: string
+        'dct:conformsTo':
+          type: string
+        'dct:creator':
+          type: string
+        'dct:identifier':
+          type: string
+        'dct:issued':
+          type: string
+        'dct:modified':
+          type: string
+        'dct:title':
+          type: string
+        'dct:description':
+          type: array
+          items:
+            type: string
+        'dspace:participantId':
+          type: string
         'odrl:hasPolicy':
           type: object
         'dspace:extraFields':
@@ -840,13 +914,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataService'
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/CatalogFoaf'
-        - $ref: '#/components/schemas/CatalogDcat'
-        - $ref: '#/components/schemas/CatalogDct'
-        - $ref: '#/components/schemas/CatalogDspace'
-    ObjectHeaders:
+    DataSet:
       type: object
       properties:
         '@context':
@@ -855,66 +923,16 @@ components:
           type: string
         '@id':
           type: string
-
-    DataSet:
-      type: object
-      properties:
         'odrl:hasPolicy':
           type: object
         'dspace:extraFields':
           type: object
         'dcat:distribution':
           $ref: '#/components/schemas/Distribution'
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/DataSetDcat'
-        - $ref: '#/components/schemas/DataSetDct'
-
-    Distribution:
-      type: object
-      properties:
-        'odrl:hasPolicy':
-          type: object
-        'dspace:extraFields':
-          type: object
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/DistributionDcat'
-        - $ref: '#/components/schemas/DistributionDct'
-
-    DistributionDcat:
-      type: object
-      properties:
-        'dcat:accessService':
-          $ref: '#/components/schemas/DataService'
-
-    DistributionDct:
-      type: object
-      properties:
-        'dct:identifier':
-          type: string
-        'dct:issued':
-          type: string
-        'dct:modified':
-          type: string
-        'dct:title':
-          type: string
-        'dct:description':
-          type: array
-          items:
-            type: string
-
-    DataSetDcat:
-      type: object
-      properties:
         'dcat:theme':
           type: string
         'dcat:keyword':
           type: string
-
-    DataSetDct:
-      type: object
-      properties:
         'dct:conformsTo':
           type: string
         'dct:creator':
@@ -932,21 +950,47 @@ components:
           items:
             type: string
 
-    DataService:
+    Distribution:
       type: object
       properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        '@id':
+          type: string
         'odrl:hasPolicy':
           type: object
         'dspace:extraFields':
           type: object
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/DataServiceDcat'
-        - $ref: '#/components/schemas/DataServiceDct'
+        'dct:identifier':
+          type: string
+        'dct:issued':
+          type: string
+        'dct:modified':
+          type: string
+        'dct:title':
+          type: string
+        'dct:description':
+          type: array
+          items:
+            type: string
+        'dcat:accessService':
+          $ref: '#/components/schemas/DataService'
 
-    DataServiceDcat:
+    DataService:
       type: object
       properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        '@id':
+          type: string
+        'odrl:hasPolicy':
+          type: object
+        'dspace:extraFields':
+          type: object
         'dcat:theme':
           type: string
         'dcat:keyword':
@@ -955,10 +999,6 @@ components:
           type: string
         'dcat:endpointURL':
           type: string
-
-    DataServiceDct:
-      type: object
-      properties:
         'dct:conformsTo':
           type: string
         'dct:creator':
@@ -975,39 +1015,3 @@ components:
           type: array
           items:
             type: string
-    CatalogFoaf:
-      type: object
-      properties:
-        'foaf:homepage':
-          type: string
-    CatalogDcat:
-      type: object
-      properties:
-        'dcat:theme':
-          type: string
-        'dcat:keyword':
-          type: string
-    CatalogDct:
-      type: object
-      properties:
-        'dct:conformsTo':
-          type: string
-        'dct:creator':
-          type: string
-        'dct:identifier':
-          type: string
-        'dct:issued':
-          type: string
-        'dct:modified':
-          type: string
-        'dct:title':
-          type: string
-        'dct:description':
-          type: array
-          items:
-            type: string
-    CatalogDspace:
-      type: object
-      properties:
-        'dspace:participantId':
-          type: string

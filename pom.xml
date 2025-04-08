@@ -72,6 +72,8 @@
         <tmforum.quote.api.url>
             https://raw.githubusercontent.com/FIWARE/tmforum-api/refs/heads/main/api/tm-forum/quote/api.json
         </tmforum.quote.api.url>
+        <odrl.pap.api.url>https://raw.githubusercontent.com/wistefan/odrl-pap/refs/heads/main/api/odrl.yaml
+        </odrl.pap.api.url>
 
         <!-- Rainbow API -->
         <rainbow.api>${project.basedir}/api/rainbow.yaml</rainbow.api>
@@ -93,8 +95,8 @@
         <version.io.kokuwa.micronaut.logging>3.1.0</version.io.kokuwa.micronaut.logging>
 
         <!-- code gen -->
-        <version.org.openapitools.generator-maven-plugin>6.6.0</version.org.openapitools.generator-maven-plugin>
-        <version.io.kokuwa.micronaut.codegen>3.4.4</version.io.kokuwa.micronaut.codegen>
+        <version.org.openapitools.generator-maven-plugin>7.10.0</version.org.openapitools.generator-maven-plugin>
+        <version.io.kokuwa.micronaut.codegen>4.4.1</version.io.kokuwa.micronaut.codegen>
 
         <!-- test -->
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
@@ -187,18 +189,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/com.fasterxml.jackson.datatype/jackson-datatype-jsr310 -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>2.18.2</version>
-        </dependency>
-        <dependency>
-            <groupId>org.openapitools</groupId>
-            <artifactId>jackson-databind-nullable</artifactId>
-            <version>0.2.6</version>
-        </dependency>
-
         <!-- Tests -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -288,7 +278,6 @@
                             <apiPackage>org.fiware.rainbow.api</apiPackage>
                             <strictSpec>true</strictSpec>
                             <modelPackage>org.fiware.rainbow.model</modelPackage>
-                            <generateAliasAsModel>true</generateAliasAsModel>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
@@ -302,6 +291,7 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
                             </configOptions>
                             <typeMappings>
@@ -335,7 +325,10 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -367,6 +360,10 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
+                                <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -384,7 +381,6 @@
                             <strictSpec>true</strictSpec>
                             <modelPackage>org.fiware.iam.tmforum.agreement.model</modelPackage>
                             <apiPackage>org.fiware.iam.tmforum.agreement.api</apiPackage>
-                            <generateAliasAsModel>true</generateAliasAsModel>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>TmfVO</modelNameSuffix>
                             <output>${project.build.directory}</output>
@@ -399,6 +395,10 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
+                                <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -431,7 +431,10 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -464,7 +467,10 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -497,7 +503,10 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -529,7 +538,45 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>openapi-odrl-pap-api-client</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${odrl.pap.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.odrl.pap.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.odrl.pap.model</modelPackage>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <generateSupportingFiles>false</generateSupportingFiles>
+                            <configOptions>
+                                <clientId>odrl</clientId>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
+                                <generateExamples>true</generateExamples>
+                                <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
+                                </modelBaseClass>
                             </configOptions>
                             <typeMappings>
                                 <typeMapping>java.util.Date=java.time.Instant</typeMapping>
@@ -832,6 +879,8 @@
                                 <portBinding>8086:8086</portBinding>
                                 <!-- tm-forum-api-quote -->
                                 <portBinding>8087:8087</portBinding>
+                                <!-- odrl-pap -->
+                                <portBinding>8088:8088</portBinding>
                                 <!-- orion -->
                                 <portBinding>1026:1026</portBinding>
                                 <!-- rainbow -->

@@ -9,7 +9,6 @@ import org.fiware.iam.dsp.OfferingParameters;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.agreement.api.AgreementApiClient;
 import org.fiware.iam.tmforum.agreement.model.*;
-import org.fiware.iam.tmforum.handlers.ProductOfferingEventHandler;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.*;
@@ -18,13 +17,11 @@ import org.fiware.iam.tmforum.productorder.model.AgreementRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderUpdateVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
 import org.fiware.iam.tmforum.quote.api.QuoteApiClient;
-import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
 import org.fiware.iam.tmforum.quote.model.QuoteUpdateVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Adapter to handle communication with TMForum APIs.
@@ -98,11 +95,14 @@ public class TMForumAdapter {
 	 */
 	public Mono<QuoteVO> updateExternalId(QuoteVO quoteVO, String externalId) {
 		QuoteUpdateVO quoteUpdateVO = objectMapper.convertValue(quoteVO.externalId(externalId), QuoteUpdateVO.class);
+		// remove the quote object
+		quoteUpdateVO.setUnknownProperties("id", null);
+		quoteUpdateVO.setUnknownProperties("href", null);
+		quoteUpdateVO.setUnknownProperties("quoteDate", null);
+
 		return quoteApiClient.patchQuote(quoteVO.getId(), quoteUpdateVO)
 				.onErrorMap(t -> new TMForumException(String.format("Was not able to update the quote %s.", quoteVO.getId()), t))
 				.map(HttpResponse::body);
-
-
 	}
 
 	/**

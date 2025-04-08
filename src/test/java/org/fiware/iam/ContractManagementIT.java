@@ -115,7 +115,7 @@ public abstract class ContractManagementIT {
 
 		String organizationId = createOrganization();
 		String priceId = createPrice();
-		String offeringId = createTestOffer(Optional.of(priceId));
+ 		String offeringId = createTestOffer(Optional.of(priceId));
 
 		// state requested
 		String quoteId = createQuote(organizationId, offeringId, priceId);
@@ -288,9 +288,12 @@ public abstract class ContractManagementIT {
 				.state(quoteState);
 		quoteVO.setQuoteItem(quoteVO.getQuoteItem().stream().map(qi -> qi.state(itemState)).toList());
 
+		QuoteUpdateVO quoteUpdateVO = objectMapper.convertValue(quoteVO, QuoteUpdateVO.class);
+		quoteUpdateVO.unknownProperties(null);
+
 		assertTrue(Unirest.patch(testConfiguration.getQuoteHost() + "/tmf-api/quote/v4/quote/" + quoteId)
 				.header("Content-Type", "application/json")
-				.body(objectMapper.convertValue(quoteVO, QuoteUpdateVO.class))
+				.body(quoteUpdateVO)
 				.asString()
 				.isSuccess());
 
@@ -366,6 +369,17 @@ public abstract class ContractManagementIT {
 						"        \"quoteItem\": [\n" +
 						"            {\n" +
 						"                \"id\": \"item-id\",\n" +
+						"                \"@schemaLocation\": \"https://raw.githubusercontent.com/FIWARE/contract-management/refs/heads/tpp-integration/schemas/policies.json\",\n" +
+						"                \"policy\": [{\n" +
+						"                	\"odrl:permission\": [{\n" +
+						"                    	\"odrl:action\": \"odrl:use\",\n" +
+						"               		\"odrl:constraint\": [{\n" +
+						"                    		\"odrl:leftOperand\": \"A\",\n" +
+						"                    		\"odrl:operator\": \"odrl:eq\",\n" +
+						"                    		\"odrl:rightOperand\": \"B\"\n" +
+						"                		}]\n" +
+						"                	}]\n" +
+						"                }],\n" +
 						"                \"productOffering\": {\n" +
 						"                    \"id\": \"%s\"\n" +
 						"                },\n" +
@@ -376,21 +390,15 @@ public abstract class ContractManagementIT {
 						"                    \"text\": \"We would prefer weekly pricing and a discount\"\n" +
 						"                }],\n" +
 						"                \"quoteItemPrice\": [{\n" +
-						"                    \"productOfferingPrice\":  {   \n" +
-						"                        \"id\": \"%s\"\n" +
-						"                    },\n" +
-						"                    \"priceAlteration\": [\n" +
-						"                    {\n" +
-						"                        \"name\": \"alternative price\",\n" +
-						"                        \"priceType\": \"recurring\",\n" +
-						"                        \"recurringChargePeriod\": \"weekly\",\n" +
-						"                        \"price\": {\n" +
-						"                            \"taxIncludedAmount\": {\n" +
-						"                               \"unit\": \"EUR\",\n" +
-						"                                \"value\": 2.0\n" +
-						"                            }\n" +
+						"                    \"priceType\": \"recurring\",\n" +
+						"                    \"name\": \"alternative price\",\n" +
+						"                    \"recurringChargePeriod\": \"weekly\",\n" +
+						"                    \"price\": {\n" +
+						"                        \"taxIncludedAmount\": {\n" +
+						"                            \"unit\": \"EUR\",\n" +
+						"                            \"value\": 2.0\n" +
 						"                        }\n" +
-						"                    }]\n" +
+						"                    }\n" +
 						"                }]\n" +
 						"            }\n" +
 						"        ]\n" +

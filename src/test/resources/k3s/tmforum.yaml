@@ -370,7 +370,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/agreementManagement/v4
-          image: quay.io/fiware/tmforum-agreement:1.2.5
+          image: quay.io/fiware/tmforum-agreement:1.2.6-PRE-88
           imagePullPolicy: Always
           name: tm-forum-api-agreement
           ports:
@@ -451,7 +451,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/quote/v4
-          image: quay.io/fiware/tmforum-quote:1.2.5
+          image: quay.io/fiware/tmforum-quote:1.2.6-PRE-88
           imagePullPolicy: Always
           name: tm-forum-api-quote
           ports:

@@ -14,6 +14,7 @@ import org.fiware.rainbow.api.ParticipantApiClient;
 import org.fiware.rainbow.model.*;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -65,6 +66,9 @@ public class RainbowAdapter {
 											.odrlColonAssignee(prefixDid(consumerOrganization))
 											.odrlColonAssigner(prefixDid(providerOrganization))
 											.odrlColonPermission(lastOfferVO.getOfferContent().getOdrlColonPermission());
+									if (lastOfferVO.getOfferContent().getOdrlColonObligation() != null && lastOfferVO.getOfferContent().getOdrlColonObligation().isEmpty()) {
+										agreementVO.odrlColonObligation(lastOfferVO.getOfferContent().getOdrlColonObligation());
+									}
 									AgreementRequestVO agreementRequestVO = new AgreementRequestVO()
 											.dspaceColonProviderParticipantId(prefixDid(providerOrganization))
 											.dspaceColonConsumerParticipantId(prefixDid(consumerOrganization))
@@ -73,17 +77,13 @@ public class RainbowAdapter {
 								}))
 				.map(HttpResponse::body)
 				.map(r -> new AgreementVO())
-				.onErrorMap(t -> {
-					throw new RainbowException("Was not able to create agreement");
-				});
+				.onErrorMap(t -> new RainbowException("Was not able to create agreement"));
 
 	}
 
 	public Mono<AgreementVO> getAgreement(String processId) {
 		return contractApiClient.getAgreement(processId)
-				.onErrorMap(t -> {
-					throw new RainbowException("Was not able to create agreement");
-				})
+				.onErrorMap(t -> new RainbowException("Was not able to create agreement"))
 				.map(HttpResponse::body);
 	}
 
@@ -124,7 +124,7 @@ public class RainbowAdapter {
 				.onErrorMap(t -> new RainbowException(String.format("Was not able to find negotiation process %s.", providerId), t));
 	}
 
-	public Mono<Object> updateNegotiationProcessByProviderId(String providerId, String state) {
+	public Mono<Object> updateNegotiationProcessByProviderId(String providerId, String state, List<PermissionVO> permissions) {
 		return contractApiClient.getProcessById(providerId)
 				.map(HttpResponse::body)
 				.flatMap(pn -> {
@@ -132,6 +132,9 @@ public class RainbowAdapter {
 							.dspaceColonConsumerPid(pn.getConsumerId())
 							.dspaceColonProviderPid(pn.getProviderId())
 							.dspaceColonState(state);
+					if (permissions != null && !permissions.isEmpty()) {
+						// TODO: update the offer
+					}
 					return contractApiClient.updateProcessById(pn.getCnProcessId(), negotiationProcessVO);
 				})
 				.map(HttpResponse::body)

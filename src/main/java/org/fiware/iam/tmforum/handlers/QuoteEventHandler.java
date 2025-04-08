@@ -5,24 +5,23 @@ import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.PriceMapper;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.domain.Policy;
 import org.fiware.iam.dsp.RainbowAdapter;
 import org.fiware.iam.exception.RainbowException;
-import org.fiware.iam.exception.TMForumException;
-import org.fiware.iam.tmforum.OrganizationResolver;
 import org.fiware.iam.tmforum.TMForumAdapter;
-import org.fiware.iam.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
-import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 import org.fiware.iam.tmforum.quote.model.*;
 import org.fiware.rainbow.model.NegotiationRequestVO;
+import org.fiware.rainbow.model.ObligationVO;
 import org.fiware.rainbow.model.OfferVO;
 import org.fiware.rainbow.model.PermissionVO;
 import reactor.core.publisher.Mono;
 
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Stream;
 
+import static org.fiware.iam.PriceMapper.PAYMENT_ACTION;
 import static org.fiware.iam.tmforum.TMForumAdapter.CONSUMER_ROLE;
 
 /**
@@ -45,7 +44,7 @@ public class QuoteEventHandler implements EventHandler {
 
 	private final ObjectMapper objectMapper;
 	private final GeneralProperties generalProperties;
-	private final OrganizationResolver organizationResolver;
+	private final PriceMapper priceMapper;
 	private final TMForumAdapter tmForumAdapter;
 	private final RainbowAdapter rainbowAdapter;
 
@@ -69,21 +68,30 @@ public class QuoteEventHandler implements EventHandler {
 		QuoteCreateEventVO quoteCreateEventVO = objectMapper.convertValue(event, QuoteCreateEventVO.class);
 		QuoteVO quoteVO = quoteCreateEventVO.getEvent()
 				.getQuote();
+		List<PermissionVO> permissionVOS = new ArrayList<>(getPermissionsFromQuote(quoteVO));
 
 		return tmForumAdapter.getConsumerDid(quoteVO)
 				.flatMap(id -> rainbowAdapter.createParticipant(id, CONSUMER_ROLE))
 				.onErrorMap(t -> new RainbowException("Was not able to create consumer.", t))
-				.flatMap(r -> {
+				.flatMap(r -> getObligationFromQuote(quoteVO))
+				.flatMap(obligation -> {
 					String offerId = getOfferIdFromQuote(quoteVO);
 					return tmForumAdapter.getOfferingParameters(offerId)
-							.map(offeringParams -> new NegotiationRequestVO()
-									.dspaceColonCallbackAddress("")
-									.dspaceColonConsumerPid(String.format(URN_UUID_TEMPLATE, UUID.randomUUID()))
-									.dspaceColonOffer(new OfferVO()
-											.atId(offerId)
-											.odrlColonTarget(offeringParams.target())
-											.odrlColonPermission(List.of(new PermissionVO()
-													.odrlColonAction(offeringParams.action())))));
+							.map(offeringParams -> {
+								permissionVOS.add(new PermissionVO()
+										.odrlColonAction(offeringParams.action()));
+								OfferVO offerVO = new OfferVO()
+										.atId(offerId)
+										.odrlColonTarget(offeringParams.target())
+										.odrlColonPermission(permissionVOS);
+								if (obligation.getOdrlColonConstraint() != null && !obligation.getOdrlColonConstraint().isEmpty()) {
+									offerVO.odrlColonObligation(List.of(obligation));
+								}
+								return new NegotiationRequestVO()
+										.dspaceColonCallbackAddress("")
+										.dspaceColonConsumerPid(String.format(URN_UUID_TEMPLATE, UUID.randomUUID()))
+										.dspaceColonOffer(offerVO);
+							});
 				})
 				.onErrorMap(t -> {
 					throw new RainbowException("Was not able to get the offering parameters.", t);
@@ -95,22 +103,42 @@ public class QuoteEventHandler implements EventHandler {
 								.map(t -> HttpResponse.noContent()));
 	}
 
+	private Mono<ObligationVO> getObligationFromQuote(QuoteVO quoteVO) {
+		ObligationVO obligationVO = new ObligationVO();
+		obligationVO.odrlColonAction(PAYMENT_ACTION);
+
+		return Mono.zip(
+				getRelevantQuoteItems(quoteVO)
+						.map(QuoteItemVO::getQuoteItemPrice)
+						.flatMap(List::stream)
+						.map(priceMapper::toObligationConstraints)
+						.toList(),
+				cons -> obligationVO.odrlColonConstraint(
+						Arrays.asList(cons)
+								.stream()
+								.filter(List.class::isInstance)
+								.map(List.class::cast)
+								.flatMap(List::stream)
+								.toList()));
+	}
 
 	private Mono<HttpResponse<?>> handleQuoteStateChange(Map<String, Object> event) {
 		QuoteStateChangeEventVO quoteStateChangeEventVO = objectMapper.convertValue(event, QuoteStateChangeEventVO.class);
 		QuoteVO quoteVO = quoteStateChangeEventVO.getEvent()
 				.getQuote();
 
+		List<PermissionVO> permissionVOS = new ArrayList<>(getPermissionsFromQuote(quoteVO));
 		QuoteStateTypeVO quoteStateTypeVO = quoteVO.getState();
 		return switch (quoteStateTypeVO) {
 			case APPROVED ->
-					rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:OFFERED")
+					rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:OFFERED", permissionVOS)
 							.map(t -> HttpResponse.noContent());
 			case ACCEPTED -> tmForumAdapter.getConsumerDid(quoteVO)
-					.flatMap(consumerDid -> rainbowAdapter
-							.createAgreementAfterNegotiation(quoteVO.getExternalId(), consumerDid, generalProperties.getDid())
-							.flatMap(r -> rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:AGREED")
-									.map(t -> HttpResponse.noContent())));
+					.flatMap(consumerDid ->
+							rainbowAdapter
+									.createAgreementAfterNegotiation(quoteVO.getExternalId(), consumerDid, generalProperties.getDid())
+									.flatMap(r -> rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:AGREED", permissionVOS)
+											.map(t -> HttpResponse.noContent())));
 			default -> Mono.just(HttpResponse.badRequest());
 		};
 	}
@@ -121,7 +149,7 @@ public class QuoteEventHandler implements EventHandler {
 				.getQuote();
 
 		if (quoteVO.getExternalId() == null && !quoteVO.getExternalId().isEmpty()) {
-			return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:TERMINATED")
+			return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:TERMINATED", List.of())
 					.map(t -> HttpResponse.noContent());
 		}
 
@@ -129,13 +157,40 @@ public class QuoteEventHandler implements EventHandler {
 	}
 
 	private String getOfferIdFromQuote(QuoteVO quoteVO) {
-		return quoteVO
-				.getQuoteItem()
-				.stream()
-				.filter(qi -> !qi.getState().equals("rejected"))
+		return getRelevantQuoteItems(quoteVO)
 				.map(QuoteItemVO::getProductOffering)
 				.map(org.fiware.iam.tmforum.quote.model.ProductOfferingRefVO::getId)
 				.findFirst()
 				.orElseThrow(() -> new IllegalArgumentException("The event does not reference an offer."));
+	}
+
+	private Stream<QuoteItemVO> getRelevantQuoteItems(QuoteVO quoteVO) {
+		return quoteVO
+				.getQuoteItem()
+				.stream()
+				.filter(qi -> !qi.getState().equals("rejected"));
+	}
+
+	private List<Policy> getPoliciesFromQuote(QuoteVO quoteVO) {
+		return getRelevantQuoteItems(quoteVO)
+				.map(QuoteItemVO::getUnknownProperties)
+				.map(Map::entrySet)
+				.flatMap(Set::stream)
+				.filter(ap -> ap.getKey().equals("policy"))
+				.map(Map.Entry::getValue)
+				.filter(List.class::isInstance)
+				.map(List.class::cast)
+				.flatMap(List::stream)
+				.map(v -> objectMapper.convertValue(v, Policy.class))
+				.toList();
+	}
+
+	private List<PermissionVO> getPermissionsFromQuote(QuoteVO quoteVO) {
+		return getPoliciesFromQuote(quoteVO)
+				.stream()
+				.map(o -> objectMapper.convertValue(o, Policy.class))
+				.map(Policy::getPermission)
+				.flatMap(List::stream)
+				.toList();
 	}
 }

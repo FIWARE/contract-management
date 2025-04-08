@@ -74,6 +74,7 @@ public class NotificationSubscriber {
 					if (t instanceof HttpClientResponseException e) {
 						if (e.getStatus() == HttpStatus.CONFLICT) {
 							subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType);
+							return Mono.empty();
 						}
 						if (e.getStatus() != HttpStatus.CONFLICT) {
 							log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
