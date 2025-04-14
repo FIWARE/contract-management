@@ -118,7 +118,7 @@ public class ProductOrderEventHandler implements EventHandler {
 					if (quoteVO.getState() != QuoteStateTypeVO.ACCEPTED) {
 						throw new TMForumException(String.format("The quote is not in state accepted, cannot be used for product ordering. %s:%s.", quoteVO.getId(), quoteVO.getState()));
 					}
-					return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), STATE_VERIFIED, List.of());
+					return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), STATE_VERIFIED);
 				})
 				.map(t -> HttpResponse.noContent());
 
@@ -245,7 +245,7 @@ public class ProductOrderEventHandler implements EventHandler {
 									if (!state.equals(STATE_VERIFIED)) {
 										throw new RainbowException(String.format("Negotiation process %s is in state %s. Not allowed for order completion.", quoteVO.getExternalId(), state));
 									}
-									return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:FINALIZED", List.of());
+									return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:FINALIZED");
 								});
 						return Mono.zipDelayError(agreementMono, negotiationMono);
 					})

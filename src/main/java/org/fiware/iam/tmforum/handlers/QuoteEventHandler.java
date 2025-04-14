@@ -127,17 +127,16 @@ public class QuoteEventHandler implements EventHandler {
 		QuoteVO quoteVO = quoteStateChangeEventVO.getEvent()
 				.getQuote();
 
-		List<PermissionVO> permissionVOS = new ArrayList<>(getPermissionsFromQuote(quoteVO));
 		QuoteStateTypeVO quoteStateTypeVO = quoteVO.getState();
 		return switch (quoteStateTypeVO) {
 			case APPROVED ->
-					rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:OFFERED", permissionVOS)
+					rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:OFFERED")
 							.map(t -> HttpResponse.noContent());
 			case ACCEPTED -> tmForumAdapter.getConsumerDid(quoteVO)
 					.flatMap(consumerDid ->
 							rainbowAdapter
 									.createAgreementAfterNegotiation(quoteVO.getExternalId(), consumerDid, generalProperties.getDid())
-									.flatMap(r -> rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:AGREED", permissionVOS)
+									.flatMap(r -> rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:AGREED")
 											.map(t -> HttpResponse.noContent())));
 			default -> Mono.just(HttpResponse.badRequest());
 		};
@@ -149,7 +148,7 @@ public class QuoteEventHandler implements EventHandler {
 				.getQuote();
 
 		if (quoteVO.getExternalId() == null && !quoteVO.getExternalId().isEmpty()) {
-			return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:TERMINATED", List.of())
+			return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:TERMINATED")
 					.map(t -> HttpResponse.noContent());
 		}
 

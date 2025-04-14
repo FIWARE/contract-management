@@ -124,7 +124,7 @@ public class RainbowAdapter {
 				.onErrorMap(t -> new RainbowException(String.format("Was not able to find negotiation process %s.", providerId), t));
 	}
 
-	public Mono<Object> updateNegotiationProcessByProviderId(String providerId, String state, List<PermissionVO> permissions) {
+	public Mono<Object> updateNegotiationProcessByProviderId(String providerId, String state) {
 		return contractApiClient.getProcessById(providerId)
 				.map(HttpResponse::body)
 				.flatMap(pn -> {
@@ -132,9 +132,7 @@ public class RainbowAdapter {
 							.dspaceColonConsumerPid(pn.getConsumerId())
 							.dspaceColonProviderPid(pn.getProviderId())
 							.dspaceColonState(state);
-					if (permissions != null && !permissions.isEmpty()) {
-						// TODO: update the offer
-					}
+
 					return contractApiClient.updateProcessById(pn.getCnProcessId(), negotiationProcessVO);
 				})
 				.map(HttpResponse::body)
