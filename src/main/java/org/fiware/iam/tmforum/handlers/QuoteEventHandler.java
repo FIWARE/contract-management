@@ -60,7 +60,7 @@ public class QuoteEventHandler implements EventHandler {
 			case CREATE_EVENT -> handleQuoteCreation(event);
 			case STATE_CHANGE_EVENT, ATTRIBUTE_CHANGE_EVENT -> handleQuoteStateChange(event);
 			case DELETE_EVENT -> handleQuoteDeletion(event);
-			default -> throw new IllegalArgumentException("Even type %s is not supported.".formatted(eventType));
+			default -> throw new IllegalArgumentException("Event type %s is not supported.".formatted(eventType));
 		};
 	}
 
