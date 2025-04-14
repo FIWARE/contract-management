@@ -389,9 +389,194 @@ paths:
           description: Agreement deleted
         '400':
           description: Bad Request
-
+  /negotiations/request:
+    post:
+      tags:
+        - contract
+      operationId: createRequest
+      summary: Request a contract negotiation
+      description: Request a contract negotiation for the given offer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NegotiationRequest'
+      responses:
+        '201':
+          description: Successfully created the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Negotiation'
+        '400':
+          description: Bad Request
+        '404':
+          description: Catalog not found
+  /api/v1/contract-negotiation/processes/provider/{providerId}:
+    get:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProviderId'
+      operationId: getProcessById
+      summary: Request a contract negotiation
+      description: Request a contract negotiation for the given offer
+      responses:
+        '201':
+          description: Successfully created the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderNegotiation'
+        '404':
+          description: Not found
+  /api/v1/contract-negotiation/processes/{processId}:
+    put:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+      operationId: updateProcessById
+      summary: Update the process
+      description: Update the states of the running negotiation process
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NegotiationProcess'
+      responses:
+        '200':
+          description: Successfully updated the request.
+        '400':
+          description: Bad Request
+  /api/v1/contract-negotiation/processes/{processId}/agreement:
+    get:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+      operationId: getAgreement
+      summary: Get the agreement
+      description: Get the agreement for the given negotiation process
+      responses:
+        '200':
+          description: Successfully updated the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agreement'
+        '400':
+          description: Bad Request
+  /api/v1/contract-negotiation/processes/{processId}/messages/{messageId}/agreements:
+    post:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+        - $ref: '#/components/parameters/MessageId'
+      operationId: createAgreementForProcess
+      summary: Create the agreement
+      description: Create the agreement for the negotiation process
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgreementRequest'
+      responses:
+        '200':
+          description: Successfully updated the request.
+        '400':
+          description: Bad Request
+  /api/v1/contract-negotiation/processes/{processId}/offers/last:
+    get:
+      tags:
+        - contract
+      parameters:
+        - $ref: '#/components/parameters/ProcessId'
+      operationId: getLastOfferForProcess
+      summary: Request the last offer
+      description: Request the last offer from the given negotiation process
+      responses:
+        '200':
+          description: The last offer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LastOffer'
+        '404':
+          description: Not found
+  /api/v1/participants:
+    post:
+      tags:
+        - participant
+      operationId: createParticipant
+      summary: Create the participant
+      description: Create the participant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Participant'
+      responses:
+        '200':
+          description: The participant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Participant'
+        '404':
+          description: Not found
+  /api/v1/participants/{participantId}:
+    get:
+      tags:
+        - participant
+      parameters:
+        - $ref: '#/components/parameters/ParticipantId'
+      operationId: getParticipantById
+      summary: Get the participant
+      description: Return the participant with the given id
+      responses:
+        '200':
+          description: The participant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Participant'
+        '404':
+          description: Not found
 components:
   parameters:
+    ParticipantId:
+      name: participantId
+      in: path
+      required: true
+      schema:
+        type: string
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
+    ProcessId:
+      name: processId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: urn:uuid:some-uuid
     CatalogId:
       name: catalogId
       in: path
@@ -428,6 +613,183 @@ components:
         type: string
         example: urn:uuid:some-uuid
   schemas:
+    Participant:
+      type: object
+      properties:
+        'dspace:participantId':
+          type: string
+        'dspace:participantType':
+          type: string
+        'dspace:participantBaseUrl':
+          type: string
+        'dspace:extraFields':
+          type: object
+    OdrlAgreement:
+      type: object
+      properties:
+        '@type':
+          type: string
+          default: "odrl:Agreement"
+        '@id':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:assignee':
+          type: string
+        'odrl:assigner':
+          type: string
+        'odrl:permission':
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+        'odrl:obligation':
+          type: array
+          items:
+            $ref: '#/components/schemas/Obligation'
+    LastOffer:
+      type: object
+      properties:
+        'offer_id':
+          type: string
+        'cn_message_id':
+          type: string
+        'created_at':
+          type: string
+        'offer_content':
+          $ref: '#/components/schemas/Offer'
+    NegotiationRequest:
+      type: object
+      properties:
+        '@context':
+          type: string
+          default: https://w3id.org/dspace/2025/1/context.jsonld
+        '@type':
+          type: string
+          default: dspace:ContractNegotiation
+        'dspace:consumerPid':
+          type: string
+        'dspace:state':
+          type: string
+        'dspace:offer':
+          $ref: '#/components/schemas/Offer'
+        'dspace:callbackAddress':
+          type: string
+    Negotiation:
+      type: object
+      properties:
+        '@context':
+          type: string
+          default: https://w3id.org/dspace/2024/1/context.json
+        '@type':
+          type: string
+          default: dspace:ContractRequestMessage
+        'dspace:providerPid':
+          type: string
+        'dspace:consumerPid':
+          type: string
+        'dspace:state':
+          type: string
+    NegotiationProcess:
+      type: object
+      properties:
+        'dspace:providerPid':
+          type: string
+        'dspace:consumerPid':
+          type: string
+        'dspace:state':
+          type: string
+    ProviderNegotiation:
+      type: object
+      properties:
+        'cn_process_id':
+          type: string
+        'provider_id':
+          type: string
+        'consumer_id':
+          type: string
+        'state':
+          type: string
+    Offer:
+      type: object
+      properties:
+        '@type':
+          type: string
+          default: "dspace:Offer"
+        '@id':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:permission':
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+        'odrl:prohibition':
+          type: array
+          items:
+            $ref: '#/components/schemas/Prohibition'
+        'odrl:obligation':
+          type: array
+          items:
+            $ref: '#/components/schemas/Obligation'
+    Obligation:
+      type: object
+      properties:
+        'odrl:action':
+          type: string
+        'odrl:constraint':
+          type: array
+          items:
+            type: object
+    Permission:
+      type: object
+      properties:
+        'odrl:assigner':
+          type: string
+        'odrl:assignee':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:action':
+          type: string
+        'odrl:constraint':
+          type: array
+          items:
+            type: object
+    Prohibition:
+      type: object
+      properties:
+        'odrl:assigner':
+          type: string
+        'odrl:assignee':
+          type: string
+        'odrl:target':
+          type: string
+        'odrl:action':
+          type: string
+        'odrl:constraint':
+          type: array
+          items:
+            type: object
+    AgreementRequest:
+      type: object
+      properties:
+        'dspace:consumerParticipantId':
+          type: string
+        'dspace:providerParticipantId':
+          type: string
+        'odrl:agreement':
+          $ref: '#/components/schemas/OdrlAgreement'
+    ContractAgreement:
+      type: object
+      properties:
+        'agreement_id':
+          type: string
+        'provider_participant_id':
+          type: string
+        'consumer_participant_id':
+          type: string
+        'agreement_content':
+          $ref: '#/components/schemas/OdrlAgreement'
     Agreement:
       type: object
       properties:
@@ -510,6 +872,36 @@ components:
     Catalog:
       type: object
       properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        '@id':
+          type: string
+        'foaf:homepage':
+          type: string
+        'dcat:theme':
+          type: string
+        'dcat:keyword':
+          type: string
+        'dct:conformsTo':
+          type: string
+        'dct:creator':
+          type: string
+        'dct:identifier':
+          type: string
+        'dct:issued':
+          type: string
+        'dct:modified':
+          type: string
+        'dct:title':
+          type: string
+        'dct:description':
+          type: array
+          items:
+            type: string
+        'dspace:participantId':
+          type: string
         'odrl:hasPolicy':
           type: object
         'dspace:extraFields':
@@ -522,13 +914,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataService'
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/CatalogFoaf'
-        - $ref: '#/components/schemas/CatalogDcat'
-        - $ref: '#/components/schemas/CatalogDct'
-        - $ref: '#/components/schemas/CatalogDspace'
-    ObjectHeaders:
+    DataSet:
       type: object
       properties:
         '@context':
@@ -537,66 +923,16 @@ components:
           type: string
         '@id':
           type: string
-
-    DataSet:
-      type: object
-      properties:
         'odrl:hasPolicy':
           type: object
         'dspace:extraFields':
           type: object
         'dcat:distribution':
           $ref: '#/components/schemas/Distribution'
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/DataSetDcat'
-        - $ref: '#/components/schemas/DataSetDct'
-
-    Distribution:
-      type: object
-      properties:
-        'odrl:hasPolicy':
-          type: object
-        'dspace:extraFields':
-          type: object
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/DistributionDcat'
-        - $ref: '#/components/schemas/DistributionDct'
-
-    DistributionDcat:
-      type: object
-      properties:
-        'dcat:accessService':
-          $ref: '#/components/schemas/DataService'
-
-    DistributionDct:
-      type: object
-      properties:
-        'dct:identifier':
-          type: string
-        'dct:issued':
-          type: string
-        'dct:modified':
-          type: string
-        'dct:title':
-          type: string
-        'dct:description':
-          type: array
-          items:
-            type: string
-
-    DataSetDcat:
-      type: object
-      properties:
         'dcat:theme':
           type: string
         'dcat:keyword':
           type: string
-
-    DataSetDct:
-      type: object
-      properties:
         'dct:conformsTo':
           type: string
         'dct:creator':
@@ -614,21 +950,47 @@ components:
           items:
             type: string
 
-    DataService:
+    Distribution:
       type: object
       properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        '@id':
+          type: string
         'odrl:hasPolicy':
           type: object
         'dspace:extraFields':
           type: object
-      allOf:
-        - $ref: '#/components/schemas/ObjectHeaders'
-        - $ref: '#/components/schemas/DataServiceDcat'
-        - $ref: '#/components/schemas/DataServiceDct'
+        'dct:identifier':
+          type: string
+        'dct:issued':
+          type: string
+        'dct:modified':
+          type: string
+        'dct:title':
+          type: string
+        'dct:description':
+          type: array
+          items:
+            type: string
+        'dcat:accessService':
+          $ref: '#/components/schemas/DataService'
 
-    DataServiceDcat:
+    DataService:
       type: object
       properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        '@id':
+          type: string
+        'odrl:hasPolicy':
+          type: object
+        'dspace:extraFields':
+          type: object
         'dcat:theme':
           type: string
         'dcat:keyword':
@@ -637,10 +999,6 @@ components:
           type: string
         'dcat:endpointURL':
           type: string
-
-    DataServiceDct:
-      type: object
-      properties:
         'dct:conformsTo':
           type: string
         'dct:creator':
@@ -657,39 +1015,3 @@ components:
           type: array
           items:
             type: string
-    CatalogFoaf:
-      type: object
-      properties:
-        'foaf:homepage':
-          type: string
-    CatalogDcat:
-      type: object
-      properties:
-        'dcat:theme':
-          type: string
-        'dcat:keyword':
-          type: string
-    CatalogDct:
-      type: object
-      properties:
-        'dct:conformsTo':
-          type: string
-        'dct:creator':
-          type: string
-        'dct:identifier':
-          type: string
-        'dct:issued':
-          type: string
-        'dct:modified':
-          type: string
-        'dct:title':
-          type: string
-        'dct:description':
-          type: array
-          items:
-            type: string
-    CatalogDspace:
-      type: object
-      properties:
-        'dspace:participantId':
-          type: string

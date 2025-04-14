@@ -7,6 +7,7 @@ public enum EventType {
 	CREATE("CreateEvent"),
 	UPDATE("UpdateEvent"),
 	DELETE("DeleteEvent"),
+	ATTRIBUTE_CHANGE("AttributeValueChangeEvent"),
 	STATE_CHANGE("StateChangeEvent");
 
 	@Getter

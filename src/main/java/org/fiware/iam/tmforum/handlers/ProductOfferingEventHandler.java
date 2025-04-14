@@ -6,6 +6,7 @@ import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.tmforum.ProductOfferingConstants;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.*;
 import org.fiware.rainbow.api.CatalogApiClient;
@@ -34,8 +35,6 @@ public class ProductOfferingEventHandler implements EventHandler {
 
 	public static final String EMPTY_STRING_MARKER = "Empty";
 	public static final String OWNER_ROLE = "Owner";
-	public static final String ENDPOINT_URL_TYPE = "endpointUrl";
-	public static final String ENDPOINT_DESCRIPTION_TYPE = "endpointDescription";
 
 	private final CatalogApiClient rainbowCatalogApiClient;
 	private final ProductSpecificationApiClient productSpecificationApiClient;
@@ -197,11 +196,11 @@ public class ProductOfferingEventHandler implements EventHandler {
 	private static void setEndpoint(ProductSpecificationVO spec, NewDataserviceVO newDataserviceVO) {
 		if (spec.getProductSpecCharacteristic() != null && !spec.getProductSpecCharacteristic().isEmpty()) {
 			spec.getProductSpecCharacteristic().forEach(psc -> {
-				if (psc.getValueType().equals(ENDPOINT_URL_TYPE)) {
+				if (psc.getValueType().equals(ProductOfferingConstants.ENDPOINT_URL_TYPE)) {
 					getCharValue(psc.getProductSpecCharacteristicValue())
 							.ifPresent(newDataserviceVO::dcatColonEndpointURL);
 
-				} else if (psc.getValueType().equals(ENDPOINT_DESCRIPTION_TYPE)) {
+				} else if (psc.getValueType().equals(ProductOfferingConstants.ENDPOINT_DESCRIPTION_TYPE)) {
 					getCharValue(psc.getProductSpecCharacteristicValue())
 							.ifPresent(newDataserviceVO::dcatColonEndpointDescription);
 				}

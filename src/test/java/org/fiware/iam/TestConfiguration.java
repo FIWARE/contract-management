@@ -15,5 +15,7 @@ public class TestConfiguration {
 	private String partyCatalogHost = "http://localhost:8083";
 	private String productCatalogHost = "http://localhost:8082";
 	private String agreementHost = "http://localhost:8086";
+	private String quoteHost = "http://localhost:8087";
 	private String providerRainbowHost = "http://localhost:1234";
+	private String odrlPapHost = "http://localhost:8088";
 }

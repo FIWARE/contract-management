@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policy.json",
+  "title": "Schema of an ODRL Policy",
+  "description": "Definition of an ODRL Policy.",
+  "type": "object",
+  "properties": {
+    "@type": {
+      "type": "string",
+      "description": "Type of the policy"
+    },
+    "@id": {
+      "type": "string",
+      "description": "Id of the policy"
+    },
+    "odrl:permission": {
+      "description": "A list of odrl:permission to be used inside a policy.",
+      "items": {
+        "$ref": "./permission.json"
+      }
+    },
+    "odrl:prohibition": {
+      "description": "A list of odrl:prohibition to be used inside a policy.",
+      "items": {
+        "$ref": "./prohibition.json"
+      }
+    }
+  }
+}
