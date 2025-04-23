@@ -67,7 +67,7 @@ spec:
         app.kubernetes.io/name: rainbow
     spec:
       initContainers:
-        - image: quay.io/wi_stefan/rainbow:latest
+        - image: quay.io/wi_stefan/rainbow:0.0.3
           imagePullPolicy: Always
           name: rainbow-init
           args: [ "provider", "setup" ]
@@ -86,7 +86,7 @@ spec:
             - name: DB_PORT
               value: "5432"
       containers:
-        - image: quay.io/wi_stefan/rainbow:latest
+        - image: quay.io/wi_stefan/rainbow:0.0.3
           imagePullPolicy: Always
           name: rainbow
           args: [ "provider", "start" ]

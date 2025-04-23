@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prohibition.json",
+  "title": "Schema of an odrl:prohibition",
+  "description": "Definition of an ODRL Prohibition, describes the inability to perform an Action over an Asset.",
+  "type": "object",
+  "properties": {
+    "@type": {
+      "type": "string",
+      "description": "Type of the prohibition"
+    },
+    "@id": {
+      "type": "string",
+      "description": "Id of the prohibition"
+    },
+    "odrl:action": {
+      "type": ["object","string"],
+      "description": "Action of the prohibition."
+    },
+    "odrl:assigner": {
+      "type": ["object","string"],
+      "description": "Assigner of the prohibition."
+    },
+    "odrl:assignee": {
+      "type": ["object","string"],
+      "description": "Assignee of the prohibition."
+    },
+    "odrl:target": {
+      "type": ["object","string"],
+      "description": "Target of the prohibition."
+    },
+    "odrl:constraint": {
+      "type": "array",
+      "description": "A list of odrl:constraints to be enforced in the prohibition.",
+      "items": {
+        "$ref": "./constraint.json"
+      }
+    }
+  }
+}

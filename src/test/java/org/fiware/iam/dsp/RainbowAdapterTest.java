@@ -21,14 +21,18 @@ public class RainbowAdapterTest {
 
 	private ObjectMapper objectMapper = new ObjectMapper();
 	private AgreementApiClient agreementApiClient;
+	private ContractApiClient contractApiClient;
+	private ParticipantApiClient participantApiClient;
 
 	private RainbowAdapter rainbowAdapter;
 
 	@BeforeEach
 	public void prepare() {
 		agreementApiClient = mock(AgreementApiClient.class);
+		contractApiClient = mock(ContractApiClient.class);
+		participantApiClient = mock(ParticipantApiClient.class);
 
-		rainbowAdapter = new RainbowAdapter(agreementApiClient, objectMapper);
+		rainbowAdapter = new RainbowAdapter(agreementApiClient, contractApiClient, participantApiClient, objectMapper);
 	}
 
 	@Test

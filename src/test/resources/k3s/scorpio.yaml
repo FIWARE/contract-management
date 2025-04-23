@@ -141,3 +141,5 @@ spec:
               value: ngb
             - name: POSTGRES_USER
               value: ngb
+            - name: QUARKUS_LOG_LEVEL
+              value: TRACE
