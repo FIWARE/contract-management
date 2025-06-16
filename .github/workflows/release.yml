@@ -50,6 +50,10 @@ jobs:
       - name: Log into quay.io
         run: docker login -u "${{ secrets.QUAY_USERNAME }}" -p "${{ secrets.QUAY_PASSWORD }}" ${{ env.REGISTRY }}
 
+      - name: Ensure br_netfilter is enabled.
+        run: |
+          sudo modprobe br_netfilter
+
       - name: Build&Push image
         run: |
           mvn versions:set -DnewVersion=${{ needs.generate-version.outputs.version }}
