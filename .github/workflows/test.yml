@@ -17,6 +17,10 @@ jobs:
           java-version: '21'
           java-package: jdk
 
+      - name: Ensure br_netfilter is enabled.
+        run: |
+          sudo modprobe br_netfilter
+
       - name: Run tests
         run: |
           mvn clean verify jacoco:report coveralls:report -Dcoveralls.token=${{ secrets.COVERALLS_TOKEN }} -Pintegration-test,in-container
