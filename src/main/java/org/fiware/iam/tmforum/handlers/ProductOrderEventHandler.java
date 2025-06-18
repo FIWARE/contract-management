@@ -73,7 +73,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.filter(Objects::nonNull)
 				.map(rpl -> rpl.stream().peek(p -> {
 							try {
-								log.warn("The rp is %s", objectMapper.writeValueAsString(p));
+								log.warn("The rp is {}", objectMapper.writeValueAsString(p));
 							} catch (JsonProcessingException e) {
 								throw new RuntimeException(e);
 							}
