@@ -1,5 +1,6 @@
 package org.fiware.iam.tmforum.handlers;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpResponseFactory;
@@ -70,12 +71,16 @@ public class ProductOrderEventHandler implements EventHandler {
 				.map(ProductOrderCreateEventPayloadVO::getProductOrder)
 				.map(ProductOrderVO::getRelatedParty)
 				.filter(Objects::nonNull)
-				.map(rpl -> {
-					if (rpl.size() != 1) {
-						throw new IllegalArgumentException("Expected exactly one ordering organization.");
+				.map(rpl -> rpl.stream().peek(p -> {
+					try {
+						log.warn("The rp is {}", objectMapper.writeValueAsString(p));
+					} catch (JsonProcessingException e) {
+						throw new RuntimeException(e);
 					}
-					return rpl.get(0);
-				})
+				}).filter(rp -> {
+					log.warn("Role {} - {}", rp.getRole(),rp.getRole().equals("Customer") );
+					return rp.getRole().equals("Customer");
+				}).findFirst().orElseThrow(() -> new IllegalArgumentException("Exactly one ordering related party is expected.")))
 				.map(RelatedPartyVO::getId)
 				.findAny()
 				.orElseThrow(() -> new IllegalArgumentException("The ProductOrder-Event does not include a valid organization id."));
