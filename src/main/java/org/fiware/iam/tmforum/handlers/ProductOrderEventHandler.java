@@ -72,13 +72,15 @@ public class ProductOrderEventHandler implements EventHandler {
 				.map(ProductOrderVO::getRelatedParty)
 				.filter(Objects::nonNull)
 				.map(rpl -> rpl.stream().peek(p -> {
-							try {
-								log.warn("The rp is {}", objectMapper.writeValueAsString(p));
-							} catch (JsonProcessingException e) {
-								throw new RuntimeException(e);
-							}
-						}).
-		filter(rp -> rp.getRole().equals("Costumer")).findFirst().orElseThrow(() -> new IllegalArgumentException("Exactly one ordering related party is expected.")))
+					try {
+						log.warn("The rp is {}", objectMapper.writeValueAsString(p));
+					} catch (JsonProcessingException e) {
+						throw new RuntimeException(e);
+					}
+				}).filter(rp -> {
+					log.warn("Role {} - {}", rp.getRole(),rp.getRole().equals("Costumer") );
+					return rp.getRole().equals("Costumer");
+				}).findFirst().orElseThrow(() -> new IllegalArgumentException("Exactly one ordering related party is expected.")))
 				.map(RelatedPartyVO::getId)
 				.findAny()
 				.orElseThrow(() -> new IllegalArgumentException("The ProductOrder-Event does not include a valid organization id."));
