@@ -79,7 +79,7 @@ public class ProductOrderEventHandler implements EventHandler {
 					}
 				}).filter(rp -> {
 					log.warn("Role {} - {}", rp.getRole(),rp.getRole().equals("Customer") );
-					return rp.getRole().equals("Costumer");
+					return rp.getRole().equals("Customer");
 				}).findFirst().orElseThrow(() -> new IllegalArgumentException("Exactly one ordering related party is expected.")))
 				.map(RelatedPartyVO::getId)
 				.findAny()
