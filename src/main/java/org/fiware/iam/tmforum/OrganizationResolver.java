@@ -54,6 +54,7 @@ public class OrganizationResolver {
 	}
 
 	private Optional<String> getDidFromExternalReference(List<ExternalReferenceVO> externalReferenceVOList) {
+		log.warn("External refs {}", externalReferenceVOList);
 		if (externalReferenceVOList == null) {
 			return Optional.empty();
 		}
