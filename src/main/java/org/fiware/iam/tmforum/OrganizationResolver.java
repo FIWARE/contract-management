@@ -30,7 +30,7 @@ public class OrganizationResolver {
 
 	//TODO Cache me if you can
 	public Mono<String> getDID(String organizationId) {
-		return apiClient.retrieveOrganization(organizationId, FIELD_NAME_PARTY_CHARACTERISTIC)
+		return apiClient.retrieveOrganization(organizationId, null)
 				.filter(response -> response.getStatus().equals(HttpStatus.OK))
 				.map(HttpResponse::body)
 				.map(ovo ->
