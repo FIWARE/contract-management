@@ -88,19 +88,15 @@ public class ProductOrderEventHandler implements EventHandler {
 	}
 
 	private Optional<RelatedPartyVO> getCustomer(List<RelatedPartyVO> relatedPartyVOS) {
-		log.warn("Get customer");
 		if (relatedPartyVOS == null || relatedPartyVOS.isEmpty()) {
-			log.warn("Did not receive a related party.");
 			return Optional.empty();
 		}
 		if (relatedPartyVOS.size() == 1) {
 			String role = relatedPartyVOS.getFirst().getRole();
-			log.info("Exactly one party contained, role is {}", role);
 			if (role == null || role.equals(CUSTOMER_ROLE)) {
 				return Optional.of(relatedPartyVOS.getFirst());
 			}
 		}
-		log.info("Extract party from {}.", relatedPartyVOS);
 		return relatedPartyVOS.stream()
 				.filter(relatedPartyVO -> relatedPartyVO.getRole() != null)
 				.filter(relatedPartyVO -> relatedPartyVO.getRole().equals(CUSTOMER_ROLE))

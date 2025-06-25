@@ -33,10 +33,13 @@ public class OrganizationResolver {
 		return apiClient.retrieveOrganization(organizationId, null)
 				.filter(response -> response.getStatus().equals(HttpStatus.OK))
 				.map(HttpResponse::body)
-				.map(ovo ->
-						getDidFromExternalReference(ovo.getExternalReference())
-								.or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
-								.orElseThrow(() -> new TMForumException("Could not find organizations DID (%s) in response.".formatted(organizationId)))
+				.map(ovo -> {
+							String did = getDidFromExternalReference(ovo.getExternalReference())
+									.or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
+									.orElseThrow(() -> new TMForumException("Could not find organizations DID (%s) in response.".formatted(organizationId)));
+							log.info("Did is {}", did);
+							return did;
+						}
 				);
 	}
 
