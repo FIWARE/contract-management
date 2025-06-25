@@ -1,5 +1,6 @@
 package org.fiware.iam.tmforum.handlers;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpResponseFactory;
@@ -46,6 +47,8 @@ public class ProductOrderEventHandler implements EventHandler {
 	private static final String STATE_VERIFIED = "dspace:VERIFIED";
 	private static final String STATE_FINALIZED = "dspace:FINALIZED";
 
+	private static final String CUSTOMER_ROLE = "Customer";
+
 	private final ObjectMapper objectMapper;
 	private final GeneralProperties generalProperties;
 	private final OrganizationResolver organizationResolver;
@@ -70,12 +73,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.map(ProductOrderCreateEventPayloadVO::getProductOrder)
 				.map(ProductOrderVO::getRelatedParty)
 				.filter(Objects::nonNull)
-				.map(rpl -> {
-					if (rpl.size() != 1) {
-						throw new IllegalArgumentException("Expected exactly one ordering organization.");
-					}
-					return rpl.get(0);
-				})
+				.map(rpl -> getCustomer(rpl).orElseThrow(() -> new IllegalArgumentException("Exactly one ordering related party is expected.")))
 				.map(RelatedPartyVO::getId)
 				.findAny()
 				.orElseThrow(() -> new IllegalArgumentException("The ProductOrder-Event does not include a valid organization id."));
@@ -87,6 +85,22 @@ public class ProductOrderEventHandler implements EventHandler {
 			default -> throw new IllegalArgumentException("Invalid event type received.");
 		};
 
+	}
+
+	private Optional<RelatedPartyVO> getCustomer(List<RelatedPartyVO> relatedPartyVOS) {
+		if (relatedPartyVOS == null || relatedPartyVOS.isEmpty()) {
+			return Optional.empty();
+		}
+		if (relatedPartyVOS.size() == 1) {
+			String role = relatedPartyVOS.getFirst().getRole();
+			if (role == null || role.equals(CUSTOMER_ROLE)) {
+				return Optional.of(relatedPartyVOS.getFirst());
+			}
+		}
+		return relatedPartyVOS.stream()
+				.filter(relatedPartyVO -> relatedPartyVO.getRole() != null)
+				.filter(relatedPartyVO -> relatedPartyVO.getRole().equals(CUSTOMER_ROLE))
+				.findFirst();
 	}
 
 	private Mono<HttpResponse<?>> handelCreateEvent(String organizationId, Map<String, Object> event) {
