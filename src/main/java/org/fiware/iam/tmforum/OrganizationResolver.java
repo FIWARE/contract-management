@@ -30,13 +30,16 @@ public class OrganizationResolver {
 
 	//TODO Cache me if you can
 	public Mono<String> getDID(String organizationId) {
-		return apiClient.retrieveOrganization(organizationId, FIELD_NAME_PARTY_CHARACTERISTIC)
+		return apiClient.retrieveOrganization(organizationId, null)
 				.filter(response -> response.getStatus().equals(HttpStatus.OK))
 				.map(HttpResponse::body)
-				.map(ovo ->
-						getDidFromExternalReference(ovo.getExternalReference())
-								.or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
-								.orElseThrow(() -> new TMForumException("Could not find organizations DID (%s) in response.".formatted(organizationId)))
+				.map(ovo -> {
+							String did = getDidFromExternalReference(ovo.getExternalReference())
+									.or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
+									.orElseThrow(() -> new TMForumException("Could not find organizations DID (%s) in response.".formatted(organizationId)));
+							log.info("Did is {}", did);
+							return did;
+						}
 				);
 	}
 
@@ -54,6 +57,7 @@ public class OrganizationResolver {
 	}
 
 	private Optional<String> getDidFromExternalReference(List<ExternalReferenceVO> externalReferenceVOList) {
+		log.warn("External refs {}", externalReferenceVOList);
 		if (externalReferenceVOList == null) {
 			return Optional.empty();
 		}
