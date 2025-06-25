@@ -88,6 +88,7 @@ public class ProductOrderEventHandler implements EventHandler {
 	}
 
 	private Optional<RelatedPartyVO> getCustomer(List<RelatedPartyVO> relatedPartyVOS) {
+		log.warn("Get customer");
 		if (relatedPartyVOS == null || relatedPartyVOS.isEmpty()) {
 			log.warn("Did not receive a related party.");
 			return Optional.empty();
