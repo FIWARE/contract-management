@@ -9,10 +9,13 @@ import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
+import org.fiware.iam.til.model.CredentialsVOTestExample;
 import org.fiware.iam.til.model.TrustedIssuerVO;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
+
+import java.util.List;
 
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.*;
@@ -34,7 +37,7 @@ class TrustedIssuersListAdapterTest {
 	void allowIssuer_create() {
 		when(apiClient.getIssuer(anyString())).thenReturn(Mono.just(HttpResponse.notFound()));
 		when(apiClient.createTrustedIssuer(any())).thenReturn(Mono.just(HttpResponse.ok()));
-		classUnderTest.allowIssuer("testDID").block();
+		classUnderTest.allowIssuer("testDID", List.of(CredentialsVOTestExample.build())).block();
 		verify(apiClient).createTrustedIssuer(any());
 	}
 
@@ -43,11 +46,13 @@ class TrustedIssuersListAdapterTest {
 		when(apiClient.getIssuer(anyString())).thenReturn(Mono.just(HttpResponse.notFound()));
 		when(apiClient.createTrustedIssuer(any())).thenReturn(Mono.just(HttpResponse.ok()));
 		doThrow(new HttpClientException("test")).when(apiClient).createTrustedIssuer(any());
-		Assertions.assertThrows(TrustedIssuersException.class, () -> classUnderTest.allowIssuer("testDID").block());
+		Assertions.assertThrows(TrustedIssuersException.class, () -> classUnderTest.allowIssuer("testDID", List.of(CredentialsVOTestExample.build())).block());
 	}
 
 	@Test
 	void allowIssuer_update() {
+		CredentialsVO testCVO = CredentialsVOTestExample.build();
+
 		when(apiClient.getIssuer(anyString()))
 				.thenReturn(Mono.just(HttpResponse.ok(new TrustedIssuerVO()
 						.did("testDID")
@@ -55,7 +60,7 @@ class TrustedIssuersListAdapterTest {
 								.credentialsType("existingCredentialType")
 								.addClaimsItem(new ClaimVO().name("target1").addAllowedValuesItem("Role1"))))));
 		when(apiClient.updateIssuer(any(), any())).thenReturn(Mono.just(HttpResponse.ok()));
-		classUnderTest.allowIssuer("testDID").block();
+		classUnderTest.allowIssuer("testDID", List.of(testCVO)).block();
 		verify(apiClient).updateIssuer(eq("testDID"), any());
 	}
 
@@ -68,7 +73,7 @@ class TrustedIssuersListAdapterTest {
 								.credentialsType("existingCredentialType")
 								.addClaimsItem(new ClaimVO().name("target1").addAllowedValuesItem("Role1"))))));
 		doThrow(new HttpClientException("test")).when(apiClient).updateIssuer(anyString(), any());
-		Assertions.assertThrows(TrustedIssuersException.class, () -> classUnderTest.allowIssuer("testDID").block());
+		Assertions.assertThrows(TrustedIssuersException.class, () -> classUnderTest.allowIssuer("testDID", List.of(CredentialsVOTestExample.build())).block());
 	}
 
 }
