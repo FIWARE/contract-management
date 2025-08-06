@@ -170,6 +170,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		if (isCompleted(productOrderVO)) {
+			log.info("Product order is completed.");
 			return Mono.zipDelayError(
 							handleComplete(productOrderVO, organizationId),
 							allowIssuer(organizationId, productOrderVO))
@@ -287,6 +288,7 @@ public class ProductOrderEventHandler implements EventHandler {
 	}
 
 	private Mono<HttpResponse<?>> allowIssuer(String organizationId, ProductOrderVO productOrderVO) {
+		log.info("Allow the issuer.");
 		return Mono.zip(organizationResolver.getDID(organizationId), credentialsConfigResolver.getCredentialsConfig(productOrderVO))
 				.flatMap(resultTuple -> trustedIssuersListAdapter.allowIssuer(resultTuple.getT1(), resultTuple.getT2()))
 				.map(issuer -> HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED));

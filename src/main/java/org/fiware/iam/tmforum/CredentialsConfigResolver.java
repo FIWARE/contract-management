@@ -37,10 +37,11 @@ public class CredentialsConfigResolver {
 	private final ObjectMapper objectMapper;
 
 	public Mono<List<CredentialsVO>> getCredentialsConfig(ProductOrderVO productOrder) {
+		log.info("Get config.");
 		if (productOrder.getQuote() != null && !productOrder.getQuote().isEmpty()) {
 			return getCredentialsConfigFromQuote(productOrder.getQuote());
 		}
-		log.debug("No quote found, take the original offer from the order item.");
+		log.info("No quote found, take the original offer from the order item.");
 		List<Mono<List<CredentialsVO>>> credentialsVOMonoList = productOrder.getProductOrderItem()
 				.stream()
 				.filter(poi -> poi.getAction() == OrderItemActionTypeVO.ADD || poi.getAction() == OrderItemActionTypeVO.MODIFY)
