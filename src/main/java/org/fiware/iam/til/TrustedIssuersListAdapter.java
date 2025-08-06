@@ -23,7 +23,6 @@ import java.util.*;
 public class TrustedIssuersListAdapter {
 
 	private final IssuerApiClient apiClient;
-	private final TrustedIssuerConfigProvider trustedIssuerConfigProvider;
 
 	public Mono<?> allowIssuer(String issuerDid, List<CredentialsVO> credentialsConfig) {
 
@@ -56,25 +55,24 @@ public class TrustedIssuersListAdapter {
 	}
 
 	public Mono<HttpResponse<?>> denyIssuer(String issuerDid) {
-		CredentialsVO credentialToBeRemoved = trustedIssuerConfigProvider.createCredentialConfigForTargetService();
 
-		return getIssuer(issuerDid)
-				.onErrorResume(e -> {
-					log.info("Was not able to get the issuer.", e);
-					return Mono.just(Optional.empty());
-				})
-				.flatMap(optionalIssuer -> {
-					if (optionalIssuer.isPresent()) {
-						TrustedIssuerVO updatedIssuer = optionalIssuer.get().removeCredentialsItem(credentialToBeRemoved);
-						log.debug("Updating existing issuer with {}", updatedIssuer);
-						return apiClient.updateIssuer(issuerDid, updatedIssuer);
-					}
-					return Mono.just(HttpResponse.noContent());
-				})
-				.onErrorMap(e -> {
-					throw new TrustedIssuersException("Was not able to deny the issuer.", e);
-				});
-
+//		return getIssuer(issuerDid)
+//				.onErrorResume(e -> {
+//					log.info("Was not able to get the issuer.", e);
+//					return Mono.just(Optional.empty());
+//				})
+//				.flatMap(optionalIssuer -> {
+//					if (optionalIssuer.isPresent()) {
+//						TrustedIssuerVO updatedIssuer = optionalIssuer.get().removeCredentialsItem(credentialToBeRemoved);
+//						log.debug("Updating existing issuer with {}", updatedIssuer);
+//						return apiClient.updateIssuer(issuerDid, updatedIssuer);
+//					}
+//					return Mono.just(HttpResponse.noContent());
+//				})
+//				.onErrorMap(e -> {
+//					throw new TrustedIssuersException("Was not able to deny the issuer.", e);
+//				});
+		return Mono.just(HttpResponse.noContent());
 	}
 
 	private Mono<Optional<TrustedIssuerVO>> getIssuer(String issuerDid) {
