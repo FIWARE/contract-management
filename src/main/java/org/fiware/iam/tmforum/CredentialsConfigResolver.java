@@ -99,8 +99,10 @@ public class CredentialsConfigResolver {
 						.map(CharacteristicValueSpecificationVO::getValue)
 						.map(value -> {
 							try {
-								return objectMapper.convertValue(value, new TypeReference<List<CredentialsVO>>() {
+								List<CredentialsVO> credentialsVOS = objectMapper.convertValue(value, new TypeReference<List<CredentialsVO>>() {
 								});
+								log.info("Config is {}", credentialsVOS);
+								return credentialsVOS;
 							} catch (IllegalArgumentException iae) {
 								log.warn("The characteristic value is invalid.", iae);
 								return null;
