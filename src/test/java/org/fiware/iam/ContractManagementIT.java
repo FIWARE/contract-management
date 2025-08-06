@@ -541,6 +541,26 @@ public abstract class ContractManagementIT {
 						"    \"name\": \"Packet Delivery Premium Service Spec\",\n" +
 						"    \"productSpecCharacteristic\": [\n" +
 						"        {\n" +
+						"            \"id\": \"credentialsConfig\",\n" +
+						"            \"name\": \"Credentials Config for the Target Service\",\n" +
+						"            \"valueType\": \"credentialsConfiguration\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\":  " +
+						"						{\n" +
+						"						  \"credentialsType\":\"MyCredential\",\n" +
+						"						  \"claims\": [\n" +
+						"						  	{\n" +
+						"								\"name\": \"did:some:service\",\n" +
+						"								\"allowedValues\": [\"Consumer\",\"Admin\"]\n"+
+						" 							}\n" +
+						"						  ]\n" +
+						"        				},\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        },\n" +
+						"        {\n" +
 						"            \"id\": \"endpointUrl\",\n" +
 						"            \"name\": \"Service Endpoint URL\",\n" +
 						"            \"valueType\": \"endpointUrl\",\n" +
