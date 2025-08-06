@@ -186,7 +186,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
-		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId);
+		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId, productOrderVO);
 
 		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
 				.filter(HttpResponse.class::isInstance)
@@ -203,7 +203,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
-		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId);
+		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId, productOrderVO);
 
 		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
 				.filter(HttpResponse.class::isInstance)
@@ -307,9 +307,10 @@ public class ProductOrderEventHandler implements EventHandler {
 		});
 	}
 
-	private Mono<HttpResponse<?>> denyIssuer(String organizationId) {
-		return organizationResolver.getDID(organizationId)
-				.flatMap(trustedIssuersListAdapter::denyIssuer);
+	private Mono<HttpResponse<?>> denyIssuer(String organizationId, ProductOrderVO productOrderVO) {
+
+		return Mono.zip(organizationResolver.getDID(organizationId), credentialsConfigResolver.getCredentialsConfig(productOrderVO))
+				.flatMap(resultTuple -> trustedIssuersListAdapter.denyIssuer(resultTuple.getT1(), resultTuple.getT2()));
 	}
 
 	private String getOfferIdFromQuote(QuoteVO quoteVO) {
