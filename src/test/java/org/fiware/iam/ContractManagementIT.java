@@ -44,9 +44,6 @@ public abstract class ContractManagementIT {
 
 	protected final TestConfiguration testConfiguration;
 
-	@Value("${general.til.credentialType}")
-	private String credentialType;
-
 	// required to parse date time strings to instants
 	@BeforeAll
 	public static void configureUnirest() {
@@ -106,7 +103,7 @@ public abstract class ContractManagementIT {
 
 		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
 		assertAgreementReferenced(productOrder);
-		assertTilEntry(TEST_CONSUMER_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
+		assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
 	}
 
 	@DisplayName("Test Contract Negotiation")
@@ -115,7 +112,7 @@ public abstract class ContractManagementIT {
 
 		String organizationId = createOrganization();
 		String priceId = createPrice();
- 		String offeringId = createTestOffer(Optional.of(priceId));
+		String offeringId = createTestOffer(Optional.of(priceId));
 
 		// state requested
 		String quoteId = createQuote(organizationId, offeringId, priceId);
@@ -161,7 +158,7 @@ public abstract class ContractManagementIT {
 
 		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
 		assertAgreementReferenced(orderId);
-		assertTilEntry(TEST_CONSUMER_DID, credentialType, TEST_SERVICE, Set.of("Consumer", "Admin"));
+		assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
 	}
 
 
@@ -552,7 +549,7 @@ public abstract class ContractManagementIT {
 						"						  \"claims\": [\n" +
 						"						  	{\n" +
 						"								\"name\": \"did:some:service\",\n" +
-						"								\"allowedValues\": [\"Consumer\",\"Admin\"]\n"+
+						"								\"allowedValues\": [\"Consumer\",\"Admin\"]\n" +
 						" 							}\n" +
 						"						  ]\n" +
 						"        				},\n" +
