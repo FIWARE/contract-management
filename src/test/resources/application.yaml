@@ -55,13 +55,6 @@ loggers:
 general:
   did: did:test:did
   host: local-host
-  til:
-    credentialType: MyCredential
-    claims:
-      - target: "did:some:service"
-        roles:
-          - Consumer
-          - Admin
 
 notification:
   entities:
