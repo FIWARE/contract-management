@@ -14,6 +14,7 @@ import org.fiware.iam.dsp.RainbowAdapter;
 import org.fiware.iam.exception.RainbowException;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
+import org.fiware.iam.tmforum.CredentialsConfigResolver;
 import org.fiware.iam.tmforum.OrganizationResolver;
 import org.fiware.iam.tmforum.TMForumAdapter;
 import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
@@ -50,8 +51,8 @@ public class ProductOrderEventHandler implements EventHandler {
 	private static final String CUSTOMER_ROLE = "Customer";
 
 	private final ObjectMapper objectMapper;
-	private final GeneralProperties generalProperties;
 	private final OrganizationResolver organizationResolver;
+	private final CredentialsConfigResolver credentialsConfigResolver;
 	private final TrustedIssuersListAdapter trustedIssuersListAdapter;
 	private final RainbowAdapter rainbowAdapter;
 	private final TMForumAdapter tmForumAdapter;
@@ -120,7 +121,7 @@ public class ProductOrderEventHandler implements EventHandler {
 			return Mono.just(HttpResponse.noContent());
 		}
 
-		return Mono.zipDelayError(handleComplete(productOrderVO, organizationId), allowIssuer(organizationId))
+		return Mono.zipDelayError(handleComplete(productOrderVO, organizationId), allowIssuer(organizationId, productOrderVO))
 				.map(tuple -> HttpResponse.noContent());
 	}
 
@@ -169,9 +170,10 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		if (isCompleted(productOrderVO)) {
+			log.info("Product order is completed.");
 			return Mono.zipDelayError(
 							handleComplete(productOrderVO, organizationId),
-							allowIssuer(organizationId))
+							allowIssuer(organizationId, productOrderVO))
 					.map(tuple -> HttpResponse.noContent());
 		} else {
 			return handleStopEvent(organizationId, event);
@@ -185,7 +187,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
-		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId);
+		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId, productOrderVO);
 
 		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
 				.filter(HttpResponse.class::isInstance)
@@ -202,7 +204,7 @@ public class ProductOrderEventHandler implements EventHandler {
 				.orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
 		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
-		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId);
+		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId, productOrderVO);
 
 		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
 				.filter(HttpResponse.class::isInstance)
@@ -285,9 +287,10 @@ public class ProductOrderEventHandler implements EventHandler {
 
 	}
 
-	private Mono<HttpResponse<?>> allowIssuer(String organizationId) {
-		return organizationResolver.getDID(organizationId)
-				.flatMap(trustedIssuersListAdapter::allowIssuer)
+	private Mono<HttpResponse<?>> allowIssuer(String organizationId, ProductOrderVO productOrderVO) {
+		log.info("Allow the issuer.");
+		return Mono.zip(organizationResolver.getDID(organizationId), credentialsConfigResolver.getCredentialsConfig(productOrderVO))
+				.flatMap(resultTuple -> trustedIssuersListAdapter.allowIssuer(resultTuple.getT1(), resultTuple.getT2()))
 				.map(issuer -> HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED));
 	}
 
@@ -306,9 +309,10 @@ public class ProductOrderEventHandler implements EventHandler {
 		});
 	}
 
-	private Mono<HttpResponse<?>> denyIssuer(String organizationId) {
-		return organizationResolver.getDID(organizationId)
-				.flatMap(trustedIssuersListAdapter::denyIssuer);
+	private Mono<HttpResponse<?>> denyIssuer(String organizationId, ProductOrderVO productOrderVO) {
+
+		return Mono.zip(organizationResolver.getDID(organizationId), credentialsConfigResolver.getCredentialsConfig(productOrderVO))
+				.flatMap(resultTuple -> trustedIssuersListAdapter.denyIssuer(resultTuple.getT1(), resultTuple.getT2()));
 	}
 
 	private String getOfferIdFromQuote(QuoteVO quoteVO) {
