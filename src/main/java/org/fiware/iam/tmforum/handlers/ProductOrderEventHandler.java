@@ -164,6 +164,7 @@ public class ProductOrderEventHandler implements EventHandler {
 	}
 
 	private Mono<HttpResponse<?>> handelStateChangeEvent(String organizationId, Map<String, Object> event) {
+		log.info("State change event.");
 		ProductOrderStateChangeEventVO productOrderStateChangeEventVO = objectMapper.convertValue(event, ProductOrderStateChangeEventVO.class);
 		ProductOrderVO productOrderVO = Optional.ofNullable(productOrderStateChangeEventVO.getEvent())
 				.map(ProductOrderStateChangeEventPayloadVO::getProductOrder)
