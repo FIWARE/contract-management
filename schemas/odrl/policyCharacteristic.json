@@ -13,7 +13,7 @@
       "description": "Only values of type authorizationPolicy are allowed",
       "type" : "array",
       "items": {
-        "$ref": "./credentialConfigValue.json"
+        "$ref": "./policyValue.json"
       }
     }
   },
