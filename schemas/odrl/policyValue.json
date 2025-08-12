@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policyValue.json",
+  "title": "Policy Value",
+  "description": "Specifies a Policy Value object.",
+  "type": "object",
+  "properties": {
+    "value": {
+        "$ref": "./policy.json"
+      }
+  },
+  "required": ["value"]
+}
