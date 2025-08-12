@@ -540,6 +540,7 @@ public abstract class ContractManagementIT {
 						"        {\n" +
 						"            \"id\": \"credentialsConfig\",\n" +
 						"            \"name\": \"Credentials Config for the Target Service\",\n" +
+						"            \"@schemaLocation\": \"Credentials Config for the Target Service\",\n" +
 						"            \"valueType\": \"credentialsConfiguration\",\n" +
 						"            \"productSpecCharacteristicValue\": [\n" +
 						"                {\n" +
