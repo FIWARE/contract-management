@@ -45,8 +45,103 @@ The following table concentrates on the most important configuration parameters:
 | `micronaut.http.services.party.path`   | `MICRONAUT_HTTP_SERVICES_PARTY_PATH`   | Subpath of the TM Forum Party Endpoint                             | "party"                          |
 | `general.name`                         | `GENERAL_NAME`                         | Name of the service, used for the callback/listener subscription   | contract-management              |
 | `general.basepath`                     | `GENERAL_BASEPATH`                     | Basepath used for the provided listener endpoint                   | ""                               |
-| `general.til.credentialType`           | `GENERAL_TIL_CREDENTIALTYPE`           | Credential type for which the permissions/claims shall be added to | "MyCredential"                   |
-| `general.til.claims`                   | `GENERAL_TIL_CLAIMS[]`                 | The claims that shall be added to the Trusted Issuers List         | ""                               |
+
+### Development
+
+In order to support the development, a local environment can be started via ```mvn clean install -Pdev```. 
+
+## Supported Events
+
+Contract Management supports events from different parts of the TMForum API.
+
+### Catalog
+
+In order to provide integration with the [IDSA Protocols Catalog API](https://docs.internationaldataspaces.org/ids-knowledgebase/dataspace-protocol), 
+Catalog objects from TMForum are translated and pushed to Rainbow. 
+
+#### Create
+
+When receiving a "CatalogCreateEvent", it tries to translate a TMForum Catalog into an IDSA Catalog. The Catalog tilte ```dctColonTitle``` is taken from 
+the ```name``` property of the TMForum object. 
+
+#### StateChange
+
+When receiving a "CatalogStateChangeEvent" the changes from the TMForum Catalog Object are updated within the IDSA Catalog Object. 
+
+#### Delete
+
+The Catalog with the same ```id``` as the contained Catalog-Object will be deleted.
+
+### Product Offering
+
+In order to provide integration with the [IDSA Protocols Catalog API](https://docs.internationaldataspaces.org/ids-knowledgebase/dataspace-protocol),
+Product Offering objects from TMForum are translated to Data Services in Rainbow.
+
+#### Create
+
+The "ProductOfferingCreateEvent" will be translated to Data Services and pushed to the Rainbow API. Only Offerings that are connected to an existing Catalog 
+will be pushed.
+The offering requires a connected ProductSpecification, that contains ```productSpecCharacteristic``` if type:
+
+```endpointUrl```: Will be used as "dcat:endpointURL" in the Data Service
+```endpointDescription```: Will be used as "dcat:endpointDescription" in the Data Service
+
+#### StateChange
+
+When receiving a "CatalogStateChangeEvent" the changes from the TMForum ProductOffering Object are updated within the IDSA Data Service Object.
+
+#### Delete
+
+The Data Service with the same ```id``` as the contained ProductOffering-Object will be deleted.
+
+### Quote
+
+In order to support the IDSA Contract Negotiation the Contract Management integrates the TMForum Quote-API. See [Dataspace Connector DSP Integration](https://github.com/FIWARE/data-space-connector/blob/main/doc/DSP_INTEGRATION.md#contract-negotiation)
+for more details.
+
+### Product Order
+
+The Product Order Object is used to integrate the TMForum with the authentication and authorization components of the Dataspace Connector.
+
+#### Create / StateChange
+
+A Product Order event will update the contract negotiation in TMForum when a Quote-Object is connected. Beside that, only Product Orders in state "completed" will be handled.
+
+In case of a "completed" Product Order, the Product Specification linked in either the specification or the connected Quote will be taken and any Specification Characteristic
+of type ```credentialsConfiguration``` will be inserted to the connected TrustedIssuers-List. Value can contain a list of Claim-Objects, as defined by the [Trusted Issuers List API](https://github.com/FIWARE/trusted-issuers-list/blob/main/api/trusted-issuers-list.yaml#L147).
+An example specification would look like:
+```json
+{
+    "brand": "M&P Operations",
+    "version": "1.0.0",
+    "lifecycleStatus": "ACTIVE",
+    "name": "M&P K8S",
+    "productSpecCharacteristic": [
+      {
+        "id": "credentialsConfig",
+        "name": "Credentials Config",
+        "valueType": "credentialsConfiguration",
+        "productSpecCharacteristicValue": [
+          {
+            "isDefault": true,
+            "value": {
+              "credentialsType": "OperatorCredential",
+              "claims": [
+                {
+                  "name": "roles",
+                  "path": "$.roles[?(@.target==\\\"my-target-service\\\")].names[*]",
+                  "allowedValues": [
+                    "OPERATOR"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+```
 
 ## License
 
