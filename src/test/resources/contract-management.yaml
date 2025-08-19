@@ -43,6 +43,10 @@ data:
             path: "/tmf-api/quote/v4"
             url: http://tm-forum-api-quote:8087
             read-timeout: 30
+          odrl:
+            path: ""
+            url: http://odrl-pap:8088
+            read-timeout: 30
     ---
     endpoints:
       all:
