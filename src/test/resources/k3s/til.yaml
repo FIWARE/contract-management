@@ -39,8 +39,8 @@ spec:
               value: MYSQL
             - name: DATASOURCES_DEFAULT_PASSWORD
               value: root
-          image: quay.io/fiware/trusted-issuers-list:0.2.0-PRE-7
-          imagePullPolicy: IfNotPresent
+          image: quay.io/fiware/trusted-issuers-list:0.3.3
+          imagePullPolicy: Always
           name: trusted-issuers-list
           ports:
             - containerPort: 8080

@@ -1,11 +1,11 @@
 package org.fiware.iam;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import io.micronaut.context.annotation.Value;
 import kong.unirest.*;
 import kong.unirest.json.JSONArray;
 import kong.unirest.json.JSONObject;
@@ -25,10 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -80,6 +77,11 @@ public abstract class ContractManagementIT {
 		contractManagementHealthy();
 
 		Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_CONSUMER_DID).asString();
+
+		getPolicies()
+				.stream()
+				.map(p -> p.get("id"))
+				.forEach(id -> Unirest.delete(testConfiguration.getOdrlPapHost() + "/policy/" + id).asString());
 	}
 
 	protected ContractManagementIT(com.fasterxml.jackson.databind.ObjectMapper objectMapper, TestConfiguration testConfiguration) {
@@ -159,6 +161,8 @@ public abstract class ContractManagementIT {
 		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
 		assertAgreementReferenced(orderId);
 		assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
+
+		assertEquals(1, getPolicies().size(), "The policy should have been created.");
 	}
 
 
@@ -523,6 +527,16 @@ public abstract class ContractManagementIT {
 		return productOfferingId.get();
 	}
 
+	private List<Map<String, Object>> getPolicies() {
+		HttpResponse<List> response = Unirest.get(testConfiguration.getOdrlPapHost() + "/policy").asObject(List.class);
+		assertTrue(response.isSuccess(), "The agreements should have been returned");
+		return response.getBody()
+				.stream()
+				.map(a -> objectMapper.convertValue(a, new TypeReference<Map<String, Object>>() {
+				}))
+				.toList();
+	}
+
 	private List<ContractAgreementVO> getAgreements() {
 		HttpResponse<List> response = Unirest.get(testConfiguration.getProviderRainbowHost() + "/api/v1/contract-negotiation/agreements").asObject(List.class);
 		assertTrue(response.isSuccess(), "The agreements should have been returned");
@@ -540,7 +554,7 @@ public abstract class ContractManagementIT {
 						"        {\n" +
 						"            \"id\": \"credentialsConfig\",\n" +
 						"            \"name\": \"Credentials Config for the Target Service\",\n" +
-						"            \"@schemaLocation\": \"Credentials Config for the Target Service\",\n" +
+						"            \"@schemaLocation\": \"https://raw.githubusercontent.com/FIWARE/contract-management/refs/heads/policy-support/schemas/credentials/credentialConfigCharacteristic.json\",\n" +
 						"            \"valueType\": \"credentialsConfiguration\",\n" +
 						"            \"productSpecCharacteristicValue\": [\n" +
 						"                {\n" +
@@ -554,6 +568,87 @@ public abstract class ContractManagementIT {
 						" 							}\n" +
 						"						  ]\n" +
 						"        				},\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        },\n" +
+						"        {\n" +
+						"            \"id\": \"policyConfig\",\n" +
+						"            \"name\": \"Policies for the Target Service\",\n" +
+						"            \"@schemaLocation\": \"https://raw.githubusercontent.com/FIWARE/contract-management/refs/heads/policy-support/schemas/odrl/policyCharacteristic.json\",\n" +
+						"            \"valueType\": \"authorizationPolicy\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\":  " +
+						"						{\n" +
+						"              \"@context\": {\n" +
+						"                \"dc\": \"http://purl.org/dc/elements/1.1/\",\n" +
+						"                \"dct\": \"http://purl.org/dc/terms/\",\n" +
+						"                \"owl\": \"http://www.w3.org/2002/07/owl#\",\n" +
+						"                \"odrl\": \"http://www.w3.org/ns/odrl/2/\",\n" +
+						"                \"rdfs\": \"http://www.w3.org/2000/01/rdf-schema#\",\n" +
+						"                \"skos\": \"http://www.w3.org/2004/02/skos/core#\"\n" +
+						"              },\n" +
+						"              \"@id\": \"https://mp-operation.org/policy/common/type\",\n" +
+						"              \"@type\": \"odrl:Policy\",\n" +
+						"              \"odrl:permission\": {\n" +
+						"                \"odrl:assigner\": {\n" +
+						"                  \"@id\": \"https://www.mp-operation.org/\"\n" +
+						"                },\n" +
+						"                \"odrl:target\": {\n" +
+						"                  \"@type\": \"odrl:AssetCollection\",\n" +
+						"                  \"odrl:source\": \"urn:asset\",\n" +
+						"                  \"odrl:refinement\": [\n" +
+						"                    {\n" +
+						"                      \"@type\": \"odrl:Constraint\",\n" +
+						"                      \"odrl:leftOperand\": \"ngsi-ld:entityType\",\n" +
+						"                      \"odrl:operator\": {\n" +
+						"                        \"@id\": \"odrl:eq\"\n" +
+						"                      },\n" +
+						"                      \"odrl:rightOperand\": \"K8SCluster\"\n" +
+						"                    }\n" +
+						"                  ]\n" +
+						"                },\n" +
+						"                \"odrl:assignee\": {\n" +
+						"                  \"@type\": \"odrl:PartyCollection\",\n" +
+						"                  \"odrl:source\": \"urn:user\",\n" +
+						"                  \"odrl:refinement\": {\n" +
+						"                    \"@type\": \"odrl:LogicalConstraint\",\n" +
+						"                    \"odrl:and\": [\n" +
+						"                      {\n" +
+						"                        \"@type\": \"odrl:Constraint\",\n" +
+						"                        \"odrl:leftOperand\": {\n" +
+						"                          \"@id\": \"vc:role\"\n" +
+						"                        },\n" +
+						"                        \"odrl:operator\": {\n" +
+						"                          \"@id\": \"odrl:hasPart\"\n" +
+						"                        },\n" +
+						"                        \"odrl:rightOperand\": {\n" +
+						"                          \"@value\": \"OPERATOR\",\n" +
+						"                          \"@type\": \"xsd:string\"\n" +
+						"                        }\n" +
+						"                      },\n" +
+						"                      {\n" +
+						"                        \"@type\": \"odrl:Constraint\",\n" +
+						"                        \"odrl:leftOperand\": {\n" +
+						"                          \"@id\": \"vc:type\"\n" +
+						"                        },\n" +
+						"                        \"odrl:operator\": {\n" +
+						"                          \"@id\": \"odrl:hasPart\"\n" +
+						"                        },\n" +
+						"                        \"odrl:rightOperand\": {\n" +
+						"                          \"@value\": \"OperatorCredential\",\n" +
+						"                          \"@type\": \"xsd:string\"\n" +
+						"                        }\n" +
+						"                      }\n" +
+						"                    ]\n" +
+						"                  }\n" +
+						"                },\n" +
+						"                \"odrl:action\": {\n" +
+						"                  \"@id\": \"odrl:use\"\n" +
+						"                }\n" +
+						"              }\n" +
+						"            },\n" +
 						"                    \"isDefault\": true\n" +
 						"                }" +
 						"			]\n" +
