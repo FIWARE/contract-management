@@ -16,13 +16,13 @@
     "odrl:permission": {
       "description": "A list of odrl:permission to be used inside a policy.",
       "items": {
-        "$ref": "./permission.json"
+        "$ref": "permission.json"
       }
     },
     "odrl:prohibition": {
       "description": "A list of odrl:prohibition to be used inside a policy.",
       "items": {
-        "$ref": "./prohibition.json"
+        "$ref": "prohibition.json"
       }
     }
   }

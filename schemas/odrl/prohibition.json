@@ -33,7 +33,7 @@
       "type": "array",
       "description": "A list of odrl:constraints to be enforced in the prohibition.",
       "items": {
-        "$ref": "./constraint.json"
+        "$ref": "constraint.json"
       }
     }
   }

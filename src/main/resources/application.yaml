@@ -46,7 +46,10 @@ micronaut:
         path: "/tmf-api/quote/v4"
         url: http://localhost:8087
         read-timeout: 30
-
+      odrl:
+        path: ""
+        url: http://localhost:8088
+        read-timeout: 30
 
 general:
   did: did:test:did

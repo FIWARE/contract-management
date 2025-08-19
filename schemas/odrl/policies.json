@@ -9,7 +9,7 @@
       "type": "array",
       "description": "A list of odrl:policy that should be connected to the entity.",
       "items": {
-        "$ref": "./policy.json"
+        "$ref": "policy.json"
       }
     }
   },

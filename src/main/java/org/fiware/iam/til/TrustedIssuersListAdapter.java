@@ -43,7 +43,9 @@ public class TrustedIssuersListAdapter {
 						log.debug("Updating existing issuer with {}", trustedIssuerVO);
 						return apiClient.updateIssuer(issuerDid, trustedIssuerVO);
 					} else {
-						TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(issuerDid).credentials(credentialsConfig);
+						//remove duplicates
+						Set<CredentialsVO> credentialsVOSet = new HashSet<>(credentialsConfig);
+						TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(issuerDid).credentials(new ArrayList<>(credentialsVOSet));
 						log.debug("Adding new issuer with {}", newIssuer);
 						return apiClient.createTrustedIssuer(newIssuer);
 					}
