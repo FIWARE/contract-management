@@ -41,11 +41,10 @@ public class PolicyResolver {
 	private final ObjectMapper objectMapper;
 
 	public Mono<List<Map<String, Object>>> getAuthorizationPolicy(ProductOrderVO productOrder) {
-		log.info("Get config.");
 		if (productOrder.getQuote() != null && !productOrder.getQuote().isEmpty()) {
 			return getAuthorizationPolicyFromQuote(productOrder.getQuote());
 		}
-		log.info("No quote found, take the original offer from the order item.");
+		log.debug("No quote found, take the original offer from the order item.");
 		List<Mono<List<Map<String, Object>>>> credentialsVOMonoList = productOrder.getProductOrderItem()
 				.stream()
 				.filter(poi -> poi.getAction() == OrderItemActionTypeVO.ADD || poi.getAction() == OrderItemActionTypeVO.MODIFY)
