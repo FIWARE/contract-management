@@ -67,6 +67,9 @@ metadata:
 spec:
   ports:
     - port: 8088
+      targetPort: 8080
+      protocol: TCP
+      name: http
   selector:
     app.kubernetes.io/name: odrl-pap
   type: LoadBalancer
@@ -103,5 +106,5 @@ spec:
             - name: QUARKUS_DATASOURCE_PASSWORD
               value: pap
           ports:
-            - containerPort: 8088
+            - containerPort: 8080
               name: http

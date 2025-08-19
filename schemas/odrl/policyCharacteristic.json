@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policyCharacteristic.json",
+  "title": "Policy Characteristic",
+  "description": "Specifies a Characteristic Value to contain an authorization policy.",
+  "type": "object",
+  "properties": {
+    "valueType": {
+      "description": "The value type of a Policy Characteristic needs to be `authorizationPolicy`",
+      "const": "authorizationPolicy"
+    },
+    "productSpecCharacteristicValue": {
+      "description": "Only values of type authorizationPolicy are allowed",
+      "type" : "array",
+      "items": {
+        "$ref": "./policyValue.json"
+      }
+    }
+  },
+  "required": ["valueType", "productSpecCharacteristicValue"]
+}

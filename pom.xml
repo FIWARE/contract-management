@@ -100,7 +100,7 @@
 
         <!-- test -->
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
-        <version.io.kokuwa.maven.k3s-plugin>1.5.0</version.io.kokuwa.maven.k3s-plugin>
+        <version.io.kokuwa.maven.k3s-plugin>2.0.1</version.io.kokuwa.maven.k3s-plugin>
         <version.org.awaitility>4.2.0</version.org.awaitility>
 
         <!-- configure your local ip address here, in order to enable containers calling back the (local)test-instance -->
