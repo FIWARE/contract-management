@@ -90,7 +90,7 @@ spec:
         app.kubernetes.io/name: odrl-pap
     spec:
       containers:
-        - image: quay.io/fiware/odrl-pap:0.2.0
+        - image: quay.io/fiware/odrl-pap:0.2.3
           imagePullPolicy: Always
           name:  odrl-pap
           env:
