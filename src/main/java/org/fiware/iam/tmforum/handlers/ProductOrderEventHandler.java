@@ -194,8 +194,9 @@ public class ProductOrderEventHandler implements EventHandler {
 
 		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
 		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId, productOrderVO);
+		Mono<HttpResponse<?>> policyDeletion = deletePolicy(productOrderVO);
 
-		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
+		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial, policyDeletion), responses -> Arrays.stream(responses)
 				.filter(HttpResponse.class::isInstance)
 				.map(HttpResponse.class::cast)
 				.filter(response -> response.status().getCode() > 299)
@@ -211,8 +212,9 @@ public class ProductOrderEventHandler implements EventHandler {
 
 		Mono<HttpResponse<?>> agreementsDeletion = deleteAgreement(productOrderVO);
 		Mono<HttpResponse<?>> issuerDenial = denyIssuer(organizationId, productOrderVO);
+		Mono<HttpResponse<?>> policyDeletion = deletePolicy(productOrderVO);
 
-		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial), responses -> Arrays.stream(responses)
+		return Mono.zipDelayError(List.of(agreementsDeletion, issuerDenial, policyDeletion), responses -> Arrays.stream(responses)
 				.filter(HttpResponse.class::isInstance)
 				.map(HttpResponse.class::cast)
 				.filter(response -> response.status().getCode() > 299)
@@ -295,7 +297,19 @@ public class ProductOrderEventHandler implements EventHandler {
 
 	private Mono<HttpResponse<?>> createPolicy(String organizationId, ProductOrderVO productOrderVO) {
 		return policyResolver
-				.getAuthorizationPolicy(productOrderVO).flatMap(policies -> Mono.zipDelayError(policies.stream().map(p -> papAdapter.createPolicy(organizationId, p)).toList(),
+				.getAuthorizationPolicy(productOrderVO).flatMap(policies -> Mono.zipDelayError(policies.stream().map(p -> papAdapter.createPolicy(organizationId, productOrderVO.getId(), p)).toList(),
+						results -> {
+							if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
+								return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+							}
+							return HttpResponse.ok();
+						}
+				));
+	}
+
+	private Mono<HttpResponse<?>> deletePolicy(ProductOrderVO productOrderVO) {
+		return policyResolver
+				.getAuthorizationPolicy(productOrderVO).flatMap(policies -> Mono.zipDelayError(policies.stream().map(p -> papAdapter.deletePolicy(productOrderVO.getId(), p)).toList(),
 						results -> {
 							if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
 								return HttpResponse.status(HttpStatus.BAD_GATEWAY);

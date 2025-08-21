@@ -590,6 +590,7 @@ public abstract class ContractManagementIT {
 						"                \"skos\": \"http://www.w3.org/2004/02/skos/core#\"\n" +
 						"              },\n" +
 						"              \"@id\": \"https://mp-operation.org/policy/common/type\",\n" +
+						"              \"odrl:uid\": \"https://mp-operation.org/policy/common/type\",\n" +
 						"              \"@type\": \"odrl:Policy\",\n" +
 						"              \"odrl:permission\": {\n" +
 						"                \"odrl:assigner\": {\n" +

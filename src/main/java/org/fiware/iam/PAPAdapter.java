@@ -21,6 +21,7 @@ public class PAPAdapter {
 
 	private static final String TYPE_KEY = "@type";
 	private static final String ID_KEY = "@id";
+	private static final String UID_KEY = "odrl:uid";
 	private static final String LOGICAL_CONSTRAINT_TYPE = "odrl:LogicalConstraint";
 	private static final String PARTY_COLLECTION_TYPE = "odrl:PartyCollection";
 	private static final String AND_KEY = "odrl:and";
@@ -33,10 +34,39 @@ public class PAPAdapter {
 	private static final String EQ_OPERATOR = "odrl:eq";
 	private static final String VC_CURRENT_PARTY_OPERAND = "vc:currentParty";
 
+	private static final String ID_TEMPLATE = "%s-%s";
+
 	private final DefaultApiClient papClient;
 
-	public Mono<Boolean> createPolicy(String customer, Map<String, Object> policy) {
+	/**
+	 * Creates the given policy for the given customer (added as assignee) in the ODRL-PAP. Since this becomes a concrete instantiation of the policy,
+	 * its ID will be updated to include the product-order it originates from
+	 */
+	public Mono<Boolean> createPolicy(String customer, String orderId, Map<String, Object> policy) {
+		policy = updatePolicyId(orderId, policy);
 		return papClient.createPolicy(addAssignee(customer, policy)).map(HttpResponse::code).map(code -> code >= 200 && code < 300);
+	}
+
+	public Mono<Boolean> deletePolicy(String orderId, Map<String, Object> policy) {
+		String fullId = buildFullId(orderId, policy);
+		return papClient.deletePolicyByUid(fullId).map(HttpResponse::code).map(code -> code >= 200 && code < 300);
+	}
+
+	private String buildFullId(String orderId, Map<String, Object> policy) {
+		return String.format(ID_TEMPLATE, getPolicyId(policy), orderId);
+	}
+
+	private Map<String, Object> updatePolicyId(String orderId, Map<String, Object> policy) {
+		policy.put(UID_KEY, buildFullId(orderId, policy));
+		return policy;
+	}
+
+	private String getPolicyId(Map<String, Object> policy) {
+		if (policy.containsKey(UID_KEY) && policy.get(UID_KEY) instanceof String idString) {
+			return idString;
+		} else {
+			throw new IllegalArgumentException("The provided policy does not contain an odrl:uid.");
+		}
 	}
 
 	private Map<String, Object> addAssignee(String customer, Map<String, Object> policy) {
