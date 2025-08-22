@@ -43,8 +43,7 @@ public class PAPAdapter {
 	 * its ID will be updated to include the product-order it originates from
 	 */
 	public Mono<Boolean> createPolicy(String customer, String orderId, Map<String, Object> policy) {
-		policy = updatePolicyId(orderId, policy);
-		return papClient.createPolicy(addAssignee(customer, policy)).map(HttpResponse::code).map(code -> code >= 200 && code < 300);
+		return papClient.createPolicy(addAssignee(customer, updatePolicyId(orderId, policy))).map(HttpResponse::code).map(code -> code >= 200 && code < 300);
 	}
 
 	public Mono<Boolean> deletePolicy(String orderId, Map<String, Object> policy) {
@@ -58,6 +57,7 @@ public class PAPAdapter {
 
 	private Map<String, Object> updatePolicyId(String orderId, Map<String, Object> policy) {
 		policy.put(UID_KEY, buildFullId(orderId, policy));
+		log.info("Added the uid: {}", policy);
 		return policy;
 	}
 
@@ -81,6 +81,7 @@ public class PAPAdapter {
 			permission.put(ASSIGNEE_KEY, addToAssignees(customer, optionalAssignee.get()));
 		}
 		policy.put(PERMISSION_KEY, permission);
+		log.info("The final policy: {}", policy);
 		return policy;
 	}
 
