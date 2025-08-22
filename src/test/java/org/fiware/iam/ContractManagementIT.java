@@ -106,6 +106,22 @@ public abstract class ContractManagementIT {
 		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
 		assertAgreementReferenced(productOrder);
 		assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
+		assertEquals(1, getPolicies().size(), "The policy should have been created.");
+	}
+
+	@DisplayName("Test Happy Path no policy")
+	@Test
+	public void testCreateProductOrderNoPolicy() {
+
+		String organizationId = createOrganization();
+		String offeringId = createTestOfferWithoutPolicy(Optional.empty());
+		String productOrder = orderProduct(offeringId, organizationId);
+		completeProductOrder(productOrder);
+
+		assertAgreementCreated(TEST_CONSUMER_DID, TEST_PROVIDER_DID, TEST_ENDPOINT);
+		assertAgreementReferenced(productOrder);
+		assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
+		assertEquals(0, getPolicies().size(), "The policy should have been created.");
 	}
 
 	@DisplayName("Test Contract Negotiation")
@@ -447,6 +463,13 @@ public abstract class ContractManagementIT {
 		return createProductOffering(productSpecId, categoryId, priceId);
 	}
 
+	private String createTestOfferWithoutPolicy(Optional<String> priceId) {
+		String categoryId = createCategory();
+		createProductCatalog(categoryId);
+		String productSpecId = createProductSpecWithoutPolicy();
+		return createProductOffering(productSpecId, categoryId, priceId);
+	}
+
 	private String createOrganization() {
 
 		Optional<String> optionalId = getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
@@ -590,6 +613,7 @@ public abstract class ContractManagementIT {
 						"                \"skos\": \"http://www.w3.org/2004/02/skos/core#\"\n" +
 						"              },\n" +
 						"              \"@id\": \"https://mp-operation.org/policy/common/type\",\n" +
+						"              \"odrl:uid\": \"https://mp-operation.org/policy/common/type\",\n" +
 						"              \"@type\": \"odrl:Policy\",\n" +
 						"              \"odrl:permission\": {\n" +
 						"                \"odrl:assigner\": {\n" +
@@ -649,6 +673,73 @@ public abstract class ContractManagementIT {
 						"                }\n" +
 						"              }\n" +
 						"            },\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        },\n" +
+						"        {\n" +
+						"            \"id\": \"endpointUrl\",\n" +
+						"            \"name\": \"Service Endpoint URL\",\n" +
+						"            \"valueType\": \"endpointUrl\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\": \"" + TEST_ENDPOINT + "\",\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        },\n" +
+						"        {\n" +
+						"            \"id\": \"allowedAction\",\n" +
+						"            \"name\": \"Allowed Action\",\n" +
+						"            \"valueType\": \"allowedAction\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\": \"odrl:use\",\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        },\n" +
+						"        {\n" +
+						"            \"id\": \"endpointDescription\",\n" +
+						"            \"name\": \"Service Endpoint Description\",\n" +
+						"            \"valueType\": \"endpointDescription\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\": \"The service\",\n" +
+						"                    \"isDefault\": true\n" +
+						"                }" +
+						"			]\n" +
+						"        }\n" +
+						"    ]\n" +
+						"}"));
+		assertTrue(productSpecId.isPresent(), "The product spec should have been created.");
+
+		return productSpecId.get();
+	}
+
+	private String createProductSpecWithoutPolicy() {
+		Optional<String> productSpecId = getResponseId(Unirest.post(testConfiguration.getProductCatalogHost() + "/tmf-api/productCatalogManagement/v4/productSpecification")
+				.header("Content-Type", "application/json")
+				.body("{\n" +
+						"    \"name\": \"Packet Delivery Premium Service Spec\",\n" +
+						"    \"productSpecCharacteristic\": [\n" +
+						"        {\n" +
+						"            \"id\": \"credentialsConfig\",\n" +
+						"            \"name\": \"Credentials Config for the Target Service\",\n" +
+						"            \"@schemaLocation\": \"https://raw.githubusercontent.com/FIWARE/contract-management/refs/heads/policy-support/schemas/credentials/credentialConfigCharacteristic.json\",\n" +
+						"            \"valueType\": \"credentialsConfiguration\",\n" +
+						"            \"productSpecCharacteristicValue\": [\n" +
+						"                {\n" +
+						"                    \"value\":  " +
+						"						{\n" +
+						"						  \"credentialsType\":\"MyCredential\",\n" +
+						"						  \"claims\": [\n" +
+						"						  	{\n" +
+						"								\"name\": \"did:some:service\",\n" +
+						"								\"allowedValues\": [\"Consumer\",\"Admin\"]\n" +
+						" 							}\n" +
+						"						  ]\n" +
+						"        				},\n" +
 						"                    \"isDefault\": true\n" +
 						"                }" +
 						"			]\n" +
