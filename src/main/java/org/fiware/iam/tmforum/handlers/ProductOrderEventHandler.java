@@ -296,15 +296,17 @@ public class ProductOrderEventHandler implements EventHandler {
 	}
 
 	private Mono<HttpResponse<?>> createPolicy(String organizationId, ProductOrderVO productOrderVO) {
-		return policyResolver
-				.getAuthorizationPolicy(productOrderVO).flatMap(policies -> Mono.zipDelayError(policies.stream().map(p -> papAdapter.createPolicy(organizationId, productOrderVO.getId(), p)).toList(),
-						results -> {
-							if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
-								return HttpResponse.status(HttpStatus.BAD_GATEWAY);
-							}
-							return HttpResponse.ok();
-						}
-				));
+
+		return organizationResolver.getDID(organizationId)
+				.flatMap(did -> policyResolver
+						.getAuthorizationPolicy(productOrderVO).flatMap(policies -> Mono.zipDelayError(policies.stream().map(p -> papAdapter.createPolicy(did, productOrderVO.getId(), p)).toList(),
+								results -> {
+									if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
+										return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+									}
+									return HttpResponse.ok();
+								}
+						)));
 	}
 
 	private Mono<HttpResponse<?>> deletePolicy(ProductOrderVO productOrderVO) {
