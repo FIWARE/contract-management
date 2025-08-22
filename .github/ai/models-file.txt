@@ -1,0 +1,2 @@
+deepseek-coder-v2:latest
+magicoder:latest
