@@ -82,8 +82,9 @@ public class ContractManagementController implements OrderApi {
                         .map(Boolean.class::cast)
                         .filter(b -> !b)
                         .findAny()
-                        .map(b -> HttpResponseFactory.INSTANCE.status(HttpStatus.OK))
-                        .orElse(HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
+                        // if something is wrong -> bad gateway
+                        .map(b -> HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
+                        .orElse(HttpResponseFactory.INSTANCE.status(HttpStatus.OK))
         );
     }
 }
