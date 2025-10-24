@@ -55,29 +55,23 @@ public class TrustedIssuersListAdapter {
                             throw new RuntimeException(e);
                         }
                         return apiClient.updateIssuer(issuerDid, trustedIssuerVO)
-                                .map(response -> {
-                                    if (response.getStatus() == HttpStatus.OK) {
-                                        return true;
-                                    }
-                                    return false;
-                                });
+                                .map(TrustedIssuersListAdapter::isSuccess);
                     } else {
                         //remove duplicates
                         Set<CredentialsVO> credentialsVOSet = new HashSet<>(credentialsVOS);
                         TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(issuerDid).credentials(new ArrayList<>(credentialsVOSet));
                         log.debug("Adding new issuer with {}", newIssuer);
-                        return apiClient.createTrustedIssuer(newIssuer).map(response -> {
-                            if (response.getStatus() == HttpStatus.OK) {
-                                return true;
-                            }
-                            return false;
-                        });
+                        return apiClient.createTrustedIssuer(newIssuer).map(TrustedIssuersListAdapter::isSuccess);
                     }
                 })
                 .onErrorMap(e -> {
                     log.warn("Failed to allow.", e);
                     throw new TrustedIssuersException("Was not able to allow the issuer.", e);
                 });
+    }
+
+    private static boolean isSuccess(HttpResponse response) {
+        return response.getStatus().getCode() > 199 && response.getStatus().getCode() < 300;
     }
 
     public Mono<HttpResponse<?>> denyIssuer(String issuerDid, List<CredentialsConfigResolver.CredentialConfig> credentialsConfig) {

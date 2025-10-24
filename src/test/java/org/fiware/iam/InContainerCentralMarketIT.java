@@ -1,6 +1,7 @@
 package org.fiware.iam;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import kong.unirest.Unirest;
 import lombok.extern.slf4j.Slf4j;
@@ -9,7 +10,8 @@ import org.junit.jupiter.api.Disabled;
 
 import java.util.Optional;
 
-@MicronautTest(environments = {"central"})
+@Requires(condition = TestConfiguration.InContainerCondition.class)
+@MicronautTest(startApplication = false, environments = {"central-ga"})
 @Slf4j
 public class InContainerCentralMarketIT extends InContainerContractManagementIT {
 

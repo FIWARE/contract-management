@@ -1149,7 +1149,7 @@
                         <configuration>
                             <skip>false</skip>
                             <systemPropertyVariables>
-                                <micronaut.environments>ga</micronaut.environments>
+                                <inContainer>true</inContainer>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>

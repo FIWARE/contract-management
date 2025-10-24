@@ -90,7 +90,7 @@ public class TMForumAdapter {
                 .patchProductOrder(productOrderId, productOrderUpdateVO)
                 .map(HttpResponse::body)
                 .onErrorMap(t -> {
-                    log.warn("Was not able to update the product order", t);
+                    log.warn("Was not able to update the product order {}", productOrderId, t);
                     throw new TMForumException("Was not able to update the product order");
                 });
     }

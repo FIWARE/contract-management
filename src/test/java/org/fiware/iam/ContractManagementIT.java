@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.micronaut.context.ApplicationContext;
 import kong.unirest.*;
 import kong.unirest.json.JSONArray;
 import kong.unirest.json.JSONObject;
@@ -20,10 +21,7 @@ import org.fiware.iam.tmforum.quote.model.QuoteUpdateVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import org.fiware.rainbow.model.ContractAgreementVO;
 import org.fiware.rainbow.model.NegotiationVO;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -75,14 +73,17 @@ public abstract class ContractManagementIT {
 
     @BeforeEach
     public void cleanUpAndWait() {
-        contractManagementHealthy();
 
         Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_CONSUMER_DID).asString();
-
         getPolicies()
                 .stream()
                 .map(p -> p.get("id"))
-                .forEach(id -> Unirest.delete(testConfiguration.getOdrlPapHost() + "/policy/" + id).asString());
+                .forEach(id -> {
+                    HttpResponse<String> result = Unirest.delete(testConfiguration.getOdrlPapHost() + "/policy/" + id).asString();
+                    log.warn("Clean up result for {} is {}", id, result.getStatus());
+                });
+
+        contractManagementHealthy();
     }
 
     protected ContractManagementIT(com.fasterxml.jackson.databind.ObjectMapper objectMapper, TestConfiguration testConfiguration) {
@@ -133,6 +134,7 @@ public abstract class ContractManagementIT {
             assertAgreementReferenced(productOrder);
         }
         assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
+
         assertEquals(0, getPolicies().size(), "The policy should have been created.");
     }
 
@@ -591,6 +593,7 @@ public abstract class ContractManagementIT {
                 .stream()
                 .map(a -> objectMapper.convertValue(a, new TypeReference<Map<String, Object>>() {
                 }))
+                .peek(p -> log.warn("Got policy {}", ((Map<String, Object>) p).get("id")))
                 .toList();
     }
 

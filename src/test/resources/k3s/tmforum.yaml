@@ -34,8 +34,10 @@ spec:
               value: "true"
             - name: ENDPOINTS_HEALTH_ENABLED
               value: "true"
+            - name: MICRONAUT_GENERAL_SERVER_HOST
+              value: "http://tm-forum-api-product-ordering-management:8081"
             - name: LOGGER_LEVELS_ROOT
-              value: INFO
+              value: TRACE
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
               value: "1000"
             - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
@@ -50,7 +52,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productOrderingManagement/v4
-          image: quay.io/fiware/tmforum-product-ordering-management:1.3.9
+          image: quay.io/fiware/tmforum-product-ordering-management:1.3.19
           imagePullPolicy: Always
           name: product-ordering-management
           ports:
@@ -117,6 +119,8 @@ spec:
               value: "true"
             - name: LOGGER_LEVELS_ROOT
               value: INFO
+            - name: MICRONAUT_GENERAL_SERVER_HOST
+              value: "http://tm-forum-api-product-catalog:8082"
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
               value: "1000"
             - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
@@ -131,7 +135,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/productCatalogManagement/v4
-          image: quay.io/fiware/tmforum-product-catalog:1.3.9
+          image: quay.io/fiware/tmforum-product-catalog:1.3.19
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-product-catalog
           ports:
@@ -198,6 +202,8 @@ spec:
               value: "true"
             - name: LOGGER_LEVELS_ROOT
               value: INFO
+            - name: MICRONAUT_GENERAL_SERVER_HOST
+              value: "http://tm-forum-api-party-catalog:8083"
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
               value: "1000"
             - name: MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE
@@ -212,7 +218,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/party/v4
-          image: quay.io/fiware/tmforum-party-catalog:1.3.9
+          image: quay.io/fiware/tmforum-party-catalog:1.3.19
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-party-catalog
           ports:
@@ -277,6 +283,8 @@ spec:
               value: "true"
             - name: ENDPOINTS_HEALTH_ENABLED
               value: "true"
+            - name: MICRONAUT_GENERAL_SERVER_HOST
+              value: "http://tm-forum-api-service-catalog:8084"
             - name: LOGGER_LEVELS_ROOT
               value: INFO
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
@@ -293,7 +301,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/serviceCatalogManagement/v4
-          image: quay.io/fiware/tmforum-service-catalog:1.3.9
+          image: quay.io/fiware/tmforum-service-catalog:1.3.19
           imagePullPolicy: IfNotPresent
           name: tm-forum-api-service-catalog
           ports:
@@ -354,6 +362,8 @@ spec:
               value: "true"
             - name: ENDPOINTS_HEALTH_ENABLED
               value: "true"
+            - name: MICRONAUT_GENERAL_SERVER_HOST
+              value: "http://tm-forum-api-agreement:8086"
             - name: LOGGER_LEVELS_ROOT
               value: INFO
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
@@ -370,7 +380,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/agreementManagement/v4
-          image: quay.io/fiware/tmforum-agreement:1.3.9
+          image: quay.io/fiware/tmforum-agreement:1.3.19
           imagePullPolicy: Always
           name: tm-forum-api-agreement
           ports:
@@ -435,6 +445,8 @@ spec:
               value: "true"
             - name: ENDPOINTS_HEALTH_ENABLED
               value: "true"
+            - name: MICRONAUT_GENERAL_SERVER_HOST
+              value: "http://tm-forum-api-quote:8087"
             - name: LOGGER_LEVELS_ROOT
               value: INFO
             - name: MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE
@@ -451,7 +463,7 @@ spec:
               value: http://scorpio:1026
             - name: GENERAL_BASEPATH
               value: /tmf-api/quote/v4
-          image: quay.io/fiware/tmforum-quote:1.3.9
+          image: quay.io/fiware/tmforum-quote:1.3.19
           imagePullPolicy: Always
           name: tm-forum-api-quote
           ports:
