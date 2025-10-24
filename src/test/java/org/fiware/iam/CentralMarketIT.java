@@ -1,6 +1,7 @@
 package org.fiware.iam;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import kong.unirest.Unirest;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Disabled;
 
 import java.util.Optional;
 
+@Requires(condition = TestConfiguration.LocalCondition.class)
 @MicronautTest(environments = {"central"})
 @Slf4j
 public class CentralMarketIT extends LocalContractManagementIT {

@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Integration Test running against the local service instance, spun up by the test. Do not forget to properly set the
  * local.ip property inside the pom.xml, to receive events in the local service.
  */
-@Requires(notEnv = "ga")
+@Requires(condition = TestConfiguration.LocalCondition.class)
 @MicronautTest
 @Slf4j
 public class LocalContractManagementIT extends ContractManagementIT {

@@ -11,6 +11,8 @@ import org.fiware.iam.configuration.GeneralProperties;
 @ConfigurationProperties("test")
 public class TestConfiguration {
 
+	private static final String IN_CONTAINER_PROPERTY = "inContainer";
+
 	private boolean inContainer = false;
 
 	private String brokerHost = "http://localhost:1026";
@@ -29,7 +31,16 @@ public class TestConfiguration {
 		@Override
 		public boolean matches(ConditionContext context) {
 			// read system property, by-passing the context
-			return Boolean.getBoolean("inContainer");
+			return Boolean.getBoolean(IN_CONTAINER_PROPERTY);
+		}
+	}
+
+	public static class LocalCondition implements Condition {
+
+		@Override
+		public boolean matches(ConditionContext context) {
+			// read system property, by-passing the context
+			return !Boolean.getBoolean(IN_CONTAINER_PROPERTY);
 		}
 	}
 }
