@@ -53,11 +53,23 @@ micronaut:
 
 general:
   did: did:test:did
-  host: contract-management
+
+# -- configuration in case of OpenID4VP
+#oid4vp:
+#  credentialsFolder: "/credentials"
+#  trustAnchors:
+#    - "oid4vp/test-ca.pem"
+#  holder:
+#    holderId: "did:key:zDnaehXH4gDLjLeWcACPyQX9TnvsKiQNt6KT7fdsfyW6fhEYA"
+#    keyType: "EC"
+#    keyPath: "oid4vp/private-key.pem"
+#    signatureAlgorithm: "ECDH-ES"
+
 endpoints:
   all:
     port: 9090
 notification:
+  host: contract-management
   entities:
     - entityType: "ProductOrder"
       eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]

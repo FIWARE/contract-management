@@ -19,7 +19,12 @@ public class InContainerContractManagementIT extends ContractManagementIT {
 	}
 
 	@Override
-	void contractManagementHealthy() {
+	public void contractManagementHealthy() {
 		// NO-OP - k3s health check already takes care of that check
+	}
+
+	@Override
+	public boolean rainbowEnabled() {
+		return true;
 	}
 }

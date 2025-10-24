@@ -29,6 +29,8 @@ spec:
               value: "8080"
             - name: MICRONAUT_METRICS_ENABLED
               value: "true"
+            - name: LOGGER_LEVELS_ROOT
+              value: TRACE
             - name: DATASOURCES_DEFAULT_URL
               value: jdbc:mysql://mysql:3306/til
             - name: DATASOURCES_DEFAULT_DRIVER_CLASS_NAME

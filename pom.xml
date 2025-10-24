@@ -82,6 +82,9 @@
         <til.api.url>https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/main/api/trusted-issuers-list.yaml
         </til.api.url>
 
+        <!-- Contract Management API -->
+        <cm.api.url>${project.basedir}/api/contract-management.yaml</cm.api.url>
+
         <!-- oci -->
         <exec.mainClass>org.fiware.iam.Application</exec.mainClass>
         <image.registry>quay.io</image.registry>
@@ -102,6 +105,11 @@
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
         <version.io.kokuwa.maven.k3s-plugin>2.0.1</version.io.kokuwa.maven.k3s-plugin>
         <version.org.awaitility>4.2.0</version.org.awaitility>
+
+        <!-- OID4VP -->
+        <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
+        <version.org.bouncycastle>1.81</version.org.bouncycastle>
+        <version.io.github.wistefan.oid4vp-client-lib>0.0.2</version.io.github.wistefan.oid4vp-client-lib>
 
         <!-- configure your local ip address here, in order to enable containers calling back the (local)test-instance -->
         <local.ip>192.168.2.224</local.ip>
@@ -187,6 +195,28 @@
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- OID4VP -->
+        <dependency>
+            <groupId>io.github.wistefan</groupId>
+            <artifactId>oid4vp-client-lib</artifactId>
+            <version>${version.io.github.wistefan.oid4vp-client-lib}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${version.com.nimbusds.nimbus-jose-jwt}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>${version.org.bouncycastle}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${version.org.bouncycastle}</version>
         </dependency>
 
         <!-- Tests -->
@@ -336,6 +366,39 @@
                         </configuration>
                     </execution>
                     <execution>
+                        <id>cm</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${cm.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.cm.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.cm.model</modelPackage>
+                            <generateAliasAsModel>true</generateAliasAsModel>
+                            <generateApiTests>true</generateApiTests>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <configOptions>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
                         <id>openapi-product-ordering-api</id>
                         <phase>generate-sources</phase>
                         <goals>
@@ -443,7 +506,6 @@
                     </execution>
                     <execution>
                         <id>openapi-service-catalog-api</id>
-                        <phase>generate-sources</phase>
                         <goals>
                             <goal>generate</goal>
                         </goals>
@@ -853,6 +915,9 @@
                 <version>${version.io.kokuwa.maven.k3s-plugin}</version>
                 <configuration>
                     <skip>true</skip>
+                    <dockerImages>
+                        <dockerImage>contract-management</dockerImage>
+                    </dockerImages>
                 </configuration>
                 <executions>
                     <execution>
@@ -881,6 +946,8 @@
                                 <portBinding>8087:8087</portBinding>
                                 <!-- odrl-pap -->
                                 <portBinding>8088:8088</portBinding>
+                                <!-- provider contract management -->
+                                <portBinding>8089:8089</portBinding>
                                 <!-- orion -->
                                 <portBinding>1026:1026</portBinding>
                                 <!-- rainbow -->
@@ -984,6 +1051,26 @@
                         </configuration>
                     </plugin>
                     <plugin>
+                        <groupId>com.google.cloud.tools</groupId>
+                        <artifactId>jib-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>dockerBuild</goal>
+                                </goals>
+                                <configuration combine.self="override">
+                                    <from>
+                                        <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
+                                    </from>
+                                    <to>
+                                        <image>contract-management</image>
+                                    </to>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
                         <groupId>io.kokuwa.maven</groupId>
                         <artifactId>k3s-maven-plugin</artifactId>
                         <version>${version.io.kokuwa.maven.k3s-plugin}</version>
@@ -1008,6 +1095,26 @@
                         <configuration>
                             <skip>false</skip>
                         </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>com.google.cloud.tools</groupId>
+                        <artifactId>jib-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>dockerBuild</goal>
+                                </goals>
+                                <configuration combine.self="override">
+                                    <from>
+                                        <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
+                                    </from>
+                                    <to>
+                                        <image>contract-management</image>
+                                    </to>
+                                </configuration>
+                            </execution>
+                        </executions>
                     </plugin>
                     <plugin>
                         <groupId>io.kokuwa.maven</groupId>
@@ -1042,7 +1149,7 @@
                         <configuration>
                             <skip>false</skip>
                             <systemPropertyVariables>
-                                <micronaut.environments>ga</micronaut.environments>
+                                <!--                                <micronaut.environments>ga</micronaut.environments>-->
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>
@@ -1093,11 +1200,6 @@
                         <groupId>io.kokuwa.maven</groupId>
                         <artifactId>k3s-maven-plugin</artifactId>
                         <version>${version.io.kokuwa.maven.k3s-plugin}</version>
-                        <configuration>
-                            <dockerImages>
-                                <dockerImage>contract-management</dockerImage>
-                            </dockerImages>
-                        </configuration>
                     </plugin>
                 </plugins>
             </build>

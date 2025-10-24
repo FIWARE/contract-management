@@ -1,4 +1,4 @@
-package org.fiware.iam.domain;
+package org.fiware.iam.dsp;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
@@ -9,6 +9,9 @@ import org.fiware.rainbow.model.ProhibitionVO;
 
 import java.util.List;
 
+/**
+ * Representation of a policy as expected by rainbow/dsp
+ */
 @NoArgsConstructor
 @AllArgsConstructor
 @Data

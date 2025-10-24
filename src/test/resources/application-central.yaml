@@ -1,0 +1,8 @@
+general:
+  enableOdrlPap: false
+  enableTrustedIssuersList: false
+  enableRainbow: false
+  enableCentralMarketplace: true
+
+oid4vp:
+  enabled: false

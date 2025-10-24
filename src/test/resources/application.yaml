@@ -57,10 +57,11 @@ loggers:
   levels:
     ROOT: TRACE
 general:
-  did: did:test:did
-  host: local-host
+  did: did:web:marketplace.io
+  enableCentralMarketplace: false
 
 notification:
+  host: local-host
   entities:
     - entityType: "ProductOrder"
       eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
@@ -74,3 +75,17 @@ notification:
     - entityType: "Quote"
       eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE", "ATTRIBUTE_CHANGE" ]
       apiAddress: "http://localhost:8087/tmf-api/quote/v4"
+
+oid4vp:
+  credentialsFolder: "/home/stefanw/git/fiware/contract-management/src/test/resources/oid4vp/credentials"
+  trustAnchors:
+    - "oid4vp/test-ca.pem"
+  holder:
+    holderId: "did:key:zDnaehXH4gDLjLeWcACPyQX9TnvsKiQNt6KT7fdsfyW6fhEYA"
+    keyType: "EC"
+    keyPath: "oid4vp/private-key.pem"
+    signatureAlgorithm: "ECDH-ES"
+  proxyConfig:
+    useProxy: true
+    proxyHost: localhost
+    proxyPort: 8888

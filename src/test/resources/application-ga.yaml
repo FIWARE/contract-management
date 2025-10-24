@@ -8,5 +8,5 @@ test:
   providerRainbowHost: http://localhost:1234
   agreementHost: http://localhost:8086
 
-general:
+notification:
   host: contract-management
