@@ -118,7 +118,9 @@ public abstract class ContractManagementIT {
             assertAgreementReferenced(productOrder);
         }
         assertTilEntry(TEST_CONSUMER_DID, "MyCredential", TEST_SERVICE, Set.of("Consumer", "Admin"));
-        assertEquals(1, getPolicies().size(), "The policy should have been created.");
+        Awaitility.await("The policy should have been created.")
+                .atMost(1, TimeUnit.MINUTES)
+                .until(() -> getPolicies().size() == 1);
     }
 
     @DisplayName("Test Happy Path no policy")
