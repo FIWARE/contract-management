@@ -13,11 +13,11 @@ data:
         services:
           trusted-issuers-list:
             path: "/"
-            url: http://trusted-issuers-list:8085
+            url: http://trusted-issuers-list-provider:7085
             read-timeout: 30
           odrl:
             path: ""
-            url: http://odrl-pap:8088
+            url: http://odrl-pap-provider:7088
             read-timeout: 30
     ---
     endpoints:

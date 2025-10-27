@@ -7,6 +7,7 @@ import kong.unirest.Unirest;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.tmforum.notification.SubscriptionHealthIndicator;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
@@ -21,6 +22,7 @@ public class CentralMarketIT extends LocalContractManagementIT {
 
     @Disabled
     @Override
+    @Test
     public void testContractNegotiation() {
         // rainbow support is not enabled for central marketplace setups
     }

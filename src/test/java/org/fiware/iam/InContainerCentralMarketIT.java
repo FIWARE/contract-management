@@ -5,23 +5,25 @@ import io.micronaut.context.annotation.Requires;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import kong.unirest.Unirest;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.tmforum.notification.SubscriptionHealthIndicator;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
 @Requires(condition = TestConfiguration.InContainerCondition.class)
 @MicronautTest(startApplication = false, environments = {"central-ga"})
 @Slf4j
-public class InContainerCentralMarketIT extends InContainerContractManagementIT {
+public class InContainerCentralMarketIT extends ContractManagementIT {
 
     public InContainerCentralMarketIT(TestConfiguration testConfiguration, ObjectMapper objectMapper) {
-        super(testConfiguration, objectMapper);
+        super(objectMapper, testConfiguration);
     }
 
     @Disabled
     @Override
+    @Test
     public void testContractNegotiation() {
+        log.warn("Contract Negotiation test disabled.");
         // rainbow support is not enabled for central marketplace setups
     }
 
@@ -32,7 +34,7 @@ public class InContainerCentralMarketIT extends InContainerContractManagementIT 
 
     @Override
     public String createProviderOrganization() {
-
+        log.warn("Create provider org");
         Optional<String> optionalId = getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
                 .header("Content-Type", "application/json")
                 .body(String.format("{\n" +
@@ -55,4 +57,8 @@ public class InContainerCentralMarketIT extends InContainerContractManagementIT 
         return optionalId.get();
     }
 
+    @Override
+    public void contractManagementHealthy() {
+        // NO-OP - k3s health check already takes care of that check
+    }
 }

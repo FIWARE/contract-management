@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/name: contract-management-marketplace
+  name: contract-management-marketplace
+data:
+  application.yaml: |
+    micronaut:
+      server:
+        port: 8080
+      http:
+        services:
+          product-order:
+            path: "/tmf-api/productOrderingManagement/v4"
+            url: http://tm-forum-api-product-ordering-management:8081
+            read-timeout: 30
+          party:
+            path: "/tmf-api/party/v4"
+            url: http://tm-forum-api-party-catalog:8083
+            read-timeout: 30
+          product-catalog:
+            path: "/tmf-api/productCatalogManagement/v4"
+            url: http://tm-forum-api-product-catalog:8082
+            read-timeout: 30
+          service-catalog:
+            path: "/tmf-api/serviceCatalogManagement/v4"
+            url: http://tm-forum-api-service-catalog:8084
+            read-timeout: 30
+          tmforum-agreement-api:
+            path: "/tmf-api/agreementManagement/v4"
+            url: http://tm-forum-api-agreement:8086
+            read-timeout: 30
+          quote:
+            path: "/tmf-api/quote/v4"
+            url: http://tm-forum-api-quote:8087
+            read-timeout: 30
+    ---
+    endpoints:
+      all:
+        port: 9090
+      health:
+        enabled: true
+    ---
+    general:
+      port: 8080
+      enableOdrlPap: false
+      enableTrustedIssuersList: false
+      enableRainbow: false
+      enableCentralMarketplace: true
+      
+
+    notification:
+      host: contract-management-marketplace
+      entities:
+        - entityType: "ProductOrder"
+          eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
+          apiAddress: "http://tm-forum-api-product-ordering-management:8081/tmf-api/productOrderingManagement/v4"
+        - entityType: "ProductOffering"
+          eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]
+          apiAddress: "http://tm-forum-api-product-catalog:8082/tmf-api/productCatalogManagement/v4"
+        - entityType: "Catalog"
+          eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE" ]
+          apiAddress: "http://tm-forum-api-product-catalog:8082/tmf-api/productCatalogManagement/v4"
+        - entityType: "Quote"
+          eventTypes: [ "CREATE", "DELETE", "STATE_CHANGE", "ATTRIBUTE_CHANGE" ]
+          apiAddress: "http://tm-forum-api-quote:8087/tmf-api/quote/v4"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: contract-management-marketplace
+  name: contract-management-marketplace
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: contract-management-marketplace
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: contract-management-marketplace
+    spec:
+      containers:
+        - image: contract-management-marketplace
+          imagePullPolicy: IfNotPresent
+          name: contract-management-marketplace
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - name: http-health
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 31
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 30
+          env:
+            - name: MICRONAUT_CONFIG_FILES
+              value: "/application.yaml"
+          volumeMounts:
+            - name: application-yaml
+              mountPath: /application.yaml
+              subPath: application.yaml
+      volumes:
+        - name: application-yaml
+          configMap:
+            name: contract-management-marketplace
+            items:
+              - key: application.yaml
+                path: application.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contract-management-marketplace
+  labels:
+    app.kubernetes.io/name: contract-management-marketplace
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 8090
+      targetPort: 8080
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: health
+  selector:
+    app.kubernetes.io/name: contract-management-marketplace
