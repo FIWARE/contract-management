@@ -80,7 +80,7 @@ public class RainbowQuoteHandler implements QuoteHandler {
     @Override
     public Mono<HttpResponse<?>> handleQuoteStateChange(QuoteVO quoteVO) {
         QuoteStateTypeVO quoteStateTypeVO = quoteVO.getState();
-        log.warn("Quote state is {}", quoteStateTypeVO);
+        log.debug("Quote state is {}", quoteStateTypeVO);
         return switch (quoteStateTypeVO) {
             case APPROVED ->
                     rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:OFFERED")

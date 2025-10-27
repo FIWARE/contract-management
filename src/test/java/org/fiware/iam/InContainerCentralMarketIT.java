@@ -19,11 +19,10 @@ public class InContainerCentralMarketIT extends ContractManagementIT {
         super(objectMapper, testConfiguration);
     }
 
-    @Disabled
+    @Disabled("Contract Negotiation test disabled for integration through a central marketplace.")
     @Override
     @Test
     public void testContractNegotiation() {
-        log.warn("Contract Negotiation test disabled.");
         // rainbow support is not enabled for central marketplace setups
     }
 
@@ -34,7 +33,7 @@ public class InContainerCentralMarketIT extends ContractManagementIT {
 
     @Override
     public String createProviderOrganization() {
-        log.warn("Create provider org");
+        log.info("Create provider org");
         Optional<String> optionalId = getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
                 .header("Content-Type", "application/json")
                 .body(String.format("{\n" +

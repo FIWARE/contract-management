@@ -74,13 +74,15 @@ public abstract class ContractManagementIT {
     @BeforeEach
     public void cleanUpAndWait() {
 
+        log.info("Cleanup til: {}", testConfiguration.getTilHost());
         Unirest.delete(testConfiguration.getTilHost() + "/issuer/" + TEST_CONSUMER_DID).asString();
+        log.info("Cleanup policies: {}", testConfiguration.getOdrlPapHost());
         getPolicies()
                 .stream()
                 .map(p -> p.get("id"))
                 .forEach(id -> {
                     HttpResponse<String> result = Unirest.delete(testConfiguration.getOdrlPapHost() + "/policy/" + id).asString();
-                    log.warn("Clean up result for {} is {}", id, result.getStatus());
+                    log.info("Clean up result for {} is {}", id, result.getStatus());
                 });
 
         contractManagementHealthy();
@@ -240,6 +242,7 @@ public abstract class ContractManagementIT {
     }
 
     private Optional<JSONObject> getTrustedIssuersListEntry(String did) {
+        log.info("Get from til {}", testConfiguration.getTilHost());
         try {
             return Optional.ofNullable(Unirest.get(testConfiguration.getTilHost() + "/issuer/" + did)
                             .asJson())
@@ -593,7 +596,7 @@ public abstract class ContractManagementIT {
                 .stream()
                 .map(a -> objectMapper.convertValue(a, new TypeReference<Map<String, Object>>() {
                 }))
-                .peek(p -> log.warn("Got policy {}", ((Map<String, Object>) p).get("id")))
+                .peek(p -> log.info("Got policy {}", ((Map<String, Object>) p).get("id")))
                 .toList();
     }
 

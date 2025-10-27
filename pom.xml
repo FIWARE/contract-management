@@ -946,10 +946,6 @@
                                 <portBinding>8087:8087</portBinding>
                                 <!-- odrl-pap -->
                                 <portBinding>8088:8088</portBinding>
-                                <!-- provider contract management -->
-                                <portBinding>8089:8089</portBinding>
-                                <!-- marketplace contract management -->
-                                <portBinding>8090:8090</portBinding>
                                 <!-- orion -->
                                 <portBinding>1026:1026</portBinding>
                                 <!-- provider -->

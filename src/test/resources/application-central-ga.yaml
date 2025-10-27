@@ -7,12 +7,3 @@ test:
   productCatalogHost: http://localhost:8082
   providerRainbowHost: http://localhost:1234
   agreementHost: http://localhost:8086
-
-general:
-  enableOdrlPap: false
-  enableTrustedIssuersList: false
-  enableRainbow: false
-  enableCentralMarketplace: true
-
-oid4vp:
-  enabled: false

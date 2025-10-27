@@ -75,7 +75,7 @@ public class QuoteEventHandler implements TMForumEventHandler {
         List<Mono<HttpResponse<?>>> responses = quoteHandlers.stream()
                 .map(handler -> handler
                         .handleQuoteStateChange(quoteVO)
-                        .doOnNext(r -> log.warn("Handler {} responded {}", handler.getClass().getName(), r)))
+                        .doOnNext(r -> log.debug("Handler {} responded {}", handler.getClass().getName(), r)))
                 .toList();
 
         return zipToResponse(responses);

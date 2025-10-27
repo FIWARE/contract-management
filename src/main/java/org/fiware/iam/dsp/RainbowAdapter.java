@@ -78,7 +78,6 @@ public class RainbowAdapter {
                                             .odrlColonAgreement(agreementVO);
                                     return contractApiClient.createAgreementForProcess(providerNegotiationVO.getCnProcessId(), lastOfferVO.getCnMessageId(), agreementRequestVO);
                                 }))
-                .doOnNext(r -> log.warn("Create agreement: {}", r))
                 .map(HttpResponse::body)
                 .map(r -> new AgreementVO())
                 .onErrorMap(t -> new RainbowException("Was not able to create agreement"));
@@ -139,7 +138,6 @@ public class RainbowAdapter {
 
                     return contractApiClient.updateProcessById(pn.getCnProcessId(), negotiationProcessVO);
                 })
-                .doOnNext(r -> log.warn("Update result: {}", r))
                 .map(HttpResponse::body)
                 .onErrorMap(t -> new RainbowException(String.format("Was not able to update negotiation process %s to %s.", providerId, state), t));
     }
