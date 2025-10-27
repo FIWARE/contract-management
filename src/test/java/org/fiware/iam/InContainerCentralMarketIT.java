@@ -48,7 +48,7 @@ public class InContainerCentralMarketIT extends ContractManagementIT {
                         "        {\n" +
                         "            \"name\": \"contractManagement\",\n" +
                         "            \"value\": {" +
-                        "               \"address\": \"http://contract-management-provider:8080\"" +
+                        "               \"address\": \"http://contract-management-provider:8089\"" +
                         "           }\n" +
                         "        }\n" +
                         "    ]\n" +

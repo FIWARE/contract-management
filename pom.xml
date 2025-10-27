@@ -944,6 +944,8 @@
                                 <portBinding>8086:8086</portBinding>
                                 <!-- tm-forum-api-quote -->
                                 <portBinding>8087:8087</portBinding>
+                                <!-- contract management provider -->
+                                <portBinding>8089:8089</portBinding>
                                 <!-- odrl-pap -->
                                 <portBinding>8088:8088</portBinding>
                                 <!-- orion -->
