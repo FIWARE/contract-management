@@ -242,7 +242,6 @@ public abstract class ContractManagementIT {
     }
 
     private Optional<JSONObject> getTrustedIssuersListEntry(String did) {
-        log.info("Get from til {}", testConfiguration.getTilHost());
         try {
             return Optional.ofNullable(Unirest.get(testConfiguration.getTilHost() + "/issuer/" + did)
                             .asJson())
