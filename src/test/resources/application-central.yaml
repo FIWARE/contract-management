@@ -6,3 +6,7 @@ general:
 
 oid4vp:
   enabled: false
+
+test:
+  tilHost: http://localhost:7085
+  odrlPapHost: http://localhost:7088
