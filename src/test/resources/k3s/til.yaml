@@ -41,7 +41,7 @@ spec:
               value: MYSQL
             - name: DATASOURCES_DEFAULT_PASSWORD
               value: root
-          image: quay.io/fiware/trusted-issuers-list:0.3.3
+          image: quay.io/fiware/trusted-issuers-list:0.3.4
           imagePullPolicy: Always
           name: trusted-issuers-list
           ports:
@@ -95,7 +95,7 @@ spec:
         app.kubernetes.io/name: mysql
     spec:
       containers:
-        - image: docker.io/mysql:8.0
+        - image: docker.io/mysql:8.0.44
           name: mysql
           env:
             # Use secret in real usage
@@ -106,9 +106,3 @@ spec:
           ports:
             - containerPort: 3306
               name: mysql
-          volumeMounts:
-            - name: mysql-persistent-storage
-              mountPath: /var/lib/mysql
-      volumes:
-        - name: mysql-persistent-storage
-          emptyDir: {}
