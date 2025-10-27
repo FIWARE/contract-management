@@ -80,7 +80,7 @@ public class ContractManagementController implements OrderApi {
                 Arrays.stream(results)
                         .filter(Boolean.class::isInstance)
                         .map(Boolean.class::cast)
-                        .filter(b -> !b)
+                        .filter(isSuccessfull -> !isSuccessfull)
                         .findAny()
                         // if something is wrong -> bad gateway
                         .map(b -> HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
