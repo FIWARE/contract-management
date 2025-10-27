@@ -95,7 +95,7 @@ spec:
         app.kubernetes.io/name: mysql
     spec:
       containers:
-        - image: docker.io/bitnamilegacy/mysql:8.0.31-debian-11-r10
+        - image: docker.io/mysql:8.0
           name: mysql
           env:
             # Use secret in real usage
