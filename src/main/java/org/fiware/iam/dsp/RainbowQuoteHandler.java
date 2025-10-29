@@ -10,6 +10,7 @@ import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.handlers.QuoteHandler;
 import org.fiware.iam.exception.RainbowException;
 import org.fiware.iam.tmforum.TMForumAdapter;
+import org.fiware.iam.tmforum.quote.model.ProductOfferingRefVO;
 import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
 import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
@@ -33,6 +34,11 @@ public class RainbowQuoteHandler implements QuoteHandler {
 
 
     private static final String URN_UUID_TEMPLATE = "urn:uuid:%s";
+    private static final String OFFERED_STATE = "dspace:OFFERED";
+    private static final String AGREED_STATE = "dspace:AGREED";
+    private static final String TERMINATED_STATE = "dspace:TERMINATED";
+    private static final String QUOTE_REJECTED_STATE = "rejected";
+    private static final String POLICY_KEY = "policy";
 
     private final ObjectMapper objectMapper;
     private final TMForumAdapter tmForumAdapter;
@@ -83,13 +89,13 @@ public class RainbowQuoteHandler implements QuoteHandler {
         log.debug("Quote state is {}", quoteStateTypeVO);
         return switch (quoteStateTypeVO) {
             case APPROVED ->
-                    rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:OFFERED")
+                    rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), OFFERED_STATE)
                             .map(t -> HttpResponse.noContent());
             case ACCEPTED -> tmForumAdapter.getConsumerDid(quoteVO)
                     .flatMap(consumerDid ->
                             rainbowAdapter
                                     .createAgreementAfterNegotiation(quoteVO.getExternalId(), consumerDid, generalProperties.getDid())
-                                    .flatMap(r -> rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:AGREED")
+                                    .flatMap(r -> rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), AGREED_STATE)
                                             .map(t -> HttpResponse.noContent())));
             // a lot of requests can just be ignored
             default -> Mono.just(HttpResponse.noContent());
@@ -99,7 +105,7 @@ public class RainbowQuoteHandler implements QuoteHandler {
     @Override
     public Mono<HttpResponse<?>> handleQuoteDeletion(QuoteVO quoteVO) {
         if (quoteVO.getExternalId() == null && !quoteVO.getExternalId().isEmpty()) {
-            return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), "dspace:TERMINATED")
+            return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), TERMINATED_STATE)
                     .map(t -> HttpResponse.noContent());
         }
 
@@ -109,7 +115,7 @@ public class RainbowQuoteHandler implements QuoteHandler {
     private String getOfferIdFromQuote(QuoteVO quoteVO) {
         return getRelevantQuoteItems(quoteVO)
                 .map(QuoteItemVO::getProductOffering)
-                .map(org.fiware.iam.tmforum.quote.model.ProductOfferingRefVO::getId)
+                .map(ProductOfferingRefVO::getId)
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("The event does not reference an offer."));
     }
@@ -118,15 +124,15 @@ public class RainbowQuoteHandler implements QuoteHandler {
         return quoteVO
                 .getQuoteItem()
                 .stream()
-                .filter(qi -> !qi.getState().equals("rejected"));
+                .filter(qi -> !qi.getState().equals(QUOTE_REJECTED_STATE));
     }
 
-    private List<Policy> getPoliciesFromQuote(ObjectMapper objectMapper, QuoteVO quoteVO) {
+    private List<Policy> getPoliciesFromQuote(QuoteVO quoteVO) {
         return getRelevantQuoteItems(quoteVO)
                 .map(QuoteItemVO::getUnknownProperties)
                 .map(Map::entrySet)
                 .flatMap(Set::stream)
-                .filter(ap -> ap.getKey().equals("policy"))
+                .filter(ap -> ap.getKey().equals(POLICY_KEY))
                 .map(Map.Entry::getValue)
                 .filter(List.class::isInstance)
                 .map(List.class::cast)
@@ -136,7 +142,7 @@ public class RainbowQuoteHandler implements QuoteHandler {
     }
 
     private List<PermissionVO> getPermissionsFromQuote(ObjectMapper objectMapper, QuoteVO quoteVO) {
-        return getPoliciesFromQuote(objectMapper, quoteVO)
+        return getPoliciesFromQuote(quoteVO)
                 .stream()
                 .map(o -> objectMapper.convertValue(o, Policy.class))
                 .map(Policy::getPermission)

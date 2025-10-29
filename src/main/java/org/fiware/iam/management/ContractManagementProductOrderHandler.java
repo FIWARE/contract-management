@@ -76,8 +76,8 @@ public class ContractManagementProductOrderHandler implements ProductOrderHandle
                                         .map(HttpResponse::getStatus)
                                         .map(HttpStatus::getCode)
                                         .map(res -> res >= 200 && res < 300)
-                                        .filter(success -> success)
-                                        .map(s -> HttpResponseFactory.INSTANCE.status(HttpStatus.NO_CONTENT))
+                                        .filter(isSuccess -> !isSuccess)
+                                        .map(s -> HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
                                         .findAny()
                                         .orElse(HttpResponseFactory.INSTANCE.status(HttpStatus.NO_CONTENT))
                                 );
