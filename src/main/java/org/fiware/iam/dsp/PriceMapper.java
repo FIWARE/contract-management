@@ -1,16 +1,14 @@
-package org.fiware.iam;
+package org.fiware.iam.dsp;
 
 import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.exception.TMForumException;
-import org.fiware.iam.tmforum.productcatalog.api.CatalogApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingPriceApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.ProductOfferingPriceVO;
 import org.fiware.iam.tmforum.quote.model.MoneyVO;
 import org.fiware.iam.tmforum.quote.model.QuotePriceVO;
-import org.fiware.rainbow.model.ObligationVO;
 import reactor.core.publisher.Mono;
 
 import java.util.*;

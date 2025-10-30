@@ -1,0 +1,12 @@
+general:
+  enableOdrlPap: false
+  enableTrustedIssuersList: false
+  enableRainbow: false
+  enableCentralMarketplace: true
+
+oid4vp:
+  enabled: false
+
+test:
+  tilHost: http://localhost:7085
+  odrlPapHost: http://localhost:7088

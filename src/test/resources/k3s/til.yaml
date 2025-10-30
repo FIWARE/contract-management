@@ -29,6 +29,8 @@ spec:
               value: "8080"
             - name: MICRONAUT_METRICS_ENABLED
               value: "true"
+            - name: LOGGER_LEVELS_ROOT
+              value: TRACE
             - name: DATASOURCES_DEFAULT_URL
               value: jdbc:mysql://mysql:3306/til
             - name: DATASOURCES_DEFAULT_DRIVER_CLASS_NAME
@@ -39,7 +41,7 @@ spec:
               value: MYSQL
             - name: DATASOURCES_DEFAULT_PASSWORD
               value: root
-          image: quay.io/fiware/trusted-issuers-list:0.3.3
+          image: quay.io/fiware/trusted-issuers-list:0.3.4
           imagePullPolicy: Always
           name: trusted-issuers-list
           ports:
@@ -93,7 +95,7 @@ spec:
         app.kubernetes.io/name: mysql
     spec:
       containers:
-        - image: docker.io/bitnami/mysql:8.0.31-debian-11-r10
+        - image: docker.io/mysql:8.0.44
           name: mysql
           env:
             # Use secret in real usage
@@ -104,9 +106,3 @@ spec:
           ports:
             - containerPort: 3306
               name: mysql
-          volumeMounts:
-            - name: mysql-persistent-storage
-              mountPath: /var/lib/mysql
-      volumes:
-        - name: mysql-persistent-storage
-          emptyDir: {}

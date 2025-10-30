@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: trusted-issuers-list-provider
+  name: trusted-issuers-list-provider
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trusted-issuers-list-provider
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trusted-issuers-list-provider
+    spec:
+      containers:
+        - env:
+            - name: ENDPOINTS_ALL_PORT
+              value: "9090"
+            - name: MICRONAUT_SERVER_PORT
+              value: "8080"
+            - name: MICRONAUT_METRICS_ENABLED
+              value: "true"
+            - name: LOGGER_LEVELS_ROOT
+              value: TRACE
+            - name: DATASOURCES_DEFAULT_URL
+              value: jdbc:mysql://mysql-provider:3306/til
+            - name: DATASOURCES_DEFAULT_DRIVER_CLASS_NAME
+              value: com.mysql.cj.jdbc.Driver
+            - name: DATASOURCES_DEFAULT_USERNAME
+              value: root
+            - name: DATASOURCES_DEFAULT_DIALECT
+              value: MYSQL
+            - name: DATASOURCES_DEFAULT_PASSWORD
+              value: root
+          image: quay.io/fiware/trusted-issuers-list:0.3.4
+          imagePullPolicy: Always
+          name: trusted-issuers-list-provider
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trusted-issuers-list-provider
+  labels:
+    app.kubernetes.io/name: trusted-issuers-list-provider
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 7085
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: trusted-issuers-list-provider
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-provider
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app.kubernetes.io/name: mysql-provider
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-provider
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mysql-provider
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysql-provider
+    spec:
+      containers:
+        - image: docker.io/mysql:8.0.44
+          name: mysql
+          env:
+            # Use secret in real usage
+            - name: MYSQL_ROOT_PASSWORD
+              value: root
+            - name: MYSQL_DATABASE
+              value: til
+          ports:
+            - containerPort: 3306
+              name: mysql-provider

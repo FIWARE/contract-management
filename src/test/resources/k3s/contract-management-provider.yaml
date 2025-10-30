@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/name: contract-management-provider
+  name: contract-management-provider
+data:
+  application.yaml: |
+    micronaut:
+      server:
+        port: 8080
+      http:
+        services:
+          trusted-issuers-list:
+            path: "/"
+            url: http://trusted-issuers-list-provider:7085
+            read-timeout: 30
+          odrl:
+            path: ""
+            url: http://odrl-pap-provider:7088
+            read-timeout: 30
+    ---
+    endpoints:
+      all:
+        port: 9090
+      health:
+        enabled: true
+    ---
+    general:
+      did: did:web:provider.io
+      host: contract-management-provider
+      enableCentralMarketplace: true
+      enableRainbow: false
+      enableTrustedIssuersList: false
+    ---
+    notification:
+      enabled: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: contract-management-provider
+  name: contract-management-provider
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: contract-management-provider
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: contract-management-provider
+    spec:
+      containers:
+        - image: contract-management
+          imagePullPolicy: IfNotPresent
+          name: contract-management
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - name: http-health
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 31
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 30
+          env:
+            - name: MICRONAUT_CONFIG_FILES
+              value: "/application.yaml"
+          volumeMounts:
+            - name: application-yaml
+              mountPath: /application.yaml
+              subPath: application.yaml
+      volumes:
+        - name: application-yaml
+          configMap:
+            name: contract-management-provider
+            items:
+              - key: application.yaml
+                path: application.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contract-management-provider
+  labels:
+    app.kubernetes.io/name: contract-management-provider
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 8089
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: http-health
+      protocol: TCP
+      name: health
+  selector:
+    app.kubernetes.io/name: contract-management-provider
