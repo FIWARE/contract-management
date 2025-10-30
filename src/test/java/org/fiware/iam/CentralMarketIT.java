@@ -9,6 +9,8 @@ import org.fiware.iam.tmforum.notification.SubscriptionHealthIndicator;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Requires(condition = TestConfiguration.LocalCondition.class)
@@ -35,25 +37,24 @@ public class CentralMarketIT extends LocalContractManagementIT {
     @Override
     public String createProviderOrganization() {
 
-        Optional<String> optionalId = getResponseId(Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
-                .header("Content-Type", "application/json")
-                .body(String.format("{\n" +
-                        "    \"name\": \"Provider\",\n" +
-                        "    \"tradingName\": \"Provider\",\n" +
-                        "    \"partyCharacteristic\": [\n" +
-                        "        {\n" +
-                        "            \"name\": \"did\",\n" +
-                        "            \"valueType\": \"string\",\n" +
-                        "            \"value\": \"%s\"\n" +
-                        "        },\n" +
-                        "        {\n" +
-                        "            \"name\": \"contractManagement\",\n" +
-                        "            \"value\": {" +
-                        "               \"address\": \"http://localhost:8089\"" +
-                        "           }\n" +
-                        "        }\n" +
-                        "    ]\n" +
-                        "}", TEST_PROVIDER_DID)));
+        Optional<String> optionalId = getResponseId(
+                Unirest.post(testConfiguration.getPartyCatalogHost() + "/tmf-api/party/v4/organization")
+                        .header("Content-Type", "application/json")
+                        .body(Map.of(
+                                "name", "Provider",
+                                "tradingName", "Provider",
+                                "partyCharacteristic", List.of(
+                                        Map.of(
+                                                "name", "did",
+                                                "valueType", "string",
+                                                "value", TEST_PROVIDER_DID
+                                        ),
+                                        Map.of(
+                                                "name", "contractManagement",
+                                                "value", Map.of("address", "http://localhost:8089")
+                                        )
+                                )
+                        )));
         return optionalId.get();
     }
 
