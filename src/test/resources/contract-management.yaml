@@ -55,12 +55,11 @@ data:
         enabled: true
     ---
     general:
-      host: contract-management
       port: 8080
-      til:
-        credentialType: MyCredential
+      enableCentralMarketplace: true
 
     notification:
+      host: contract-management
       entities:
         - entityType: "ProductOrder"
           eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]

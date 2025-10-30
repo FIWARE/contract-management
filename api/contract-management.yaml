@@ -1,0 +1,106 @@
+openapi: 3.0.3
+info:
+  title: Contract Management API
+  description: API of the Contract Management for event handling between different instances
+  version: 0.0.1
+tags:
+  - name: order
+paths:
+  /order/start:
+    post:
+      tags:
+        - order
+      operationId: handleOrderStart
+      summary: Handle an order coming from an external source
+      description: Handle an order start event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderEvent'
+      responses:
+        '204':
+          description: Successfully handled the event
+  /order/stop:
+    post:
+      tags:
+        - order
+      operationId: handleOrderStop
+      summary: Handle an order stop coming from an external source
+      description: Handle an order stop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderEvent'
+      responses:
+        '204':
+          description: Successfully handled the event
+components:
+  schemas:
+    OrderEvent:
+      type: object
+      properties:
+        orderId:
+          type: string
+        customerId:
+          type: string
+          example: did:web:my-customer.org
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/OdrlPolicyJson'
+        credentialsConfig:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credential'
+      required:
+        - orderId
+        - customerId
+    OdrlPolicyJson:
+      type: object
+      additionalProperties: true
+    TimeRange:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+          example: '2017-07-21T17:32:28Z'
+        to:
+          type: string
+          format: date-time
+          example: '2023-07-21T17:32:28Z'
+    Claim:
+      type: object
+      properties:
+        name:
+          type: string
+          example: roles
+        path:
+          type: string
+          description: json path to the restricted claim
+          example: "$.roles[*].names[*]"
+        allowedValues:
+          type: array
+          items:
+            type: object
+          example:
+            - true
+            - 12
+            - "GOLD_CUSTOMER"
+            - "STANDARD_CUSTOMER"
+    Credential:
+      type: object
+      properties:
+        validFor:
+          $ref: '#/components/schemas/TimeRange'
+        credentialsType:
+          type: string
+          example: "CustomerCredential"
+        claims:
+          type: array
+          items:
+            $ref: '#/components/schemas/Claim'

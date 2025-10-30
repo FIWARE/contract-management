@@ -1,4 +1,4 @@
-package org.fiware.iam;
+package org.fiware.iam.dsp;
 
 import org.fiware.iam.tmforum.productcatalog.model.CatalogVO;
 import org.fiware.rainbow.model.NewCatalogVO;

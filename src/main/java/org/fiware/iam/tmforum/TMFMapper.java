@@ -1,4 +1,4 @@
-package org.fiware.iam;
+package org.fiware.iam.tmforum;
 
 import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
 import org.fiware.iam.tmforum.productorder.model.RelatedPartyVO;

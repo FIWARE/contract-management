@@ -1,5 +1,6 @@
 package org.fiware.iam.dsp;
 
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.event.StartupEvent;
 import io.micronaut.runtime.event.annotation.EventListener;
 import jakarta.inject.Singleton;
@@ -7,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.exception.RainbowException;
 
+
+@Requires(condition = GeneralProperties.RainbowCondition.class)
 @Singleton
 @RequiredArgsConstructor
 public class RainbowInitializer {

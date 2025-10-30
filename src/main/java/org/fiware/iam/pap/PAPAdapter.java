@@ -1,10 +1,12 @@
-package org.fiware.iam;
+package org.fiware.iam.pap;
 
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.odrl.pap.api.DefaultApiClient;
+import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.odrl.pap.api.PapApiClient;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -14,6 +16,7 @@ import java.util.Optional;
 /**
  * Responsible for handling connections with the PAP.
  */
+@Requires(condition = GeneralProperties.PapCondition.class)
 @Singleton
 @RequiredArgsConstructor
 @Slf4j
@@ -36,7 +39,7 @@ public class PAPAdapter {
 
 	private static final String ID_TEMPLATE = "%s-%s";
 
-	private final DefaultApiClient papClient;
+	private final PapApiClient papClient;
 
 	/**
 	 * Creates the given policy for the given customer (added as assignee) in the ODRL-PAP. Since this becomes a concrete instantiation of the policy,
