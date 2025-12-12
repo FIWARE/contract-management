@@ -285,10 +285,6 @@
                 <directory>src/main/resources</directory>
                 <filtering>true</filtering>
             </resource>
-            <resource>
-                <directory>src/test/resources</directory>
-                <filtering>true</filtering>
-            </resource>
         </resources>
         <plugins>
             <!-- generate sources from openapi spec -->
@@ -1044,6 +1040,16 @@
             <!-- can be used to spin up a local dev environment -->
             <id>dev</id>
             <build>
+                <resources>
+                    <resource>
+                        <directory>src/main/resources</directory>
+                        <filtering>true</filtering>
+                    </resource>
+                    <resource>
+                        <directory>src/test/resources</directory>
+                        <filtering>true</filtering>
+                    </resource>
+                </resources>
                 <plugins>
                     <!-- run tests -->
                     <plugin>
@@ -1145,6 +1151,16 @@
             </activation>
             <id>in-container</id>
             <build>
+                <resources>
+                    <resource>
+                        <directory>src/main/resources</directory>
+                        <filtering>true</filtering>
+                    </resource>
+                    <resource>
+                        <directory>src/test/resources</directory>
+                        <filtering>true</filtering>
+                    </resource>
+                </resources>
                 <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
