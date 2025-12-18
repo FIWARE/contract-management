@@ -106,6 +106,12 @@ public class Application {
                 .map(c -> new TrustAnchor(c, null))
                 .collect(Collectors.toSet());
 
+        X509SanDnsClientResolver clientResolver = new X509SanDnsClientResolver();
+        if (!trustAnchors.isEmpty()) {
+            //if trust anchors are explicitly configured, use them.
+            clientResolver = new X509SanDnsClientResolver(trustAnchors, false);
+        }
+
         DCQLEvaluator dcqlEvaluator = new DCQLEvaluator(List.of(
                 new JwtCredentialEvaluator(),
                 new DcSdJwtCredentialEvaluator(),
@@ -116,7 +122,7 @@ public class Application {
                 httpClient,
                 holderConfiguration,
                 authObjectMapper,
-                List.of(new X509SanDnsClientResolver(trustAnchors, false)),
+                List.of(clientResolver),
                 dcqlEvaluator,
                 credentialsRepository,
                 signingService);
