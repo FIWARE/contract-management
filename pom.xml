@@ -977,6 +977,16 @@
                         <configuration combine.self="override">
                             <from>
                                 <image>registry.access.redhat.com/ubi8/openjdk-21:1.21-1</image>
+                                <platforms>
+                                    <platform>
+                                        <architecture>amd64</architecture>
+                                        <os>linux</os>
+                                    </platform>
+                                    <platform>
+                                        <architecture>arm64</architecture>
+                                        <os>linux</os>
+                                    </platform>
+                                </platforms>
                             </from>
                             <to>
                                 <image>${image.registry}/${image.repository}/${project.artifactId}</image>
