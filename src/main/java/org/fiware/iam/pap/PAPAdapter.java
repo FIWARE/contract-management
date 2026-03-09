@@ -6,7 +6,7 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
-import org.fiware.iam.odrl.pap.api.PapApiClient;
+import org.fiware.iam.odrl.pap.api.PolicyApiClient;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -39,7 +39,7 @@ public class PAPAdapter {
 
 	private static final String ID_TEMPLATE = "%s-%s";
 
-	private final PapApiClient papClient;
+	private final PolicyApiClient papClient;
 
 	/**
 	 * Creates the given policy for the given customer (added as assignee) in the ODRL-PAP. Since this becomes a concrete instantiation of the policy,
