@@ -34,6 +34,9 @@ import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
@@ -129,17 +132,29 @@ public class Application {
 
     }
 
+    private static InputStream openInputStream(String filepath) throws IOException {
+        Path path = Paths.get(filepath);
+        if (Files.isDirectory(path)) {
+            return null;
+        }
+        if (Files.exists(path)) {
+            return Files.newInputStream(path);
+        }
+        return null;
+    }
+
     private static PrivateKey loadPrivateKey(String keyType, String filename) {
-        try (InputStream is = Application.class.getClassLoader().getResourceAsStream(filename)) {
+        try (InputStream is = openInputStream(filename)) {
             if (is == null) {
-                throw new IllegalArgumentException("Resource not found: " + filename);
+                throw new IllegalArgumentException("Private key not found: " + filename);
             }
 
             // Read PEM file content
-            String pem = new String(is.readAllBytes(), StandardCharsets.UTF_8)
-                    .replaceAll("-----BEGIN (.*)-----", "")
-                    .replaceAll("-----END (.*)-----", "")
-                    .replaceAll("\\s", "");
+            String pem =
+                    new String(is.readAllBytes(), StandardCharsets.UTF_8)
+                            .replaceAll("-----BEGIN (.*)-----", "")
+                            .replaceAll("-----END (.*)-----", "")
+                            .replaceAll("\\s", "");
 
             // Base64 decode
             byte[] decoded = Base64.getDecoder().decode(pem);
@@ -149,7 +164,10 @@ public class Application {
             KeyFactory keyFactory = KeyFactory.getInstance(keyType); // or "EC"
             return keyFactory.generatePrivate(keySpec);
         } catch (IOException | NoSuchAlgorithmException | InvalidKeySpecException e) {
-            throw new Oid4VpInitException(String.format("Was not able to load the private key with type %s from %s", keyType, filename), e);
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Was not able to load the private key with type %s from %s", keyType, filename),
+                    e);
         }
     }
 
@@ -165,9 +183,7 @@ public class Application {
             }
             return list;
         } catch (IOException | CertificateException e) {
-            throw new Oid4VpInitException(String.format("Was not able to load the certificates from %s", resource), e);
+            throw new IllegalArgumentException(String.format("Was not able to load the certificates from %s", resource), e);
         }
     }
-
-
 }
