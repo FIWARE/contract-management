@@ -2,8 +2,10 @@ package org.fiware.iam.tmforum.handlers;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,8 +32,8 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
     private static final String STATE_CHANGE_EVENT = "ProductOrderStateChangeEvent";
     private static final List<String> SUPPORTED_EVENT_TYPES = List.of(CREATE_EVENT, DELETE_EVENT, STATE_CHANGE_EVENT);
 
-
-    private static final String CUSTOMER_ROLE = "Customer";
+    @Value("${general.productOrder.customerRole:Customer}")
+    private String CUSTOMER_ROLE;
 
     private final ObjectMapper objectMapper;
 
@@ -53,7 +55,10 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .map(ProductOrderCreateEventPayloadVO::getProductOrder)
                 .map(ProductOrderVO::getRelatedParty)
                 .filter(Objects::nonNull)
-                .map(rpl -> getCustomer(rpl).orElseThrow(() -> new IllegalArgumentException("Exactly one ordering related party is expected.")))
+                .map(rpl -> getCustomer(rpl).orElseThrow(() -> {
+                    log.debug("Expected related party with role {} but could not find one. Related parties: {}", CUSTOMER_ROLE, rpl.stream().map(RelatedPartyVO::getRole).toList());
+                    return new IllegalArgumentException("Exactly one ordering related party is expected.");
+                }))
                 .map(RelatedPartyVO::getId)
                 .findAny()
                 .orElseThrow(() -> new IllegalArgumentException("The ProductOrder-Event does not include a valid organization id."));
@@ -73,13 +78,13 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
         }
         if (relatedPartyVOS.size() == 1) {
             String role = relatedPartyVOS.getFirst().getRole();
-            if (role == null || role.equals(CUSTOMER_ROLE)) {
+            if (role == null || role.equalsIgnoreCase(CUSTOMER_ROLE)) {
                 return Optional.of(relatedPartyVOS.getFirst());
             }
         }
         return relatedPartyVOS.stream()
                 .filter(relatedPartyVO -> relatedPartyVO.getRole() != null)
-                .filter(relatedPartyVO -> relatedPartyVO.getRole().equals(CUSTOMER_ROLE))
+                .filter(relatedPartyVO -> relatedPartyVO.getRole().equalsIgnoreCase(CUSTOMER_ROLE))
                 .findFirst();
     }
 
