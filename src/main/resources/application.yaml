@@ -53,7 +53,8 @@ micronaut:
 
 general:
   did: did:test:did
-
+  productOrder:
+    customerRole: "customer"
 # -- configuration in case of OpenID4VP
 #oid4vp:
 #  credentialsFolder: "/credentials"
