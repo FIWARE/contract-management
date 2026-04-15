@@ -173,7 +173,7 @@ public class Application {
 
     private static List<X509Certificate> loadCertificates(String resource) {
 
-        try (InputStream is = Application.class.getClassLoader().getResourceAsStream(resource)) {
+        try (InputStream is = openInputStream(resource)) {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             Collection<? extends Certificate> certs = cf.generateCertificates(is);
 
