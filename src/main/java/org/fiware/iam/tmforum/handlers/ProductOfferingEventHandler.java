@@ -56,9 +56,6 @@ public class ProductOfferingEventHandler implements TMForumEventHandler {
                 .map(ProductOfferingCreateEventPayloadVO::getProductOffering)
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product offering."));
 
-        if (productOfferingVO.getCategory() == null || productOfferingVO.getCategory().isEmpty()) {
-            throw new IllegalArgumentException("Product offering does not have a category.");
-        }
 
         List<Mono<HttpResponse<?>>> responses = productOfferingHandlers.stream()
                 .map(handler -> handler.handleOfferingCreation(productOfferingVO))
