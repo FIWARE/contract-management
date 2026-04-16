@@ -43,6 +43,9 @@ public class RainbowProductOfferingHandler implements ProductOfferingHandler {
     @Override
     public Mono<HttpResponse<?>> handleOfferingCreation(ProductOfferingVO productOfferingVO) {
 
+        if (productOfferingVO.getCategory() == null || productOfferingVO.getCategory().isEmpty()) {
+            throw new IllegalArgumentException("Product offering does not have a category.");
+        }
         Mono<NewDataserviceVO> dataserviceVOMono = prepareNewDataservice(productOfferingVO);
         Mono<List<String>> catalogsMono = getCatalogsForProductOffering(productOfferingVO);
         return Mono.zip(dataserviceVOMono, catalogsMono, this::createDataservice)
