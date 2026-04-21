@@ -55,6 +55,9 @@ general:
   did: did:test:did
   productOrder:
     customerRole: "customer"
+  organization:
+    provider:
+      role: "provider"
 oid4vp:
   enabled: false
   proxyConfig:

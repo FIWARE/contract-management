@@ -59,7 +59,9 @@ loggers:
 general:
   did: did:web:marketplace.io
   enableCentralMarketplace: false
-
+  organization:
+    provider:
+      role: "provider"
 notification:
   host: local-host
   entities:
