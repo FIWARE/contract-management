@@ -67,7 +67,7 @@ public class NotificationSubscriber {
 
     public void createSubscription(String entityType, String eventType, String apiAddress) {
         String callbackUrl = String.format("http://%s:%s%s%s", notificationProperties.getHost(), servicePort, removeTrailingSlash(generalProperties.getBasePath()), LISTENER_PATH);
-        log.debug("Attempting to register subscription with callback {}", callbackUrl);
+        log.debug("Attempting to register subscription for {} {} events at {}", entityType, eventType, String.format(LISTENER_ADDRESS_TEMPLATE, apiAddress));
 
         EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
                 .callback(callbackUrl)
@@ -76,19 +76,22 @@ public class NotificationSubscriber {
         HttpRequest<?> request = HttpRequest.create(HttpMethod.POST, String.format(LISTENER_ADDRESS_TEMPLATE, apiAddress)).body(subscription);
 
         Mono.from(httpClient.exchange(request, EventSubscriptionVO.class))
-                .doOnSuccess(res -> subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType))
+                .doOnSuccess(res -> {
+                    subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType);
+                    log.info("Successfully subscribed to {} {} events at {}", entityType, eventType, request.getUri());
+                })
                 .onErrorResume(t -> {
                     if (t instanceof HttpClientResponseException e) {
                         if (e.getStatus() == HttpStatus.CONFLICT) {
                             subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType);
-                            return Mono.empty();
-                        }
-                        if (e.getStatus() != HttpStatus.CONFLICT) {
-                            log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
+                            log.info("Subscription for {} {} already exists at {}", entityType, eventType, request.getUri());
+                        } else {
+                            String body = e.getResponse().getBody(String.class).orElse("<no body>");
+                            log.warn("Event registration failed for {} at {} - Status: {} | Message: {} | Body: {}", entityType, request.getUri(), e.getStatus(), e.getMessage(), body);
                         }
                         return Mono.empty();
                     }
-                    log.info("Could not create subscription for {} in TM Forum API", entityType, t);
+                    log.warn("Could not create subscription for {} in TM Forum API", entityType, t);
                     return Mono.empty();
                 }).subscribe();
 
