@@ -55,6 +55,10 @@ general:
   did: did:test:did
   productOrder:
     customerRole: "customer"
+oid4vp:
+  enabled: false
+  proxyConfig:
+    useProxy: false
 # -- configuration in case of OpenID4VP
 #oid4vp:
 #  credentialsFolder: "/credentials"
