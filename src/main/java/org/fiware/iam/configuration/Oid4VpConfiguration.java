@@ -21,7 +21,7 @@ public class Oid4VpConfiguration {
     private Holder holder;
     private ProxyConfig proxyConfig;
     private String credentialsFolder;
-
+    private boolean enableRevocation = false;
     // list of trust-anchors to be used in addition to the system truststore.
     private List<String> trustAnchors;
 

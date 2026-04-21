@@ -23,6 +23,8 @@ import io.micronaut.context.annotation.Bean;
 import io.micronaut.context.annotation.Factory;
 import io.micronaut.context.annotation.Requires;
 import jakarta.inject.Singleton;
+
+import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fiware.iam.cert.CertReader;
 import org.fiware.iam.configuration.Oid4VpConfiguration;
@@ -33,12 +35,12 @@ import java.net.http.HttpClient;
 import java.security.PrivateKey;
 import java.security.Security;
 import java.security.cert.TrustAnchor;
-import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 @Factory
+@Slf4j
 public class Oid4VpBeanFactory {
 
     private final CertReader certReader;
@@ -92,10 +94,17 @@ public class Oid4VpBeanFactory {
                 .map(c -> new TrustAnchor(c, null))
                 .collect(Collectors.toSet());
 
-        X509SanDnsClientResolver clientResolver = new X509SanDnsClientResolver();
-        if (!trustAnchors.isEmpty()) {
-            clientResolver = new X509SanDnsClientResolver(trustAnchors, false);
+
+        if (trustAnchors.isEmpty()) {
+            try {
+                log.info("No trust anchors provided, loading system trust anchors");
+                trustAnchors = X509SanDnsClientResolver.getTrustAnchors();
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to load system trust anchors and no additional trust anchors provided.", e);
+            }
         }
+
+        X509SanDnsClientResolver clientResolver = new X509SanDnsClientResolver(trustAnchors, oid4VpConfiguration.isEnableRevocation());
 
         DCQLEvaluator dcqlEvaluator = new DCQLEvaluator(List.of(
                 new JwtCredentialEvaluator(),

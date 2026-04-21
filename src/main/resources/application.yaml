@@ -60,6 +60,7 @@ general:
       role: "provider"
 oid4vp:
   enabled: false
+  enableRevocation: false
   proxyConfig:
     useProxy: false
 # -- configuration in case of OpenID4VP
