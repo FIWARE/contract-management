@@ -59,6 +59,12 @@ micronaut:
 http:
   client:
     log-exception: false
+  server:
+    log:
+      exclude-paths:
+        - /health
+        - /metrics
+        - /prometheus
 
 general:
   did: did:test:did
