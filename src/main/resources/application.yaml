@@ -79,6 +79,8 @@ endpoints:
     port: 9090
 notification:
   host: contract-management
+  subscriptionInitialDelay: 5
+  subscriptionRetryInterval: 10
   entities:
     - entityType: "ProductOrder"
       eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]

@@ -25,6 +25,10 @@ public class NotificationProperties {
 
     private List<NotificationConfig> entities = new ArrayList<>();
 
+    private long subscriptionInitialDelay = 5;
+
+    private long subscriptionRetryInterval = 10;
+
 
     public static class NotificationCondition implements Condition {
 

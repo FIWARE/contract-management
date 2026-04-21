@@ -54,15 +54,19 @@ public class NotificationSubscriber {
                                 .orElse(List.of())
                                 .forEach(eventType -> {
                                     subscriptionHealthIndicator.initiateSubscriptionInMap(tmForumEntity.getEntityType() + eventType.getValue());
-                                    taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(5), Duration.ofSeconds(10), () -> createSubscription(tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress()));
+                                    scheduleSubscription(notificationProperties.getSubscriptionInitialDelay(), tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress());
                                 }));
     }
 
-    private static String removeTrailingSlash(String theString) {
-        if (theString.endsWith("/")) {
-            return theString.substring(0, theString.length() - 1);
+    private void scheduleSubscription(long delaySeconds, String entityType, String eventType, String apiAddress) {
+        taskScheduler.schedule(Duration.ofSeconds(delaySeconds), () -> createSubscription(entityType, eventType, apiAddress));
+    }
+
+    private static String removeTrailingSlash(String path) {
+        if (path.endsWith("/")) {
+            return path.substring(0, path.length() - 1);
         }
-        return theString;
+        return path;
     }
 
     public void createSubscription(String entityType, String eventType, String apiAddress) {
@@ -87,11 +91,13 @@ public class NotificationSubscriber {
                             log.info("Subscription for {} {} already exists at {}", entityType, eventType, request.getUri());
                         } else {
                             String body = e.getResponse().getBody(String.class).orElse("<no body>");
-                            log.warn("Event registration failed for {} at {} - Status: {} | Message: {} | Body: {}", entityType, request.getUri(), e.getStatus(), e.getMessage(), body);
+                            log.warn("Event registration failed for {} at {} - Status: {} | Message: {} | Body: {} - retrying in {}s", entityType, request.getUri(), e.getStatus(), e.getMessage(), body, notificationProperties.getSubscriptionRetryInterval());
+                            scheduleSubscription(notificationProperties.getSubscriptionRetryInterval(), entityType, eventType, apiAddress);
                         }
                         return Mono.empty();
                     }
-                    log.warn("Could not create subscription for {} in TM Forum API", entityType, t);
+                    log.warn("Could not create subscription for {} in TM Forum API - retrying in {}s", entityType, notificationProperties.getSubscriptionRetryInterval(), t);
+                    scheduleSubscription(notificationProperties.getSubscriptionRetryInterval(), entityType, eventType, apiAddress);
                     return Mono.empty();
                 }).subscribe();
 
