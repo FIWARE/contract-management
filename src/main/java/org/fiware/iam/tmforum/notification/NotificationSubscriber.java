@@ -17,7 +17,6 @@ import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.configuration.NotificationProperties;
 import org.fiware.iam.tmforum.party.model.EventSubscriptionInputVO;
 import org.fiware.iam.tmforum.party.model.EventSubscriptionVO;
-import reactor.core.publisher.Hooks;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -46,6 +45,13 @@ public class NotificationSubscriber {
     @Value("${micronaut.server.port:8080}")
     private String servicePort;
 
+    private static String removeTrailingSlash(String path) {
+        if (path.endsWith("/")) {
+            return path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
     @EventListener
     public void onApplicationEvent(ServerStartupEvent e) {
         notificationProperties.getEntities()
@@ -60,13 +66,6 @@ public class NotificationSubscriber {
 
     private void scheduleSubscription(long delaySeconds, String entityType, String eventType, String apiAddress) {
         taskScheduler.schedule(Duration.ofSeconds(delaySeconds), () -> createSubscription(entityType, eventType, apiAddress));
-    }
-
-    private static String removeTrailingSlash(String path) {
-        if (path.endsWith("/")) {
-            return path.substring(0, path.length() - 1);
-        }
-        return path;
     }
 
     public void createSubscription(String entityType, String eventType, String apiAddress) {

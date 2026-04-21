@@ -7,6 +7,10 @@ micronaut:
       prometheus:
         step: PT2s
         descriptions: false
+  executors:
+    notification-subscriber:
+      type: scheduled
+      core-pool-size: 1
 
   http:
     services:
