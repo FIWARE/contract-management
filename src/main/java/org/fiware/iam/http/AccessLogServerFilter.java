@@ -4,6 +4,7 @@ import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Filter;
+import io.micronaut.http.exceptions.HttpStatusException;
 import io.micronaut.http.filter.HttpServerFilter;
 import io.micronaut.http.filter.ServerFilterChain;
 import jakarta.inject.Singleton;
@@ -50,11 +51,12 @@ public class AccessLogServerFilter implements HttpServerFilter {
                     long duration = System.currentTimeMillis() - start;
                     String remoteIp = request.getRemoteAddress().getAddress().getHostAddress();
                     String forwardedFor = request.getHeaders().get("X-Forwarded-For");
+                    String status = e instanceof HttpStatusException hse ? Integer.toString(hse.getStatus().getCode()) : "ERROR";
 
                     if (forwardedFor != null) {
-                        log.error("{} [{}] - {} - {} {} ERROR - {}ms", forwardedFor, remoteIp, request.getHttpVersion(), request.getMethod(), request.getUri(), duration, e);
+                        log.error("{} [{}] - {} - {} {} {} - {}ms", forwardedFor, remoteIp, request.getHttpVersion(), request.getMethod(), request.getUri(), status, duration, e);
                     } else {
-                        log.error("{} - {} - {} {} ERROR - {}ms", remoteIp, request.getHttpVersion(), request.getMethod(), request.getUri(), duration, e);
+                        log.error("{} - {} - {} {} {} - {}ms", remoteIp, request.getHttpVersion(), request.getMethod(), request.getUri(), status, duration, e);
                     }
                 });
     }

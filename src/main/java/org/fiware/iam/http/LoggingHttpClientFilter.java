@@ -4,6 +4,7 @@ import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.MutableHttpRequest;
 import io.micronaut.http.annotation.Filter;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.http.filter.ClientFilterChain;
 import io.micronaut.http.filter.HttpClientFilter;
 import lombok.extern.slf4j.Slf4j;
@@ -29,8 +30,9 @@ public class LoggingHttpClientFilter implements HttpClientFilter {
                         res.getStatus().getCode(),
                         System.currentTimeMillis() - start))
                 .doOnError(e -> {
+                    String status = e instanceof HttpClientResponseException hce ? Integer.toString(hce.getStatus().getCode()) : "ERROR";
                     Throwable cause = logException ? e : null;
-                    log.warn("{} {} ERROR: {} - {} ms", request.getMethod(), request.getUri(), e.getMessage(), System.currentTimeMillis() - start, cause);
+                    log.warn("{} {} {} - {} ms", request.getMethod(), request.getUri(), status, System.currentTimeMillis() - start, cause);
                 });
     }
 }
