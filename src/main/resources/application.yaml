@@ -12,6 +12,11 @@ micronaut:
         step: PT2s
         descriptions: false
 
+  executors:
+    notification-subscriber:
+      type: scheduled
+      core-pool-size: 1
+
   http:
     services:
       rainbow:
@@ -51,10 +56,28 @@ micronaut:
         url: http://localhost:8088
         read-timeout: 30
 
+http:
+  client:
+    log-exception: false
+  server:
+    log:
+      exclude-paths:
+        - /health
+        - /metrics
+        - /prometheus
+
 general:
   did: did:test:did
   productOrder:
     customerRole: "customer"
+  organization:
+    provider:
+      role: "provider"
+oid4vp:
+  enabled: false
+  enableRevocation: false
+  proxyConfig:
+    useProxy: false
 # -- configuration in case of OpenID4VP
 #oid4vp:
 #  credentialsFolder: "/credentials"
@@ -71,6 +94,8 @@ endpoints:
     port: 9090
 notification:
   host: contract-management
+  subscriptionInitialDelay: 5
+  subscriptionRetryInterval: 10
   entities:
     - entityType: "ProductOrder"
       eventTypes: [ "CREATE", "STATE_CHANGE", "DELETE" ]

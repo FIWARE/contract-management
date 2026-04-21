@@ -28,8 +28,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import static org.fiware.iam.tmforum.OrganizationResolver.PROVIDER_ROLE;
-
 /**
  * Extract policies from ProductOrders, either from the connected Quote or ProductSpec.
  */
@@ -87,7 +85,7 @@ public class PolicyResolver {
                     Optional<String> partyId = Optional.ofNullable(psvo.getRelatedParty())
                             .orElse(List.of())
                             .stream()
-                            .filter(relatedPartyVO -> relatedPartyVO.getRole().equals(PROVIDER_ROLE))
+                            .filter(relatedPartyVO -> organizationResolver.hasProviderRole(relatedPartyVO.getRole()))
                             .map(RelatedPartyVO::getId)
                             .findAny();
                     return partyId.map(string -> organizationResolver.getContractManagement(string)

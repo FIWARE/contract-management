@@ -62,8 +62,10 @@ public class Oid4VpAuthHandler implements AuthHandler {
                 })
                 .flatMap(response -> {
                     if (response.getStatus() == HttpStatus.UNAUTHORIZED) {
+                        int port = request.getUri().getPort();
+                        String portSuffix = port < 0 ? "" : ":" + port;
                         RequestParameters params = new RequestParameters(
-                                URI.create(request.getUri().getScheme() + "://" + request.getUri().getHost() + ":" + request.getUri().getPort()),
+                                URI.create(request.getUri().getScheme() + "://" + request.getUri().getHost() + portSuffix),
                                 request.getPath(),
                                 getClientId(request),
                                 getScope(request)
