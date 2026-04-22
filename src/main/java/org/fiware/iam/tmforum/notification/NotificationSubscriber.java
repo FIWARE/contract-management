@@ -17,7 +17,6 @@ import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.configuration.NotificationProperties;
 import org.fiware.iam.tmforum.party.model.EventSubscriptionInputVO;
 import org.fiware.iam.tmforum.party.model.EventSubscriptionVO;
-import reactor.core.publisher.Hooks;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -46,6 +45,13 @@ public class NotificationSubscriber {
     @Value("${micronaut.server.port:8080}")
     private String servicePort;
 
+    private static String removeTrailingSlash(String path) {
+        if (path.endsWith("/")) {
+            return path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
     @EventListener
     public void onApplicationEvent(ServerStartupEvent e) {
         notificationProperties.getEntities()
@@ -54,20 +60,17 @@ public class NotificationSubscriber {
                                 .orElse(List.of())
                                 .forEach(eventType -> {
                                     subscriptionHealthIndicator.initiateSubscriptionInMap(tmForumEntity.getEntityType() + eventType.getValue());
-                                    taskScheduler.scheduleAtFixedRate(Duration.ofSeconds(5), Duration.ofSeconds(10), () -> createSubscription(tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress()));
+                                    scheduleSubscription(notificationProperties.getSubscriptionInitialDelay(), tmForumEntity.getEntityType(), eventType.getValue(), tmForumEntity.getApiAddress());
                                 }));
     }
 
-    private static String removeTrailingSlash(String theString) {
-        if (theString.endsWith("/")) {
-            return theString.substring(0, theString.length() - 1);
-        }
-        return theString;
+    private void scheduleSubscription(long delaySeconds, String entityType, String eventType, String apiAddress) {
+        taskScheduler.schedule(Duration.ofSeconds(delaySeconds), () -> createSubscription(entityType, eventType, apiAddress));
     }
 
     public void createSubscription(String entityType, String eventType, String apiAddress) {
         String callbackUrl = String.format("http://%s:%s%s%s", notificationProperties.getHost(), servicePort, removeTrailingSlash(generalProperties.getBasePath()), LISTENER_PATH);
-        log.debug("Attempting to register subscription with callback {}", callbackUrl);
+        log.debug("Attempting to register subscription for {} {} events at {}", entityType, eventType, String.format(LISTENER_ADDRESS_TEMPLATE, apiAddress));
 
         EventSubscriptionInputVO subscription = new EventSubscriptionInputVO()
                 .callback(callbackUrl)
@@ -76,19 +79,24 @@ public class NotificationSubscriber {
         HttpRequest<?> request = HttpRequest.create(HttpMethod.POST, String.format(LISTENER_ADDRESS_TEMPLATE, apiAddress)).body(subscription);
 
         Mono.from(httpClient.exchange(request, EventSubscriptionVO.class))
-                .doOnSuccess(res -> subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType))
+                .doOnSuccess(res -> {
+                    subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType);
+                    log.info("Successfully subscribed to {} {} events at {}", entityType, eventType, request.getUri());
+                })
                 .onErrorResume(t -> {
                     if (t instanceof HttpClientResponseException e) {
                         if (e.getStatus() == HttpStatus.CONFLICT) {
                             subscriptionHealthIndicator.setSubscriptionHealthy(entityType + eventType);
-                            return Mono.empty();
-                        }
-                        if (e.getStatus() != HttpStatus.CONFLICT) {
-                            log.info("Event registration failed for {} at {} - Cause: {} : {}", entityType, request.getUri(), e.getStatus(), e.getMessage());
+                            log.info("Subscription for {} {} already exists at {}", entityType, eventType, request.getUri());
+                        } else {
+                            String body = e.getResponse().getBody(String.class).orElse("<no body>");
+                            log.warn("Event registration failed for {} at {} - Status: {} | Message: {} | Body: {} - retrying in {}s", entityType, request.getUri(), e.getStatus(), e.getMessage(), body, notificationProperties.getSubscriptionRetryInterval());
+                            scheduleSubscription(notificationProperties.getSubscriptionRetryInterval(), entityType, eventType, apiAddress);
                         }
                         return Mono.empty();
                     }
-                    log.info("Could not create subscription for {} in TM Forum API", entityType, t);
+                    log.warn("Could not create subscription for {} in TM Forum API - retrying in {}s", entityType, notificationProperties.getSubscriptionRetryInterval(), t);
+                    scheduleSubscription(notificationProperties.getSubscriptionRetryInterval(), entityType, eventType, apiAddress);
                     return Mono.empty();
                 }).subscribe();
 

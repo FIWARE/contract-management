@@ -2,6 +2,7 @@ package org.fiware.iam.tmforum;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
@@ -24,7 +25,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class OrganizationResolver {
 
-    public static final String PROVIDER_ROLE = "provider";
+    @Value("${general.organization.provider.role:provider}")
+    private String PROVIDER_ROLE;
 
     private static final String PARTY_CHARACTERISTIC_DID = "did";
     private static final String FIELD_NAME_CONTRACT_MANAGEMENT = "contractManagement";
@@ -70,6 +72,10 @@ public class OrganizationResolver {
                                 );
                     }
                 });
+    }
+
+    public boolean hasProviderRole(String role) {
+        return PROVIDER_ROLE.equalsIgnoreCase(role);
     }
 
     private Optional<String> getDidFromPartyCharacteristics(List<CharacteristicVO> characteristicVOS) {

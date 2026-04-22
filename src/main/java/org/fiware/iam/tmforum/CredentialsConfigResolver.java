@@ -28,8 +28,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import static org.fiware.iam.tmforum.OrganizationResolver.PROVIDER_ROLE;
-
 @Requires(condition = GeneralProperties.TmForumCondition.class)
 @Singleton
 @Slf4j
@@ -45,6 +43,7 @@ public class CredentialsConfigResolver {
     private final ProductOfferingApiClient productOfferingApiClient;
     private final ProductSpecificationApiClient productSpecificationApiClient;
     private final QuoteApiClient quoteApiClient;
+    private final OrganizationResolver orgResolver;
 
     public Mono<List<CredentialConfig>> getCredentialsConfig(ProductOrderVO productOrder) {
         if (productOrder.getQuote() != null && !productOrder.getQuote().isEmpty()) {
@@ -61,6 +60,7 @@ public class CredentialsConfigResolver {
 
         return zipMonoListCC(credentialsVOMonoList);
     }
+
 
     private Mono<List<CredentialConfig>> zipMonoListCC(List<Mono<CredentialConfig>> monoList) {
         return Mono.zip(monoList, results -> Stream.of(results).map(r -> (CredentialConfig) r).toList());
@@ -87,7 +87,7 @@ public class CredentialsConfigResolver {
                     Optional<String> partyId = Optional.ofNullable(psvo.getRelatedParty())
                             .orElse(List.of())
                             .stream()
-                            .filter(relatedPartyVO -> relatedPartyVO.getRole().equals(PROVIDER_ROLE))
+                            .filter(relatedPartyVO -> orgResolver.hasProviderRole(relatedPartyVO.getRole()))
                             .map(RelatedPartyVO::getId)
                             .findAny();
                     return partyId.map(string ->
