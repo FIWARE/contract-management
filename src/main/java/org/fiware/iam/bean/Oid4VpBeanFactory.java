@@ -129,11 +129,13 @@ public class Oid4VpBeanFactory {
      * {@code holderId}, it is returned as-is. Otherwise, a {@code did:key} URI is
      * automatically generated from the holder's private key using {@link DidKeyGenerator}.
      *
+     * <p>Package-private for unit testing in {@code Oid4VpBeanFactoryTest}.</p>
+     *
      * @param holder     the holder configuration record
      * @param privateKey the holder's private key used for did:key generation when holderId is null
      * @return the resolved holder ID URI
      */
-    private URI resolveHolderId(Oid4VpConfiguration.Holder holder, PrivateKey privateKey) {
+    URI resolveHolderId(Oid4VpConfiguration.Holder holder, PrivateKey privateKey) {
         if (holder.holderId() != null) {
             return holder.holderId();
         }
