@@ -28,9 +28,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fiware.iam.cert.CertReader;
 import org.fiware.iam.configuration.Oid4VpConfiguration;
+import org.fiware.iam.did.DidKeyGenerator;
 
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.security.PrivateKey;
 import java.security.Security;
@@ -80,9 +82,10 @@ public class Oid4VpBeanFactory {
         authObjectMapper.registerModule(deserializerModule);
 
         PrivateKey privateKey = certReader.loadPrivateKey(oid4VpConfiguration.getHolder().keyPath());
+        URI holderId = resolveHolderId(oid4VpConfiguration.getHolder(), privateKey);
         HolderConfiguration holderConfiguration = new HolderConfiguration(
-                oid4VpConfiguration.getHolder().holderId(),
-                oid4VpConfiguration.getHolder().holderId().toString(),
+                holderId,
+                holderId.toString(),
                 JWEAlgorithm.parse(oid4VpConfiguration.getHolder().signatureAlgorithm()),
                 privateKey);
         SigningService signingService = new HolderSigningService(holderConfiguration, objectMapper);
@@ -119,5 +122,23 @@ public class Oid4VpBeanFactory {
                 dcqlEvaluator,
                 credentialsRepository,
                 signingService);
+    }
+
+    /**
+     * Resolves the holder ID URI. If the holder configuration provides an explicit
+     * {@code holderId}, it is returned as-is. Otherwise, a {@code did:key} URI is
+     * automatically generated from the holder's private key using {@link DidKeyGenerator}.
+     *
+     * @param holder     the holder configuration record
+     * @param privateKey the holder's private key used for did:key generation when holderId is null
+     * @return the resolved holder ID URI
+     */
+    private URI resolveHolderId(Oid4VpConfiguration.Holder holder, PrivateKey privateKey) {
+        if (holder.holderId() != null) {
+            return holder.holderId();
+        }
+        URI generatedDidKey = DidKeyGenerator.generateDidKey(privateKey);
+        log.info("No holderId configured, generated did:key from holder public key: {}", generatedDidKey);
+        return generatedDidKey;
     }
 }

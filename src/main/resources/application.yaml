@@ -84,7 +84,8 @@ oid4vp:
 #  trustAnchors:
 #    - "oid4vp/test-ca.pem"
 #  holder:
-#    holderId: "did:key:zDnaehXH4gDLjLeWcACPyQX9TnvsKiQNt6KT7fdsfyW6fhEYA"
+#    # holderId is optional. If omitted, a did:key is generated from the public key.
+#    # holderId: "did:key:zDnaehXH4gDLjLeWcACPyQX9TnvsKiQNt6KT7fdsfyW6fhEYA"
 #    keyType: "EC"
 #    keyPath: "oid4vp/private-key.pem"
 #    signatureAlgorithm: "ECDH-ES"
