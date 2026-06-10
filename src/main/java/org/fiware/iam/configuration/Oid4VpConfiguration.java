@@ -27,7 +27,7 @@ public class Oid4VpConfiguration {
 
     @ConfigurationProperties("holder")
     @Introspected
-    public static record Holder(URI holderId, String keyType, String keyPath, String signatureAlgorithm) {
+    public static record Holder(@Nullable URI holderId, String keyType, String keyPath, String signatureAlgorithm) {
     }
 
     @ConfigurationProperties("proxyConfig")
