@@ -13,8 +13,13 @@ import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
 import org.fiware.iam.tmforum.productorder.model.AgreementRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderItemVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
+import org.fiware.iam.tmforum.productorder.model.QuoteRefVO;
+import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
+import org.fiware.iam.tmforum.quote.model.QuoteVO;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,6 +45,9 @@ import java.util.Optional;
 @Slf4j
 public class AgreementProductOrderHandler implements ProductOrderHandler {
 
+    /** State marking a quote item the parties agreed on. */
+    private static final String QUOTE_ITEM_STATE_ACCEPTED = "accepted";
+
     private final TMForumAdapter tmForumAdapter;
     private final TMFMapper tmfMapper;
 
@@ -59,7 +67,40 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
                 .peek(party -> party.unknownProperties(null))
                 .toList();
 
-        List<String> offeringIds = Optional.ofNullable(productOrderVO.getProductOrderItem())
+        return offeringIds(productOrderVO)
+                .flatMap(offeringIds -> {
+                    if (offeringIds.isEmpty()) {
+                        log.warn("Order {} references no product offering; no agreement is created.", productOrderVO.getId());
+                        return Mono.just((HttpResponse<?>) HttpResponse.noContent());
+                    }
+                    return Mono.zipDelayError(
+                                    offeringIds.stream()
+                                            // no DSP agreement id: this contract is concluded by the order itself
+                                            .map(offeringId -> tmForumAdapter.createAgreement(
+                                                    productOrderVO.getId(), offeringId, null, relatedParties, organizationId))
+                                            .toList(),
+                                    created -> Arrays.stream(created)
+                                            .filter(String.class::isInstance)
+                                            .map(String.class::cast)
+                                            .toList())
+                            .flatMap(agreementIds -> tmForumAdapter.addAgreementToOrder(productOrderVO.getId(), agreementIds))
+                            .<HttpResponse<?>>map(order -> HttpResponse.noContent());
+                })
+                .onErrorResume(t -> {
+                    log.warn("Was not able to create the agreement for order {}.", productOrderVO.getId(), t);
+                    return Mono.just(HttpResponse.serverError());
+                });
+    }
+
+    /**
+     * The offerings the order is about.
+     *
+     * <p>A directly placed order carries them on its items. An order concluded from a quote carries
+     * none - the offering is only on the quote - so it is read from there; without that fallback a
+     * quoted order would silently end up without an agreement.
+     */
+    private Mono<List<String>> offeringIds(ProductOrderVO productOrderVO) {
+        List<String> fromItems = Optional.ofNullable(productOrderVO.getProductOrderItem())
                 .orElse(List.of())
                 .stream()
                 .map(ProductOrderItemVO::getProductOffering)
@@ -67,28 +108,32 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
                 .map(offering -> offering.getId())
                 .filter(Objects::nonNull)
                 .toList();
-
-        if (offeringIds.isEmpty()) {
-            log.warn("Order {} references no product offering; no agreement is created.", productOrderVO.getId());
-            return Mono.just(HttpResponse.noContent());
+        if (!fromItems.isEmpty()) {
+            return Mono.just(fromItems);
         }
+        return Flux.fromIterable(Optional.ofNullable(productOrderVO.getQuote()).orElse(List.of()))
+                .map(QuoteRefVO::getId)
+                .filter(Objects::nonNull)
+                .flatMap(tmForumAdapter::getQuoteById)
+                .flatMapIterable(AgreementProductOrderHandler::offeringIdsOfQuote)
+                .collectList();
+    }
 
-        return Mono.zipDelayError(
-                        offeringIds.stream()
-                                // no DSP agreement id: this contract is concluded by the order itself
-                                .map(offeringId -> tmForumAdapter.createAgreement(
-                                        productOrderVO.getId(), offeringId, null, relatedParties, organizationId))
-                                .toList(),
-                        created -> java.util.Arrays.stream(created)
-                                .filter(String.class::isInstance)
-                                .map(String.class::cast)
-                                .toList())
-                .flatMap(agreementIds -> tmForumAdapter.addAgreementToOrder(productOrderVO.getId(), agreementIds))
-                .<HttpResponse<?>>map(order -> HttpResponse.noContent())
-                .onErrorResume(t -> {
-                    log.warn("Was not able to create the agreement for order {}.", productOrderVO.getId(), t);
-                    return Mono.just(HttpResponse.serverError());
-                });
+    /**
+     * The offerings a quote agreed on: the accepted items, or all of them when none is marked
+     * accepted - a quote that led to a completed order was agreed as a whole.
+     */
+    private static List<String> offeringIdsOfQuote(QuoteVO quoteVO) {
+        List<QuoteItemVO> quoteItems = Optional.ofNullable(quoteVO.getQuoteItem()).orElse(List.of());
+        List<QuoteItemVO> acceptedItems = quoteItems.stream()
+                .filter(quoteItem -> QUOTE_ITEM_STATE_ACCEPTED.equalsIgnoreCase(quoteItem.getState()))
+                .toList();
+        return (acceptedItems.isEmpty() ? quoteItems : acceptedItems).stream()
+                .map(QuoteItemVO::getProductOffering)
+                .filter(Objects::nonNull)
+                .map(offering -> offering.getId())
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     /**

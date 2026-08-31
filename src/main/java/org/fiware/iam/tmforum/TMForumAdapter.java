@@ -142,7 +142,9 @@ public class TMForumAdapter {
                     }
                     characteristics.addAll(consentCharacteristics);
                     AgreementCreateTmfVO agreementCreateTmfVO = new AgreementCreateTmfVO()
-                            .characteristic(characteristics)
+                            // prevent an empty list: an order without a DSP id and without consent
+                            // enrichment has nothing to characterise
+                            .characteristic(characteristics.isEmpty() ? null : characteristics)
                             .engagedParty(relatedParties)
                             // prevent empty refs
                             .agreementSpecification(null)
