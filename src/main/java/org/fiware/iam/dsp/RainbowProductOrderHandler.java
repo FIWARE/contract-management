@@ -25,6 +25,7 @@ import org.fiware.rainbow.model.ProviderNegotiationVO;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
+import java.util.stream.Stream;
 import java.util.function.Function;
 
 @Requires(condition = GeneralProperties.RainbowCondition.class)
@@ -61,7 +62,7 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
                                     .toList(),
                             res -> {
                                 List<AgreementVO> agreementVOS = Arrays.stream(res).filter(Objects::nonNull).filter(AgreementVO.class::isInstance).map(AgreementVO.class::cast).toList();
-                                return updateProductOrder(productOrderVO, agreementVOS, relatedPartyTmfVOS);
+                                return updateProductOrder(organizationId, productOrderVO, agreementVOS, relatedPartyTmfVOS);
                             })
                     .flatMap(Function.identity())
                     .map(po -> (HttpResponse<?>) HttpResponse.noContent());
@@ -74,7 +75,7 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
                                 .map(ProviderNegotiationVO::getCnProcessId)
                                 .flatMap(rainbowAdapter::getAgreement)
                                 .map(avo -> avo.dataServiceId(offerId))
-                                .flatMap(agreementVO -> updateProductOrder(productOrderVO, List.of(agreementVO), relatedPartyTmfVOS));
+                                .flatMap(agreementVO -> updateProductOrder(organizationId, productOrderVO, List.of(agreementVO), relatedPartyTmfVOS));
 
                         Mono<?> negotiationMono = rainbowAdapter.getNegotiationProcessState(quoteVO.getExternalId())
                                 .flatMap(state -> {
@@ -99,10 +100,20 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
 
     @Override
     public Mono<HttpResponse<?>> handleProductOrderStop(String organizationId, ProductOrderVO productOrderVO) {
-        List<Mono<Boolean>> deletionMonos = productOrderVO.getAgreement()
+        // The TM Forum agreement is also marked as no longer in force: leaving it signed would let a
+        // consent granted against it keep authorising access after the order stopped. No-op unless
+        // consent enrichment is enabled.
+        List<Mono<Boolean>> terminationMonos = productOrderVO.getAgreement()
                 .stream()
                 .map(AgreementRefVO::getId)
-                .map(rainbowAdapter::deleteAgreement)
+                .map(tmForumAdapter::terminateAgreement)
+                .toList();
+        List<Mono<Boolean>> deletionMonos = Stream.concat(
+                        productOrderVO.getAgreement()
+                                .stream()
+                                .map(AgreementRefVO::getId)
+                                .map(rainbowAdapter::deleteAgreement),
+                        terminationMonos.stream())
                 .toList();
         return Mono.zipDelayError(deletionMonos, deletions -> {
             if (Set.of(deletions).contains(false)) {
@@ -149,11 +160,11 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
         return productOrderVO.getQuote() != null && !productOrderVO.getQuote().isEmpty();
     }
 
-    private Mono<ProductOrderVO> updateProductOrder(ProductOrderVO productOrderVO, List<AgreementVO> agreementVOS, List<RelatedPartyTmfVO> relatedPartyTmfVOS) {
+    private Mono<ProductOrderVO> updateProductOrder(String customerOrganizationId, ProductOrderVO productOrderVO, List<AgreementVO> agreementVOS, List<RelatedPartyTmfVO> relatedPartyTmfVOS) {
         return Mono.zipDelayError(
                 agreementVOS.stream()
                         .map(agreementVO ->
-                                tmForumAdapter.createAgreement(productOrderVO.getId(), agreementVO.getDataServiceId(), agreementVO.getAgreementId(), relatedPartyTmfVOS))
+                                tmForumAdapter.createAgreement(productOrderVO.getId(), agreementVO.getDataServiceId(), agreementVO.getAgreementId(), relatedPartyTmfVOS, customerOrganizationId))
                         .toList(),
                 agreements -> {
                     List<String> agreementIds = Arrays.stream(agreements)
