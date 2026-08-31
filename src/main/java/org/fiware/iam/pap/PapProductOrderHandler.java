@@ -41,15 +41,20 @@ public class PapProductOrderHandler implements ProductOrderHandler {
         return policyResolver
                 .getAuthorizationPolicy(productOrderVO)
                 .map(this::filterLocalPolicies)
-                .flatMap(policies -> Mono.zipDelayError(policies.stream()
-                                .map(p -> papAdapter.deletePolicy(productOrderVO.getId(), p)).toList(),
-                        results -> {
-                            if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
-                                return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+                .flatMap(policies -> {
+                    if (policies.isEmpty()) {
+                        return Mono.just(HttpResponse.noContent());
+                    }
+                    return Mono.zipDelayError(policies.stream()
+                                    .map(p -> papAdapter.deletePolicy(productOrderVO.getId(), p)).toList(),
+                            results -> {
+                                if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
+                                    return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+                                }
+                                return HttpResponse.ok();
                             }
-                            return HttpResponse.ok();
-                        }
-                ));
+                    );
+                });
     }
 
     @Override
@@ -64,15 +69,25 @@ public class PapProductOrderHandler implements ProductOrderHandler {
                 .flatMap(did -> policyResolver
                         .getAuthorizationPolicy(productOrderVO)
                         .map(this::filterLocalPolicies)
-                        .flatMap(policies -> Mono.zipDelayError(policies.stream()
-                                        .map(p -> papAdapter.createPolicy(did, productOrderVO.getId(), p)).toList(),
-                                results -> {
-                                    if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
-                                        return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+                        .flatMap(policies -> {
+                            // An order without a local policy is not a failure - but zipping an empty
+                            // list completes empty, the listener then answers 404 and the TM Forum API
+                            // keeps redelivering the notification, re-running every order handler.
+                            if (policies.isEmpty()) {
+                                log.debug("Order {} carries no local policy; nothing to publish at the pap.",
+                                        productOrderVO.getId());
+                                return Mono.just(HttpResponse.noContent());
+                            }
+                            return Mono.zipDelayError(policies.stream()
+                                            .map(p -> papAdapter.createPolicy(did, productOrderVO.getId(), p)).toList(),
+                                    results -> {
+                                        if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
+                                            return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+                                        }
+                                        return HttpResponse.ok();
                                     }
-                                    return HttpResponse.ok();
-                                }
-                        )));
+                            );
+                        }));
     }
 
     // only return policies intended for local

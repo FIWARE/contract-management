@@ -12,8 +12,9 @@ import kong.unirest.json.JSONArray;
 import kong.unirest.json.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.awaitility.Awaitility;
-import org.fiware.iam.tmforum.TMForumAdapter;
+import org.fiware.iam.tmforum.agreement.model.AgreementItemTmfVO;
 import org.fiware.iam.tmforum.agreement.model.AgreementTmfVO;
+import org.fiware.iam.tmforum.agreement.model.ProductRefTmfVO;
 import org.fiware.iam.tmforum.productorder.model.AgreementRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
 import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
@@ -276,6 +277,13 @@ public abstract class ContractManagementIT {
     }
 
 
+    /**
+     * Asserts that the completed order is linked to an agreement which is about that very order.
+     *
+     * <p>The agreement is written by the TM Forum handler from the completed order, independent of a
+     * DSP negotiation - so it is not asserted to carry a {@code Data-Space-Protocol-Agreement-Id}:
+     * an order concluded without a negotiation has no such id.
+     */
     private void assertAgreementReferenced(String orderId) {
         Awaitility.await()
                 .alias("The agreement was not referenced.")
@@ -287,13 +295,15 @@ public abstract class ContractManagementIT {
                                             .stream()
                                             .map(AgreementRefVO::getId)
                                             .map(this::getTmfAgreement)
-                                            .map(AgreementTmfVO::getCharacteristic)
+                                            .map(AgreementTmfVO::getAgreementItem)
+                                            .filter(Objects::nonNull)
                                             .flatMap(List::stream)
-                                            .filter(characteristicTmfVO -> Objects.nonNull(characteristicTmfVO.getName()))
-                                            .anyMatch(characteristicTmfVO ->
-                                                    characteristicTmfVO.getName().equals(TMForumAdapter.DATA_SPACE_PROTOCOL_AGREEMENT_ID)
-                                            ),
-                                    "An agreement should be linked in the order.");
+                                            .map(AgreementItemTmfVO::getProduct)
+                                            .filter(Objects::nonNull)
+                                            .flatMap(List::stream)
+                                            .map(ProductRefTmfVO::getId)
+                                            .anyMatch(orderId::equals),
+                                    "The linked agreement should be about the ordered product.");
                         }
                 );
     }
