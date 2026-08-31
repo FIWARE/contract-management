@@ -33,13 +33,17 @@ public interface TMForumEventHandler {
         if (responses.isEmpty()) {
             return Mono.just(HttpResponse.noContent());
         }
-        return Mono.zipDelayError(responses, objects -> Arrays.stream(objects)
-                .filter(HttpResponse.class::isInstance)
-                .map(HttpResponse.class::cast)
-                .filter(response -> response.getStatus().getCode() < 200 || response.getStatus().getCode() > 299)
-                .findAny()
-                .map(response -> HttpResponse.status(HttpStatus.BAD_GATEWAY).body(response.body()))
-                .orElse(HttpResponse.noContent()));
+        Mono<HttpResponse<?>> zipped = Mono.zipDelayError(responses, objects -> (HttpResponse<?>) Arrays.stream(objects)
+                        .filter(HttpResponse.class::isInstance)
+                        .map(HttpResponse.class::cast)
+                        .filter(response -> response.getStatus().getCode() < 200 || response.getStatus().getCode() > 299)
+                        .findAny()
+                        .map(response -> HttpResponse.status(HttpStatus.BAD_GATEWAY).body(response.body()))
+                        .orElse(HttpResponse.noContent()));
+        // A handler that completes without emitting empties the whole zip, and an empty response body
+        // is rendered as 404 - which the TM Forum API retries forever, re-running every handler on
+        // each redelivery. Nothing emitted means nothing failed.
+        return zipped.defaultIfEmpty(HttpResponse.noContent());
     }
 
 }

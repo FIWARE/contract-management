@@ -23,7 +23,18 @@ import org.fiware.iam.tmforum.quote.model.QuoteUpdateVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import reactor.core.publisher.Mono;
 
+import org.fiware.iam.configuration.ConsentProperties;
+import org.fiware.iam.tmforum.productcatalog.model.ProductOfferingVO;
+import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationVO;
+import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationRefVO;
+import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
+import org.fiware.iam.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
+import org.fiware.iam.tmforum.agreement.model.AgreementUpdateTmfVO;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.Objects;
 
 /**
  * Adapter to handle communication with TMForum APIs.
@@ -35,6 +46,24 @@ import java.util.List;
 public class TMForumAdapter {
 
     public static final String DATA_SPACE_PROTOCOL_AGREEMENT_ID = "Data-Space-Protocol-Agreement-Id";
+
+    /**
+     * Agreement characteristics the consent-facade reads to project a contract. The names are a wire
+     * contract with that component - it looks them up verbatim.
+     */
+    public static final String PROVIDER_ID = "provider-id";
+    public static final String CONSUMER_ID = "consumer-id";
+    public static final String SIGNING_DATE = "signing-date";
+    public static final String POLICY = "policy";
+
+    /**
+     * {@code valueType} of the product-specification characteristic carrying the ODRL policies. The
+     * same declaration the authorization policies are read from, so a provider declares it once.
+     */
+    private static final String AUTHORIZATION_POLICY_VALUE_TYPE = "authorizationPolicy";
+
+    /** Agreement status the consent-facade maps to a terminated contract. */
+    private static final String AGREEMENT_STATUS_CANCELLED = "cancelled";
     public static final String CONSUMER_ROLE = "Consumer";
 
     private final ObjectMapper objectMapper;
@@ -45,11 +74,55 @@ public class TMForumAdapter {
     private final ProductSpecificationApiClient productSpecificationApiClient;
     private final AgreementApiClient agreementApiClient;
     private final QuoteApiClient quoteApiClient;
+    private final ConsentProperties consentProperties;
 
     /**
-     * Create a TMForum Agreement and connect it with product order its coming from.
+     * Create a TMForum Agreement for the given product order, unless the order already has one.
+     *
+     * <p>The order's {@code agreement} refs are the record of that: they carry the id of the
+     * agreement itself, and {@link #addAgreementToOrder(String, List)} writes them immediately after
+     * creation. An order that already references an agreement has been handled, so the referenced id
+     * is returned and nothing is written.
+     *
+     * <p>This is needed because the same completion can be delivered more than once - TMForum
+     * notifications are retried - and a second agreement for the same order is not harmless
+     * downstream: the consent integration projects a privacy notice per provider/consumer agreement
+     * and cannot tell which of two duplicates governs an access.
+     *
+     * <p>The existing id is returned rather than an empty result because the caller patches the
+     * order's ref list with whatever comes back, and that patch REPLACES the list: dropping the id
+     * would erase the ref, leaving nothing to detect on the next delivery.
+     *
+     * <p>The order is re-read rather than taken from the notification payload: the payload is by
+     * definition stale for a duplicate delivery, which is exactly the case being guarded.
      */
-    public Mono<String> createAgreement(String productOrderId, String productOfferingId, String agreementId, List<RelatedPartyTmfVO> relatedParties) {
+    public Mono<String> createAgreement(String productOrderId, String productOfferingId, String agreementId, List<RelatedPartyTmfVO> relatedParties, String customerOrganizationId) {
+        return findExistingAgreement(productOrderId)
+                .switchIfEmpty(Mono.defer(() -> doCreateAgreement(productOrderId, productOfferingId, agreementId, relatedParties, customerOrganizationId)));
+    }
+
+    /**
+     * Returns the id of an agreement the order already references, or empty when it references none.
+     *
+     * <p>Failing to read the order is not evidence that no agreement exists, but refusing to create
+     * would strand the order entirely - so it resolves to empty and creation proceeds.
+     */
+    private Mono<String> findExistingAgreement(String productOrderId) {
+        return productOrderApiClient.retrieveProductOrder(productOrderId, null)
+                .map(HttpResponse::body)
+                .flatMapIterable(productOrder -> Optional.ofNullable(productOrder.getAgreement()).orElse(List.of()))
+                .map(AgreementRefVO::getId)
+                .filter(Objects::nonNull)
+                .next()
+                .doOnNext(existingId -> log.info("Order {} already references agreement {}; not creating another.",
+                        productOrderId, existingId))
+                .onErrorResume(t -> {
+                    log.warn("Could not read order {} to check for an existing agreement.", productOrderId, t);
+                    return Mono.empty();
+                });
+    }
+
+    private Mono<String> doCreateAgreement(String productOrderId, String productOfferingId, String agreementId, List<RelatedPartyTmfVO> relatedParties, String customerOrganizationId) {
         AgreementItemTmfVO agreementItemTmfVO = new AgreementItemTmfVO()
                 .addProductItem(
                         new ProductRefTmfVO()
@@ -57,16 +130,133 @@ public class TMForumAdapter {
                 .addProductOfferingItem(
                         new ProductOfferingRefTmfVO()
                                 .id(productOfferingId));
-        CharacteristicTmfVO characteristicTmfVO = new CharacteristicTmfVO()
-                .name(DATA_SPACE_PROTOCOL_AGREEMENT_ID)
-                .value(agreementId);
-        AgreementCreateTmfVO agreementCreateTmfVO = new AgreementCreateTmfVO()
-                .characteristic(List.of(characteristicTmfVO))
-                .engagedParty(relatedParties)
-                // prevent empty refs
-                .agreementSpecification(null)
-                .addAgreementItemItem(agreementItemTmfVO);
+        return consentEnrichment(productOfferingId, customerOrganizationId)
+                .flatMap(consentCharacteristics -> {
+                    List<CharacteristicTmfVO> characteristics = new ArrayList<>();
+                    // an order concluded without a DSP negotiation has no such id; an empty
+                    // characteristic would read as "negotiated, id unknown"
+                    if (agreementId != null) {
+                        characteristics.add(new CharacteristicTmfVO()
+                                .name(DATA_SPACE_PROTOCOL_AGREEMENT_ID)
+                                .value(agreementId));
+                    }
+                    characteristics.addAll(consentCharacteristics);
+                    AgreementCreateTmfVO agreementCreateTmfVO = new AgreementCreateTmfVO()
+                            // prevent an empty list: an order without a DSP id and without consent
+                            // enrichment has nothing to characterise
+                            .characteristic(characteristics.isEmpty() ? null : characteristics)
+                            .engagedParty(relatedParties)
+                            // prevent empty refs
+                            .agreementSpecification(null)
+                            .addAgreementItemItem(agreementItemTmfVO);
+                    return createAgreement(agreementCreateTmfVO);
+                });
+    }
 
+    /**
+     * The characteristics the consent integration needs on the agreement.
+     *
+     * <p>When consent enrichment is off (or unconfigured) this resolves to nothing, so the agreement
+     * is exactly what it was before.
+     *
+     * <p>The parties are carried as characteristics rather than as engaged-party roles: the TM Forum
+     * API does not persist {@code role} on an agreement's engaged parties (a stored engagedParty has
+     * only id/href/name), so a role written here would silently vanish and the consent-facade's
+     * role-based fallback could never resolve a participant.
+     */
+    private Mono<List<CharacteristicTmfVO>> consentEnrichment(String productOfferingId, String customerOrganizationId) {
+        if (!consentProperties.isEnabled()) {
+            return Mono.just(List.of());
+        }
+        if (consentProperties.getSelfDescriptionBaseUrl() == null || consentProperties.getSelfDescriptionBaseUrl().isBlank()) {
+            log.warn("Consent enrichment is enabled but consent.self-description-base-url is unset; agreements are written unenriched.");
+            return Mono.just(List.of());
+        }
+        if (customerOrganizationId == null || customerOrganizationId.isBlank()) {
+            log.warn("No customer organization for the order; agreement is written unenriched.");
+            return Mono.just(List.of());
+        }
+        return resolveSpecification(productOfferingId)
+                .map(specification -> buildCharacteristics(specification, customerOrganizationId))
+                // an offering whose specification cannot be read must still yield an agreement:
+                // failing here would block the order over a consent concern.
+                .onErrorResume(t -> {
+                    log.warn("Could not resolve the specification of offering {}; agreement is written unenriched.",
+                            productOfferingId, t);
+                    return Mono.just(List.<CharacteristicTmfVO>of());
+                })
+                .defaultIfEmpty(List.of());
+    }
+
+    /** Resolves offering -> product specification, the way the authorization policies are resolved. */
+    private Mono<ProductSpecificationVO> resolveSpecification(String productOfferingId) {
+        return productOfferingApiClient.retrieveProductOffering(productOfferingId, null)
+                .map(HttpResponse::body)
+                .map(ProductOfferingVO::getProductSpecification)
+                .map(ProductSpecificationRefVO::getId)
+                .flatMap(specificationId -> productSpecificationApiClient.retrieveProductSpecification(specificationId, null))
+                .map(HttpResponse::body);
+    }
+
+    private List<CharacteristicTmfVO> buildCharacteristics(ProductSpecificationVO specification, String customerOrganizationId) {
+        String providerOrganizationId = providerOrganizationId(specification);
+        if (providerOrganizationId == null) {
+            log.warn("Specification {} names no party in the provider role; agreement is written unenriched.",
+                    specification.getId());
+            return List.of();
+        }
+
+        List<CharacteristicTmfVO> characteristics = new ArrayList<>();
+        characteristics.add(new CharacteristicTmfVO()
+                .name(PROVIDER_ID)
+                .value(selfDescriptionUrl(providerOrganizationId)));
+        characteristics.add(new CharacteristicTmfVO()
+                .name(CONSUMER_ID)
+                .value(selfDescriptionUrl(customerOrganizationId)));
+        // presence is what marks the contract concluded for the consent-facade; the value is the
+        // conclusion time in epoch seconds
+        characteristics.add(new CharacteristicTmfVO()
+                .name(SIGNING_DATE)
+                .value(Instant.now().getEpochSecond()));
+        authorizationPolicy(specification).ifPresent(policy -> characteristics.add(new CharacteristicTmfVO()
+                .name(POLICY)
+                .value(policy)));
+        return characteristics;
+    }
+
+    private String providerOrganizationId(ProductSpecificationVO specification) {
+        return Optional.ofNullable(specification.getRelatedParty()).orElse(List.of())
+                .stream()
+                .filter(party -> organizationResolver.hasProviderRole(party.getRole()))
+                .map(org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO::getId)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * The ODRL policy the consent is scoped by, taken from the specification's
+     * {@code authorizationPolicy} characteristic - the same declaration the access policies are
+     * derived from, so a provider declares the policy once.
+     */
+    private Optional<Object> authorizationPolicy(ProductSpecificationVO specification) {
+        return Optional.ofNullable(specification.getProductSpecCharacteristic()).orElse(List.of())
+                .stream()
+                .filter(characteristic -> AUTHORIZATION_POLICY_VALUE_TYPE.equals(characteristic.getValueType()))
+                .map(ProductSpecificationCharacteristicVO::getProductSpecCharacteristicValue)
+                .filter(Objects::nonNull)
+                .flatMap(List::stream)
+                .map(CharacteristicValueSpecificationVO::getValue)
+                .filter(Objects::nonNull)
+                .findFirst();
+    }
+
+    private String selfDescriptionUrl(String organizationId) {
+        String base = consentProperties.getSelfDescriptionBaseUrl();
+        return (base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + "/participants/" + organizationId;
+    }
+
+    private Mono<String> createAgreement(AgreementCreateTmfVO agreementCreateTmfVO) {
         return agreementApiClient
                 .createAgreement(agreementCreateTmfVO)
                 .map(HttpResponse::body)
@@ -79,9 +269,102 @@ public class TMForumAdapter {
 
 
     /**
-     * Add the id of agreements(from rainbow) to the given product order
+     * Links the given agreements to the product order, keeping the ones already linked.
+     *
+     * <p>The patch REPLACES the order's agreement list, so the ids already on the order are read and
+     * kept: dropping them would lose an agreement written by anyone else and would erase the very
+     * evidence {@link #createAgreement} uses to avoid creating a duplicate.
+     *
+     * <p>When that leaves the list unchanged, the order is <em>not</em> patched. Writing it anyway
+     * would not only be pointless: every write on the order is notified back to this component, which
+     * would run all order handlers again - re-issuing the trusted-issuer entry and the policy - and
+     * that delivery would patch again, so the notification would feed itself.
      */
     public Mono<ProductOrderVO> addAgreementToOrder(String productOrderId, List<String> agreementIds) {
+        return readOrder(productOrderId)
+                .flatMap(productOrder -> {
+                    List<String> existingIds = agreementIdsOf(productOrder);
+                    List<String> mergedIds = new ArrayList<>(existingIds);
+                    agreementIds.stream()
+                            .filter(Objects::nonNull)
+                            .filter(id -> !mergedIds.contains(id))
+                            .forEach(mergedIds::add);
+                    if (mergedIds.equals(existingIds)) {
+                        log.debug("Order {} already references the agreements {}; not patching it again.",
+                                productOrderId, existingIds);
+                        return Mono.just(productOrder);
+                    }
+                    return patchAgreementRefs(productOrderId, mergedIds);
+                })
+                // the order could not be read: linking the new agreements matters more than keeping
+                // ids that could not be retrieved anyway
+                .switchIfEmpty(Mono.defer(() -> patchAgreementRefs(productOrderId, agreementIds)));
+    }
+
+    /**
+     * Marks an agreement as no longer in force, so the consent integration stops treating it as a
+     * concluded contract.
+     *
+     * <p>Two things have to change: the {@code signing-date} characteristic is dropped (its mere
+     * presence makes the consent-facade report the contract as <em>signed</em>, overriding any
+     * status) and the status is set to {@code cancelled} (which the facade maps to
+     * <em>terminated</em>). Without this a stopped order leaves a signed contract behind, and the
+     * consent granted against it would keep authorising access.
+     *
+     * <p>Only active when consent enrichment is enabled: for a deployment without it, changing the
+     * agreement on stop would be new behaviour nobody asked for.
+     */
+    public Mono<Boolean> terminateAgreement(String agreementId) {
+        if (!consentProperties.isEnabled()) {
+            return Mono.just(true);
+        }
+        return agreementApiClient.retrieveAgreement(agreementId, null)
+                .map(HttpResponse::body)
+                .flatMap(agreement -> {
+                    List<CharacteristicTmfVO> remaining = Optional.ofNullable(agreement.getCharacteristic())
+                            .orElse(List.of())
+                            .stream()
+                            .filter(characteristic -> !SIGNING_DATE.equals(characteristic.getName()))
+                            .toList();
+                    AgreementUpdateTmfVO update = new AgreementUpdateTmfVO()
+                            .characteristic(remaining)
+                            .status(AGREEMENT_STATUS_CANCELLED);
+                    return agreementApiClient.patchAgreement(agreementId, update);
+                })
+                .map(response -> true)
+                .onErrorResume(t -> {
+                    log.warn("Was not able to terminate agreement {}.", agreementId, t);
+                    return Mono.just(false);
+                })
+                .defaultIfEmpty(false);
+    }
+
+    /** The agreement ids the order already references, or an empty list when it cannot be read. */
+    /**
+     * Reads the order, or nothing when it cannot be read.
+     */
+    private Mono<ProductOrderVO> readOrder(String productOrderId) {
+        return productOrderApiClient.retrieveProductOrder(productOrderId, null)
+                .map(HttpResponse::body)
+                .onErrorResume(t -> {
+                    log.warn("Could not read the order {}; writing only the new agreements.", productOrderId, t);
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * The ids of the agreements already linked to the order.
+     */
+    private static List<String> agreementIdsOf(ProductOrderVO productOrder) {
+        return Optional.ofNullable(productOrder.getAgreement())
+                .orElse(List.of())
+                .stream()
+                .map(AgreementRefVO::getId)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private Mono<ProductOrderVO> patchAgreementRefs(String productOrderId, List<String> agreementIds) {
         List<AgreementRefVO> agreementRefVOS = agreementIds.stream()
                 .map(id -> new AgreementRefVO().id(id))
                 .toList();
