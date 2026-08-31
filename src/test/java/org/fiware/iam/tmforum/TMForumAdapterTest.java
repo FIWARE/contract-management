@@ -151,19 +151,18 @@ public class TMForumAdapterTest {
 	}
 
 	@Test
-	public void test_addAgreementToOrder_doesNotDuplicateAnId() {
+	public void test_addAgreementToOrder_doesNotPatchAnUnchangedOrder() {
 		when(productOrderApiClient.retrieveProductOrder(any(), any()))
 				.thenReturn(Mono.just(HttpResponse.ok().body(new ProductOrderVO()
 						.id("test-order")
 						.agreement(List.of(new AgreementRefVO().id("same-agreement"))))));
-		when(productOrderApiClient.patchProductOrder(any(), any()))
-				.thenReturn(Mono.just(HttpResponse.ok().body(new ProductOrderVO().id("test-order"))));
 
-		tmForumAdapter.addAgreementToOrder("test-order", List.of("same-agreement")).block();
+		ProductOrderVO order = tmForumAdapter.addAgreementToOrder("test-order", List.of("same-agreement")).block();
 
-		ArgumentCaptor<ProductOrderUpdateVO> captor = ArgumentCaptor.forClass(ProductOrderUpdateVO.class);
-		verify(productOrderApiClient).patchProductOrder(any(), captor.capture());
-		assertEquals(1, captor.getValue().getAgreement().size(), "A repeated delivery must not double the ref.");
+		assertNotNull(order, "The order should still be returned.");
+		// every write on the order is notified back to this component, which would run all order
+		// handlers again and patch again: the notification would feed itself
+		verify(productOrderApiClient, never()).patchProductOrder(any(), any());
 	}
 
 	@Test
@@ -348,6 +347,38 @@ public class TMForumAdapterTest {
 		assertThrows(TMForumException.class,
 				() -> tmForumAdapter.addAgreementToOrder("test-order", List.of("agreement-id")).block(),
 				"For downstream errors, a TMForum Exception should have been created.");
+	}
+
+	@Test
+	public void anAdditionalAgreementIsAddedToTheExistingOnes() {
+		when(productOrderApiClient.retrieveProductOrder("the-order", null))
+				.thenReturn(Mono.just(HttpResponse.ok(new ProductOrderVO()
+						.id("the-order")
+						.agreement(List.of(new AgreementRefVO().id("the-first-agreement"))))));
+		ArgumentCaptor<ProductOrderUpdateVO> update = ArgumentCaptor.forClass(ProductOrderUpdateVO.class);
+		when(productOrderApiClient.patchProductOrder(any(), update.capture()))
+				.thenReturn(Mono.just(HttpResponse.ok(new ProductOrderVO().id("the-order"))));
+
+		tmForumAdapter.addAgreementToOrder("the-order", List.of("the-second-agreement")).block();
+
+		assertEquals(List.of("the-first-agreement", "the-second-agreement"),
+				update.getValue().getAgreement().stream().map(AgreementRefVO::getId).toList(),
+				"The agreement already linked should be kept.");
+	}
+
+	@Test
+	public void anUnreadableOrderIsPatchedWithTheNewAgreements() {
+		when(productOrderApiClient.retrieveProductOrder("the-order", null))
+				.thenReturn(Mono.error(new RuntimeException("The order api is down.")));
+		ArgumentCaptor<ProductOrderUpdateVO> update = ArgumentCaptor.forClass(ProductOrderUpdateVO.class);
+		when(productOrderApiClient.patchProductOrder(any(), update.capture()))
+				.thenReturn(Mono.just(HttpResponse.ok(new ProductOrderVO().id("the-order"))));
+
+		tmForumAdapter.addAgreementToOrder("the-order", List.of("the-agreement")).block();
+
+		assertEquals(List.of("the-agreement"),
+				update.getValue().getAgreement().stream().map(AgreementRefVO::getId).toList(),
+				"Linking the new agreement matters more than ids that could not be read.");
 	}
 
 }

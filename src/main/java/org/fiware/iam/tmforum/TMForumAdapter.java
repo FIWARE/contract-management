@@ -269,21 +269,36 @@ public class TMForumAdapter {
 
 
     /**
-     * Add the id of agreements(from rainbow) to the given product order
+     * Links the given agreements to the product order, keeping the ones already linked.
+     *
+     * <p>The patch REPLACES the order's agreement list, so the ids already on the order are read and
+     * kept: dropping them would lose an agreement written by anyone else and would erase the very
+     * evidence {@link #createAgreement} uses to avoid creating a duplicate.
+     *
+     * <p>When that leaves the list unchanged, the order is <em>not</em> patched. Writing it anyway
+     * would not only be pointless: every write on the order is notified back to this component, which
+     * would run all order handlers again - re-issuing the trusted-issuer entry and the policy - and
+     * that delivery would patch again, so the notification would feed itself.
      */
     public Mono<ProductOrderVO> addAgreementToOrder(String productOrderId, List<String> agreementIds) {
-        // The patch REPLACES the order's agreement list, so the ids already on the order are read
-        // and kept: dropping them would lose an agreement written by anyone else and would erase the
-        // very evidence createAgreement uses to avoid creating a duplicate.
-        return existingAgreementIds(productOrderId)
-                .flatMap(existingIds -> {
+        return readOrder(productOrderId)
+                .flatMap(productOrder -> {
+                    List<String> existingIds = agreementIdsOf(productOrder);
                     List<String> mergedIds = new ArrayList<>(existingIds);
                     agreementIds.stream()
                             .filter(Objects::nonNull)
                             .filter(id -> !mergedIds.contains(id))
                             .forEach(mergedIds::add);
+                    if (mergedIds.equals(existingIds)) {
+                        log.debug("Order {} already references the agreements {}; not patching it again.",
+                                productOrderId, existingIds);
+                        return Mono.just(productOrder);
+                    }
                     return patchAgreementRefs(productOrderId, mergedIds);
-                });
+                })
+                // the order could not be read: linking the new agreements matters more than keeping
+                // ids that could not be retrieved anyway
+                .switchIfEmpty(Mono.defer(() -> patchAgreementRefs(productOrderId, agreementIds)));
     }
 
     /**
@@ -325,19 +340,28 @@ public class TMForumAdapter {
     }
 
     /** The agreement ids the order already references, or an empty list when it cannot be read. */
-    private Mono<List<String>> existingAgreementIds(String productOrderId) {
+    /**
+     * Reads the order, or nothing when it cannot be read.
+     */
+    private Mono<ProductOrderVO> readOrder(String productOrderId) {
         return productOrderApiClient.retrieveProductOrder(productOrderId, null)
                 .map(HttpResponse::body)
-                .map(productOrder -> Optional.ofNullable(productOrder.getAgreement()).orElse(List.<AgreementRefVO>of())
-                        .stream()
-                        .map(AgreementRefVO::getId)
-                        .filter(Objects::nonNull)
-                        .toList())
                 .onErrorResume(t -> {
-                    log.warn("Could not read the agreements of order {}; writing only the new ones.", productOrderId, t);
-                    return Mono.just(List.of());
-                })
-                .defaultIfEmpty(List.of());
+                    log.warn("Could not read the order {}; writing only the new agreements.", productOrderId, t);
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * The ids of the agreements already linked to the order.
+     */
+    private static List<String> agreementIdsOf(ProductOrderVO productOrder) {
+        return Optional.ofNullable(productOrder.getAgreement())
+                .orElse(List.of())
+                .stream()
+                .map(AgreementRefVO::getId)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private Mono<ProductOrderVO> patchAgreementRefs(String productOrderId, List<String> agreementIds) {

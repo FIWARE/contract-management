@@ -15,6 +15,7 @@ import org.fiware.iam.tmforum.productorder.model.AgreementRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderItemVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
 import org.fiware.iam.tmforum.productorder.model.QuoteRefVO;
+import org.fiware.rainbow.model.AgreementVO;
 import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import reactor.core.publisher.Mono;
 
@@ -46,15 +47,20 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
     public Mono<HttpResponse<?>> handleProductOrderComplete(String organizationId, ProductOrderVO productOrderVO) {
 
         if (!containsQuote(productOrderVO)) {
-            return Mono.zipDelayError(
-                            productOrderVO
-                                    .getProductOrderItem()
-                                    .stream()
-                                    .map(ProductOrderItemVO::getProductOffering)
-                                    .filter(Objects::nonNull)
-                                    .map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
-                                    .toList(),
-                            res -> (HttpResponse<?>) HttpResponse.noContent());
+            List<Mono<AgreementVO>> creations = Optional.ofNullable(productOrderVO.getProductOrderItem())
+                    .orElse(List.of())
+                    .stream()
+                    .map(ProductOrderItemVO::getProductOffering)
+                    .filter(Objects::nonNull)
+                    .map(offering -> rainbowAdapter.createAgreement(organizationId, offering.getId()))
+                    .toList();
+            // zipping an empty list completes empty, which the listener renders as 404 - and the
+            // TM Forum API answers that by redelivering the notification indefinitely
+            if (creations.isEmpty()) {
+                log.warn("Order {} references no product offering; no DSP agreement is created.", productOrderVO.getId());
+                return Mono.just(HttpResponse.noContent());
+            }
+            return Mono.zipDelayError(creations, res -> (HttpResponse<?>) HttpResponse.noContent());
         } else {
             return tmForumAdapter.getQuoteById(getQuoteRef(productOrderVO).getId())
                     .flatMap(quoteVO -> rainbowAdapter.getNegotiationProcessState(quoteVO.getExternalId())
