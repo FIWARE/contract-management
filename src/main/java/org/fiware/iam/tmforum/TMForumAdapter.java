@@ -130,14 +130,16 @@ public class TMForumAdapter {
                 .addProductOfferingItem(
                         new ProductOfferingRefTmfVO()
                                 .id(productOfferingId));
-        CharacteristicTmfVO characteristicTmfVO = new CharacteristicTmfVO()
-                .name(DATA_SPACE_PROTOCOL_AGREEMENT_ID)
-                .value(agreementId);
-
         return consentEnrichment(productOfferingId, customerOrganizationId)
                 .flatMap(consentCharacteristics -> {
                     List<CharacteristicTmfVO> characteristics = new ArrayList<>();
-                    characteristics.add(characteristicTmfVO);
+                    // an order concluded without a DSP negotiation has no such id; an empty
+                    // characteristic would read as "negotiated, id unknown"
+                    if (agreementId != null) {
+                        characteristics.add(new CharacteristicTmfVO()
+                                .name(DATA_SPACE_PROTOCOL_AGREEMENT_ID)
+                                .value(agreementId));
+                    }
                     characteristics.addAll(consentCharacteristics);
                     AgreementCreateTmfVO agreementCreateTmfVO = new AgreementCreateTmfVO()
                             .characteristic(characteristics)
