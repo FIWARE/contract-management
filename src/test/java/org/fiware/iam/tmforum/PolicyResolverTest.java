@@ -2,6 +2,7 @@ package org.fiware.iam.tmforum;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
+import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
@@ -11,12 +12,16 @@ import org.fiware.iam.tmforum.productcatalog.model.ProductOfferingVO;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationRefVO;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationVO;
+import org.fiware.iam.tmforum.productcatalog.model.ServiceSpecificationRefVO;
 import org.fiware.iam.tmforum.productorder.model.OrderItemActionTypeVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOfferingRefVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderItemVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
 import org.fiware.iam.tmforum.productorder.model.QuoteRefVO;
 import org.fiware.iam.tmforum.quote.api.QuoteApiClient;
+import org.fiware.iam.tmforum.servicecatalog.api.ServiceSpecificationApiClient;
+import org.fiware.iam.tmforum.servicecatalog.model.CharacteristicSpecificationVO;
+import org.fiware.iam.tmforum.servicecatalog.model.ServiceSpecificationVO;
 import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
 import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
@@ -37,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -59,11 +65,17 @@ class PolicyResolverTest {
 	private static final String AUTHORIZATION_POLICY = "authorizationPolicy";
 	private static final String QUOTE_DELETE_ACTION = "delete";
 	private static final String PROVIDER_ORG_ID = "urn:ngsi-ld:organization:provider";
+	private static final String SERVICE_PROVIDER_ORG_ID = "urn:ngsi-ld:organization:service-provider";
+	private static final String SERVICE_ID = "urn:ngsi-ld:service-specification:service";
+	private static final String SERVICE_POLICY_ID = "https://mp-operation.org/policy/service";
+	private static final String PROVIDER_ROLE = "provider";
 
 	private ProductOfferingApiClient productOfferingApiClient;
 	private ProductSpecificationApiClient productSpecificationApiClient;
+	private ServiceSpecificationApiClient serviceSpecificationApiClient;
 	private QuoteApiClient quoteApiClient;
 	private OrganizationResolver organizationResolver;
+	private GeneralProperties generalProperties;
 
 	private PolicyResolver policyResolver;
 
@@ -71,11 +83,16 @@ class PolicyResolverTest {
 	void prepare() {
 		productOfferingApiClient = mock(ProductOfferingApiClient.class);
 		productSpecificationApiClient = mock(ProductSpecificationApiClient.class);
+		serviceSpecificationApiClient = mock(ServiceSpecificationApiClient.class);
 		quoteApiClient = mock(QuoteApiClient.class);
 		organizationResolver = mock(OrganizationResolver.class);
 		when(organizationResolver.hasProviderRole(any(String.class))).thenReturn(false);
+		// composition is off by default, so the tests above resolve exactly as they did before it existed
+		generalProperties = new GeneralProperties();
 		policyResolver = new PolicyResolver(new ObjectMapper(), productOfferingApiClient,
-				productSpecificationApiClient, quoteApiClient, organizationResolver);
+				productSpecificationApiClient, quoteApiClient, organizationResolver,
+				new SpecificationGraphResolver(generalProperties, productSpecificationApiClient,
+						serviceSpecificationApiClient));
 	}
 
 	private static Stream<Arguments> incompleteSpecifications() {
@@ -329,6 +346,160 @@ class PolicyResolverTest {
 		assertNotNull(configs);
 		assertEquals(1, configs.get(0).policies().size());
 		assertEquals(true, configs.get(0).contractManagement().isLocal());
+	}
+
+	@Test
+	void getAuthorizationPolicy_compositionDisabled_ignoresTheServicePolicy() {
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		mockService(serviceWithPolicy(SERVICE_POLICY_ID));
+
+		List<PolicyResolver.PolicyConfig> configs = policyResolver
+				.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD))
+				.block();
+
+		assertNotNull(configs);
+		assertEquals(1, configs.get(0).policies().size(), "Only the product policy should be resolved.");
+		assertEquals(POLICY_ID, configs.get(0).policies().get(0).get("odrl:uid"));
+	}
+
+	@Test
+	void getAuthorizationPolicy_unionsTheProductAndServicePolicies() {
+		generalProperties.setEnableSpecificationComposition(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		mockService(serviceWithPolicy(SERVICE_POLICY_ID));
+
+		List<PolicyResolver.PolicyConfig> configs = policyResolver
+				.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD))
+				.block();
+
+		assertNotNull(configs);
+		List<String> uids = configs.get(0).policies().stream().map(policy -> (String) policy.get("odrl:uid")).toList();
+		assertEquals(List.of(POLICY_ID, SERVICE_POLICY_ID), uids,
+				"The product policy and the service policy should both be applied.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_readsThePolicyOfAServiceOnlyComposition() {
+		generalProperties.setEnableSpecificationComposition(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		// the product delegates its whole configuration to the service - it has no characteristics at all
+		mockSpecification(new ProductSpecificationVO()
+				.id(SPEC_ID)
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		mockService(serviceWithPolicy(SERVICE_POLICY_ID));
+
+		List<PolicyResolver.PolicyConfig> configs = policyResolver
+				.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD))
+				.block();
+
+		assertNotNull(configs);
+		assertEquals(1, configs.get(0).policies().size());
+		assertEquals(SERVICE_POLICY_ID, configs.get(0).policies().get(0).get("odrl:uid"));
+	}
+
+	@Test
+	void getAuthorizationPolicy_deduplicatesAnIdenticalPolicy() {
+		generalProperties.setEnableSpecificationComposition(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		// the service carries the very same policy - a shared service specification is normal
+		mockService(serviceWithPolicy(POLICY_ID));
+
+		List<PolicyResolver.PolicyConfig> configs = policyResolver
+				.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD))
+				.block();
+
+		assertNotNull(configs);
+		assertEquals(1, configs.get(0).policies().size(), "The identical policy should be applied once.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_conflictingUidFailsTheResolution() {
+		generalProperties.setEnableSpecificationComposition(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID, "odrl:permission", "product"))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		// same uid, different content - the pap keys an installed policy by uid and could only keep one
+		mockService(serviceWithPolicyValue(Map.of("odrl:uid", POLICY_ID, "odrl:permission", "service")));
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD)).block(),
+				"Two different policies claiming one uid must not be installed.");
+		assertEquals(true, exception.getMessage().contains(POLICY_ID),
+				"The message should name the conflicting uid.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_conflictingProvidersFailTheResolution() {
+		generalProperties.setEnableSpecificationComposition(true);
+		when(organizationResolver.hasProviderRole(PROVIDER_ROLE)).thenReturn(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID)))
+				.relatedParty(List.of(new org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO()
+						.id(PROVIDER_ORG_ID)
+						.role(PROVIDER_ROLE))));
+		mockService(serviceWithPolicy(SERVICE_POLICY_ID)
+				.relatedParty(List.of(new org.fiware.iam.tmforum.servicecatalog.model.RelatedPartyVO()
+						.id(SERVICE_PROVIDER_ORG_ID)
+						.role(PROVIDER_ROLE))));
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD)).block(),
+				"A composition across two providers must not be activated.");
+		assertEquals(true, exception.getMessage().contains(PROVIDER_ORG_ID)
+						&& exception.getMessage().contains(SERVICE_PROVIDER_ORG_ID),
+				"The message should name both providers.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_takesTheProviderDeclaredOnlyOnTheService() {
+		generalProperties.setEnableSpecificationComposition(true);
+		when(organizationResolver.hasProviderRole(PROVIDER_ROLE)).thenReturn(true);
+		when(organizationResolver.getContractManagement(SERVICE_PROVIDER_ORG_ID))
+				.thenReturn(Mono.just(new ContractManagement(true)));
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		// the product declares no provider, the service does
+		mockSpecification(specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		mockService(serviceWithPolicy(SERVICE_POLICY_ID)
+				.relatedParty(List.of(new org.fiware.iam.tmforum.servicecatalog.model.RelatedPartyVO()
+						.id(SERVICE_PROVIDER_ORG_ID)
+						.role(PROVIDER_ROLE))));
+
+		List<PolicyResolver.PolicyConfig> configs = policyResolver
+				.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD))
+				.block();
+
+		assertNotNull(configs);
+		assertEquals(2, configs.get(0).policies().size());
+		verify(organizationResolver).getContractManagement(SERVICE_PROVIDER_ORG_ID);
+	}
+
+	private ServiceSpecificationVO serviceWithPolicy(String policyId) {
+		return serviceWithPolicyValue(Map.of("odrl:uid", policyId));
+	}
+
+	private ServiceSpecificationVO serviceWithPolicyValue(Object value) {
+		return new ServiceSpecificationVO()
+				.id(SERVICE_ID)
+				.specCharacteristic(List.of(new CharacteristicSpecificationVO()
+						.id(AUTHORIZATION_POLICY)
+						.valueType(AUTHORIZATION_POLICY)
+						.characteristicValueSpecification(List.of(
+								new org.fiware.iam.tmforum.servicecatalog.model.CharacteristicValueSpecificationVO()
+										.isDefault(true)
+										.value(value)))));
+	}
+
+	private void mockService(ServiceSpecificationVO serviceSpecification) {
+		when(serviceSpecificationApiClient.retrieveServiceSpecification(eq(SERVICE_ID), any()))
+				.thenReturn(Mono.just(HttpResponse.ok(serviceSpecification)));
 	}
 
 	private ProductSpecificationVO specificationWithPolicyValue(Object value) {

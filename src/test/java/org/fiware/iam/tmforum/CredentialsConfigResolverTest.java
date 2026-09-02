@@ -2,6 +2,7 @@ package org.fiware.iam.tmforum;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
+import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
@@ -11,6 +12,7 @@ import org.fiware.iam.tmforum.productcatalog.model.ProductOfferingVO;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationRefVO;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationVO;
+import org.fiware.iam.tmforum.productcatalog.model.ServiceSpecificationRefVO;
 import org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO;
 import org.fiware.iam.tmforum.productorder.model.OrderItemActionTypeVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOfferingRefVO;
@@ -18,6 +20,9 @@ import org.fiware.iam.tmforum.productorder.model.ProductOrderItemVO;
 import org.fiware.iam.tmforum.productorder.model.ProductOrderVO;
 import org.fiware.iam.tmforum.productorder.model.QuoteRefVO;
 import org.fiware.iam.tmforum.quote.api.QuoteApiClient;
+import org.fiware.iam.tmforum.servicecatalog.api.ServiceSpecificationApiClient;
+import org.fiware.iam.tmforum.servicecatalog.model.CharacteristicSpecificationVO;
+import org.fiware.iam.tmforum.servicecatalog.model.ServiceSpecificationVO;
 import org.fiware.iam.tmforum.quote.model.QuoteItemVO;
 import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
@@ -60,11 +65,16 @@ class CredentialsConfigResolverTest {
 	private static final String CREDENTIAL_TYPE = "OperatorCredential";
 	private static final String PROVIDER_ROLE = "provider";
 	private static final String PROVIDER_ORG_ID = "urn:ngsi-ld:organization:provider";
+	private static final String SERVICE_PROVIDER_ORG_ID = "urn:ngsi-ld:organization:service-provider";
+	private static final String SERVICE_ID = "urn:ngsi-ld:service-specification:service";
+	private static final String SERVICE_CREDENTIAL_TYPE = "ServiceCredential";
 
 	private ProductOfferingApiClient productOfferingApiClient;
 	private ProductSpecificationApiClient productSpecificationApiClient;
+	private ServiceSpecificationApiClient serviceSpecificationApiClient;
 	private QuoteApiClient quoteApiClient;
 	private OrganizationResolver organizationResolver;
+	private GeneralProperties generalProperties;
 
 	private CredentialsConfigResolver credentialsConfigResolver;
 
@@ -72,11 +82,16 @@ class CredentialsConfigResolverTest {
 	void prepare() {
 		productOfferingApiClient = mock(ProductOfferingApiClient.class);
 		productSpecificationApiClient = mock(ProductSpecificationApiClient.class);
+		serviceSpecificationApiClient = mock(ServiceSpecificationApiClient.class);
 		quoteApiClient = mock(QuoteApiClient.class);
 		organizationResolver = mock(OrganizationResolver.class);
 		when(organizationResolver.hasProviderRole(any(String.class))).thenReturn(false);
+		// composition is off by default, so the tests above resolve exactly as they did before it existed
+		generalProperties = new GeneralProperties();
 		credentialsConfigResolver = new CredentialsConfigResolver(new ObjectMapper(), organizationResolver,
-				productOfferingApiClient, productSpecificationApiClient, quoteApiClient);
+				productOfferingApiClient, productSpecificationApiClient, quoteApiClient,
+				new SpecificationGraphResolver(generalProperties, productSpecificationApiClient,
+						serviceSpecificationApiClient));
 	}
 
 	private static Stream<Arguments> incompleteSpecifications() {
@@ -288,6 +303,97 @@ class CredentialsConfigResolverTest {
 		assertNotNull(configs);
 		assertEquals(1, configs.get(0).credentialsVOS().size());
 		assertEquals(true, configs.get(0).contractManagement().isLocal());
+	}
+
+	@Test
+	void getCredentialsConfig_compositionDisabled_ignoresTheServiceCredentials() {
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithCredentialsValue(Map.of("credentialsType", CREDENTIAL_TYPE))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		mockService(serviceWithCredentials(SERVICE_CREDENTIAL_TYPE));
+
+		List<CredentialsConfigResolver.CredentialConfig> configs = credentialsConfigResolver
+				.getCredentialsConfig(orderWithItem())
+				.block();
+
+		assertNotNull(configs);
+		assertEquals(1, configs.get(0).credentialsVOS().size(), "Only the product credential should be resolved.");
+		assertEquals(CREDENTIAL_TYPE, configs.get(0).credentialsVOS().get(0).getCredentialsType());
+	}
+
+	@Test
+	void getCredentialsConfig_unionsTheProductAndServiceCredentials() {
+		generalProperties.setEnableSpecificationComposition(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithCredentialsValue(Map.of("credentialsType", CREDENTIAL_TYPE))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		mockService(serviceWithCredentials(SERVICE_CREDENTIAL_TYPE));
+
+		List<CredentialsConfigResolver.CredentialConfig> configs = credentialsConfigResolver
+				.getCredentialsConfig(orderWithItem())
+				.block();
+
+		assertNotNull(configs);
+		List<String> types = configs.get(0).credentialsVOS().stream()
+				.map(credential -> credential.getCredentialsType())
+				.toList();
+		assertEquals(List.of(CREDENTIAL_TYPE, SERVICE_CREDENTIAL_TYPE), types,
+				"The product credential and the service credential should both be granted.");
+	}
+
+	@Test
+	void getCredentialsConfig_deduplicatesAnIdenticalCredential() {
+		generalProperties.setEnableSpecificationComposition(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithCredentialsValue(Map.of("credentialsType", CREDENTIAL_TYPE))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID))));
+		// the service carries the very same credential configuration
+		mockService(serviceWithCredentials(CREDENTIAL_TYPE));
+
+		List<CredentialsConfigResolver.CredentialConfig> configs = credentialsConfigResolver
+				.getCredentialsConfig(orderWithItem())
+				.block();
+
+		assertNotNull(configs);
+		assertEquals(1, configs.get(0).credentialsVOS().size(), "The identical credential should be granted once.");
+	}
+
+	@Test
+	void getCredentialsConfig_conflictingProvidersFailTheResolution() {
+		generalProperties.setEnableSpecificationComposition(true);
+		when(organizationResolver.hasProviderRole(PROVIDER_ROLE)).thenReturn(true);
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		mockSpecification(specificationWithCredentialsValue(Map.of("credentialsType", CREDENTIAL_TYPE))
+				.serviceSpecification(List.of(new ServiceSpecificationRefVO().id(SERVICE_ID)))
+				.relatedParty(List.of(new RelatedPartyVO().id(PROVIDER_ORG_ID).role(PROVIDER_ROLE))));
+		mockService(serviceWithCredentials(SERVICE_CREDENTIAL_TYPE)
+				.relatedParty(List.of(new org.fiware.iam.tmforum.servicecatalog.model.RelatedPartyVO()
+						.id(SERVICE_PROVIDER_ORG_ID)
+						.role(PROVIDER_ROLE))));
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> credentialsConfigResolver.getCredentialsConfig(orderWithItem()).block(),
+				"A composition across two providers must not be activated.");
+		assertEquals(true, exception.getMessage().contains(PROVIDER_ORG_ID)
+						&& exception.getMessage().contains(SERVICE_PROVIDER_ORG_ID),
+				"The message should name both providers.");
+	}
+
+	private ServiceSpecificationVO serviceWithCredentials(String credentialsType) {
+		return new ServiceSpecificationVO()
+				.id(SERVICE_ID)
+				.specCharacteristic(List.of(new CharacteristicSpecificationVO()
+						.id(CREDENTIALS_CONFIGURATION)
+						.valueType(CREDENTIALS_CONFIGURATION)
+						.characteristicValueSpecification(List.of(
+								new org.fiware.iam.tmforum.servicecatalog.model.CharacteristicValueSpecificationVO()
+										.isDefault(true)
+										.value(Map.of("credentialsType", credentialsType))))));
+	}
+
+	private void mockService(ServiceSpecificationVO serviceSpecification) {
+		when(serviceSpecificationApiClient.retrieveServiceSpecification(eq(SERVICE_ID), any()))
+				.thenReturn(Mono.just(HttpResponse.ok(serviceSpecification)));
 	}
 
 	private ProductSpecificationVO specificationWithCredentialsValue(Object value) {

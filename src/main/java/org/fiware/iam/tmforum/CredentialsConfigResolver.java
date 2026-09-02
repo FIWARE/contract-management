@@ -13,7 +13,6 @@ import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationRefVO;
-import org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO;
 import org.fiware.iam.tmforum.productcatalog.model.*;
 import org.fiware.iam.tmforum.productorder.model.ProductOfferingRefVO;
 import org.fiware.iam.tmforum.productorder.model.*;
@@ -23,6 +22,7 @@ import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import reactor.core.publisher.Mono;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -47,6 +47,12 @@ import java.util.stream.Stream;
  *     ignored - activating an order while parts of its configuration could not be read would grant
  *     access nobody can account for.</li>
  * </ul>
+ * <p>
+ * When the ordered specification is composed of {@code ServiceSpecification}s, the credential
+ * configuration of every part is <b>unioned</b>: the effective configuration of a product is the
+ * union over the product and its parts, de-duplicated by value. Note that the trusted-issuers-list
+ * evaluates several configurations of the same credential type as an OR, so the union is a widening
+ * operation - a permissive part relaxes a restrictive one.
  */
 @Requires(condition = GeneralProperties.TmForumCondition.class)
 @Singleton
@@ -60,6 +66,7 @@ public class CredentialsConfigResolver {
     private static final String SPECIFICATION_NOT_RESOLVABLE = "The product specification %s referenced by offering %s could not be resolved.";
     private static final String PROVIDER_NOT_RESOLVABLE = "The contract-management of provider %s referenced by product specification %s could not be resolved.";
     private static final String QUOTE_NOT_RESOLVABLE = "The quote %s referenced by the order could not be resolved.";
+    private static final String CONFLICTING_PROVIDERS = "The composition of specification %s declares more than one provider: %s. Composition across providers is not supported.";
     private static final TypeReference<CredentialsVO> CREDENTIALS_TYPE = new TypeReference<>() {
     };
 
@@ -69,6 +76,7 @@ public class CredentialsConfigResolver {
     private final ProductOfferingApiClient productOfferingApiClient;
     private final ProductSpecificationApiClient productSpecificationApiClient;
     private final QuoteApiClient quoteApiClient;
+    private final SpecificationGraphResolver specificationGraphResolver;
 
     /**
      * Resolve the credential configurations for the given order.
@@ -163,23 +171,72 @@ public class CredentialsConfigResolver {
             return Mono.error(unresolvableReference(
                     SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId)));
         }
-        List<CredentialsVO> credentialsVOS = getCredentialsConfigFromPSC(
-                productSpecification.getProductSpecCharacteristic());
-        Optional<String> partyId = Optional.ofNullable(productSpecification.getRelatedParty())
-                .orElseGet(List::of)
-                .stream()
-                .filter(Objects::nonNull)
-                .filter(relatedPartyVO -> organizationResolver.hasProviderRole(relatedPartyVO.getRole()))
-                .map(RelatedPartyVO::getId)
-                .filter(Objects::nonNull)
-                .findAny();
-        return partyId
+        return specificationGraphResolver.resolve(productSpecification)
+                .flatMap(graph -> toCredentialConfig(graph, productSpecification.getId()));
+    }
+
+    private Mono<CredentialConfig> toCredentialConfig(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<CredentialsVO> credentialsVOS = aggregateCredentials(graph);
+        return governingProvider(graph, specificationId)
                 .map(id -> organizationResolver.getContractManagement(id)
                         .map(cm -> new CredentialConfig(cm, credentialsVOS))
                         // a referenced provider that cannot be resolved is a broken reference, not an empty config
                         .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                                PROVIDER_NOT_RESOLVABLE.formatted(id, productSpecification.getId())))))
+                                PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId)))))
                 .orElseGet(() -> Mono.just(new CredentialConfig(new ContractManagement(true), credentialsVOS)));
+    }
+
+    /**
+     * Union the credential configuration of every specification in the composition.
+     * <p>
+     * The first matching characteristic is read <i>per specification</i>, so a composed product
+     * contributes one credential configuration per part rather than only the first one found.
+     * Identical entries are de-duplicated, since a service specification shared by several parts of
+     * the same product is normal - and the trusted-issuers-list de-duplicates by value as well.
+     *
+     * @param graph the resolved composition
+     * @return the effective credential configuration of the product
+     */
+    private List<CredentialsVO> aggregateCredentials(SpecificationGraphResolver.SpecificationGraph graph) {
+        return List.copyOf(new LinkedHashSet<>(graph.nodes()
+                .stream()
+                .map(SpecificationGraphResolver.SpecificationNode::characteristics)
+                .map(this::getCredentialsConfigFrom)
+                .flatMap(List::stream)
+                .toList()));
+    }
+
+    /**
+     * The single provider responsible for the whole composition.
+     * <p>
+     * One order activates at exactly one contract-management, so a composition that declares more
+     * than one provider is refused: splitting an activation across two contract-managements has no
+     * rollback story - one side would grant and the other would not. A part that declares no provider
+     * inherits the one of the composition, which is the shape BAE produces (it replaces
+     * {@code relatedParty} with commercial roles only).
+     *
+     * @param graph           the resolved composition
+     * @param specificationId the ordered specification, for the error message
+     * @return the responsible provider, or empty if the composition declares none
+     * @throws TMForumException if the composition declares more than one provider
+     */
+    private Optional<String> governingProvider(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<String> providers = graph.nodes()
+                .stream()
+                .map(SpecificationGraphResolver.SpecificationNode::relatedParties)
+                .flatMap(List::stream)
+                .filter(party -> organizationResolver.hasProviderRole(party.role()))
+                .map(SpecificationGraphResolver.PartyReference::id)
+                .distinct()
+                .toList();
+        if (providers.size() > 1) {
+            String message = CONFLICTING_PROVIDERS.formatted(specificationId, providers);
+            log.error(message);
+            throw new TMForumException(message);
+        }
+        return providers.stream().findFirst();
     }
 
     private Mono<List<CredentialConfig>> getCredentialsConfigFromQuote(List<QuoteRefVO> quoteRefVOS) {

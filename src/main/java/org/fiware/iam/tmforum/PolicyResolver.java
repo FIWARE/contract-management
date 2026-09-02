@@ -12,7 +12,6 @@ import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationRefVO;
-import org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO;
 import org.fiware.iam.tmforum.productcatalog.model.*;
 import org.fiware.iam.tmforum.productorder.model.ProductOfferingRefVO;
 import org.fiware.iam.tmforum.productorder.model.*;
@@ -22,6 +21,7 @@ import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import reactor.core.publisher.Mono;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -46,6 +46,13 @@ import java.util.stream.Stream;
  *     ignored - activating an order while parts of its configuration could not be read would grant
  *     access nobody can account for.</li>
  * </ul>
+ * <p>
+ * When the ordered specification is composed of {@code ServiceSpecification}s, the policies of every
+ * part are <b>unioned</b>: the effective configuration of a product is the union over the product
+ * and its parts, de-duplicated by {@code odrl:uid}, and no part narrows or replaces another. Two
+ * different policies claiming the same {@code odrl:uid} are a hard error, because the ODRL-PAP keys
+ * an installed policy by that uid plus the order id and would otherwise silently keep one of the
+ * two.
  */
 @Requires(condition = GeneralProperties.TmForumCondition.class)
 @Singleton
@@ -59,6 +66,9 @@ public class PolicyResolver {
     private static final String SPECIFICATION_NOT_RESOLVABLE = "The product specification %s referenced by offering %s could not be resolved.";
     private static final String PROVIDER_NOT_RESOLVABLE = "The contract-management of provider %s referenced by product specification %s could not be resolved.";
     private static final String QUOTE_NOT_RESOLVABLE = "The quote %s referenced by the order could not be resolved.";
+    private static final String CONFLICTING_POLICIES = "The composition of specification %s contains two different policies claiming the uid %s. Refusing to install either of them.";
+    private static final String CONFLICTING_PROVIDERS = "The composition of specification %s declares more than one provider: %s. Composition across providers is not supported.";
+    private static final String ODRL_UID_KEY = "odrl:uid";
     private static final TypeReference<Map<String, Object>> POLICY_TYPE = new TypeReference<>() {
     };
 
@@ -68,6 +78,7 @@ public class PolicyResolver {
     private final ProductSpecificationApiClient productSpecificationApiClient;
     private final QuoteApiClient quoteApiClient;
     private final OrganizationResolver organizationResolver;
+    private final SpecificationGraphResolver specificationGraphResolver;
 
     /**
      * Resolve the authorization policies configured for the given order.
@@ -162,23 +173,89 @@ public class PolicyResolver {
             return Mono.error(unresolvableReference(
                     SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId)));
         }
-        List<Map<String, Object>> policies = getAuthorizationPolicyFromPSC(
-                productSpecification.getProductSpecCharacteristic());
-        Optional<String> partyId = Optional.ofNullable(productSpecification.getRelatedParty())
-                .orElseGet(List::of)
-                .stream()
-                .filter(Objects::nonNull)
-                .filter(relatedPartyVO -> organizationResolver.hasProviderRole(relatedPartyVO.getRole()))
-                .map(RelatedPartyVO::getId)
-                .filter(Objects::nonNull)
-                .findAny();
-        return partyId
+        return specificationGraphResolver.resolve(productSpecification)
+                .flatMap(graph -> toPolicyConfig(graph, productSpecification.getId()));
+    }
+
+    private Mono<PolicyConfig> toPolicyConfig(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<Map<String, Object>> policies = aggregatePolicies(graph, specificationId);
+        return governingProvider(graph, specificationId)
                 .map(id -> organizationResolver.getContractManagement(id)
                         .map(cm -> new PolicyConfig(cm, policies))
                         // a referenced provider that cannot be resolved is a broken reference, not an empty config
                         .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                                PROVIDER_NOT_RESOLVABLE.formatted(id, productSpecification.getId())))))
+                                PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId)))))
                 .orElseGet(() -> Mono.just(new PolicyConfig(new ContractManagement(true), policies)));
+    }
+
+    /**
+     * Union the policies of every specification in the composition.
+     * <p>
+     * The first matching characteristic is read <i>per specification</i>, so a composed product
+     * contributes one policy configuration per part rather than only the first one found. Identical
+     * policies are de-duplicated silently - a service specification shared by several parts of the
+     * same product is normal.
+     *
+     * @param graph           the resolved composition
+     * @param specificationId the ordered specification, for the error message
+     * @return the effective policies of the product
+     * @throws TMForumException if two different policies claim the same {@code odrl:uid}
+     */
+    private List<Map<String, Object>> aggregatePolicies(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<Map<String, Object>> policies = graph.nodes()
+                .stream()
+                .map(SpecificationGraphResolver.SpecificationNode::characteristics)
+                .map(this::getAuthorizationPolicyFrom)
+                .flatMap(List::stream)
+                .toList();
+
+        Map<Object, Map<String, Object>> byUid = new LinkedHashMap<>();
+        policies.forEach(policy -> {
+            // a policy without a uid cannot be keyed by one - it is then only de-duplicated against
+            // an identical copy of itself, and the ODRL-PAP rejects it later on anyway
+            Object uid = policy.getOrDefault(ODRL_UID_KEY, policy);
+            Map<String, Object> known = byUid.putIfAbsent(uid, policy);
+            if (known != null && !known.equals(policy)) {
+                String message = CONFLICTING_POLICIES.formatted(specificationId, uid);
+                log.error(message);
+                throw new TMForumException(message);
+            }
+        });
+        return List.copyOf(byUid.values());
+    }
+
+    /**
+     * The single provider responsible for the whole composition.
+     * <p>
+     * One order activates at exactly one contract-management, so a composition that declares more
+     * than one provider is refused: splitting an activation across two contract-managements has no
+     * rollback story - one side would grant and the other would not. A part that declares no provider
+     * inherits the one of the composition, which is the shape BAE produces (it replaces
+     * {@code relatedParty} with commercial roles only).
+     *
+     * @param graph           the resolved composition
+     * @param specificationId the ordered specification, for the error message
+     * @return the responsible provider, or empty if the composition declares none
+     * @throws TMForumException if the composition declares more than one provider
+     */
+    private Optional<String> governingProvider(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<String> providers = graph.nodes()
+                .stream()
+                .map(SpecificationGraphResolver.SpecificationNode::relatedParties)
+                .flatMap(List::stream)
+                .filter(party -> organizationResolver.hasProviderRole(party.role()))
+                .map(SpecificationGraphResolver.PartyReference::id)
+                .distinct()
+                .toList();
+        if (providers.size() > 1) {
+            String message = CONFLICTING_PROVIDERS.formatted(specificationId, providers);
+            log.error(message);
+            throw new TMForumException(message);
+        }
+        return providers.stream().findFirst();
     }
 
     private Mono<List<PolicyConfig>> getAuthorizationPolicyFromQuote(List<QuoteRefVO> quoteRefVOS) {
