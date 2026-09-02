@@ -41,6 +41,20 @@ public class GeneralProperties {
      * Enable integration with a central marketplace. Requires OdrlPap and TrustedIssuersList integration to be enabled.
      */
     private boolean enableCentralMarketplace = true;
+    /**
+     * Enables reading the policy and credential configuration from the ServiceSpecifications a
+     * ProductSpecification is composed of, in addition to the ProductSpecification itself. Off by
+     * default: it adds one TMForum read per referenced ServiceSpecification to the activation of an
+     * order, and it changes which configuration an order activates.
+     */
+    private boolean enableSpecificationComposition = false;
+    /**
+     * How many specification levels below the ordered ProductSpecification are resolved when
+     * composition is enabled. The default of 2 covers a ProductSpecification and the
+     * ServiceSpecifications it references; bundled ProductSpecifications consume the same budget.
+     * References below the limit are skipped with a warning.
+     */
+    private int specificationCompositionMaxDepth = 2;
 
     public static class CentralMarketplaceCondition implements Condition {
 

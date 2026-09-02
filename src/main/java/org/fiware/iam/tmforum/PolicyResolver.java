@@ -221,7 +221,21 @@ public class PolicyResolver {
     }
 
     private List<Map<String, Object>> getAuthorizationPolicyFromPSC(List<ProductSpecificationCharacteristicVO> pscList) {
-        return CharacteristicValues.byValueType(pscList, AUTHORIZATION_POLICY_KEY)
+        return getAuthorizationPolicyFrom(CharacteristicValues.ofProductSpecification(pscList));
+    }
+
+    /**
+     * Read the authorization policies from already normalized characteristics.
+     * <p>
+     * Only the first matching characteristic is read, which is the behaviour every writer in the data
+     * space currently relies on.
+     *
+     * @param characteristics the characteristics of one or more specifications
+     * @return the configured policies, empty if none is configured
+     */
+    private List<Map<String, Object>> getAuthorizationPolicyFrom(
+            List<CharacteristicValues.Characteristic> characteristics) {
+        return CharacteristicValues.byValueType(characteristics, AUTHORIZATION_POLICY_KEY)
                 .map(characteristic -> CharacteristicValues.flatten(objectMapper, characteristic, POLICY_TYPE))
                 .orElseGet(List::of);
     }
