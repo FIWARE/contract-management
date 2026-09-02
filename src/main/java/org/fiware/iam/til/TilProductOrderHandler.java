@@ -29,10 +29,17 @@ public class TilProductOrderHandler implements ProductOrderHandler {
         return allowIssuer(organizationId, productOrderVO);
     }
 
+    /**
+     * Revokes what the order granted.
+     * <p>
+     * The order's configuration is deliberately not resolved: what has to be revoked is what was
+     * granted, which the trusted-issuers-list records under the order's id. A specification that
+     * changed - or became unreadable - since the grant can therefore not prevent the revocation.
+     */
     @Override
     public Mono<HttpResponse<?>> handleProductOrderStop(String organizationId, ProductOrderVO productOrderVO) {
-        return Mono.zip(organizationResolver.getDID(organizationId), credentialsConfigResolver.getCredentialsConfig(productOrderVO))
-                .flatMap(resultTuple -> trustedIssuersListAdapter.denyIssuer(resultTuple.getT1(), resultTuple.getT2()));
+        return organizationResolver.getDID(organizationId)
+                .flatMap(did -> trustedIssuersListAdapter.denyIssuer(did, productOrderVO.getId()));
     }
 
     @Override
@@ -45,7 +52,8 @@ public class TilProductOrderHandler implements ProductOrderHandler {
         return Mono.zip(
                         organizationResolver.getDID(organizationId),
                         credentialsConfigResolver.getCredentialsConfig(productOrderVO))
-                .flatMap(resultTuple -> trustedIssuersListAdapter.allowIssuer(resultTuple.getT1(), resultTuple.getT2()))
+                .flatMap(resultTuple -> trustedIssuersListAdapter.allowIssuer(resultTuple.getT1(),
+                        productOrderVO.getId(), resultTuple.getT2()))
                 .map(success -> {
                     if (success) {
                         return HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED);
