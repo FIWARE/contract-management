@@ -109,7 +109,7 @@
         <!-- OID4VP -->
         <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
         <version.org.bouncycastle>1.81</version.org.bouncycastle>
-        <version.io.github.wistefan.oid4vp-client-lib>0.0.2</version.io.github.wistefan.oid4vp-client-lib>
+        <version.io.github.wistefan.oid4vp-client-lib>0.0.5</version.io.github.wistefan.oid4vp-client-lib>
 
         <!-- configure your local ip address here, in order to enable containers calling back the (local)test-instance -->
         <local.ip>192.168.2.224</local.ip>

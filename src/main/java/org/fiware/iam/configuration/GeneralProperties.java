@@ -100,4 +100,5 @@ public class GeneralProperties {
                     .isEnableTmForum();
         }
     }
+
 }
