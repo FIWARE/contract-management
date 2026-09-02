@@ -3,6 +3,7 @@ package org.fiware.iam.tmforum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import org.fiware.iam.domain.ContractManagement;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
@@ -32,16 +33,22 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Tests the tolerance of the policy resolution. Every case in {@link #incompleteSpecifications()} is
- * a specification shape that occurs in deployed catalogs and used to either raise a
- * {@link NullPointerException} or make the resolution complete empty - both of which abort the
- * activation of the <i>whole</i> order.
+ * Tests the policy resolution's two distinct outcomes.
+ * <p>
+ * Every case in {@link #incompleteSpecifications()} is a specification shape that occurs in deployed
+ * catalogs and used to either raise a {@link NullPointerException} or make the resolution complete
+ * empty - both of which abort the activation of the <i>whole</i> order. They must resolve to "nothing
+ * configured".
+ * <p>
+ * A reference that cannot be read, in contrast, must fail loudly - one test per reference kind
+ * (offering, specification, quote, provider).
  */
 class PolicyResolverTest {
 
@@ -51,6 +58,7 @@ class PolicyResolverTest {
 	private static final String POLICY_ID = "https://mp-operation.org/policy/test";
 	private static final String AUTHORIZATION_POLICY = "authorizationPolicy";
 	private static final String QUOTE_DELETE_ACTION = "delete";
+	private static final String PROVIDER_ORG_ID = "urn:ngsi-ld:organization:provider";
 
 	private ProductOfferingApiClient productOfferingApiClient;
 	private ProductSpecificationApiClient productSpecificationApiClient;
@@ -238,24 +246,68 @@ class PolicyResolverTest {
 	}
 
 	@Test
-	void getAuthorizationPolicy_unresolvableProviderDropsThePolicies() {
+	void getAuthorizationPolicy_unresolvableProviderFailsTheResolution() {
 		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
 		ProductSpecificationVO specification = specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
 				.relatedParty(List.of(new org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO()
-						.id("urn:ngsi-ld:organization:provider")
+						.id(PROVIDER_ORG_ID)
 						.role("provider")));
 		mockSpecification(specification);
 		when(organizationResolver.hasProviderRole("provider")).thenReturn(true);
 		// the provider's contract-management cannot be resolved
 		when(organizationResolver.getContractManagement(any(String.class))).thenReturn(Mono.empty());
 
-		List<PolicyResolver.PolicyConfig> configs = policyResolver
-				.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD))
-				.block();
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD)).block(),
+				"A referenced provider that cannot be resolved must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(PROVIDER_ORG_ID),
+				"The message should name the provider that could not be resolved.");
+		assertEquals(true, exception.getMessage().contains(SPEC_ID),
+				"The message should name the specification holding the reference.");
+	}
 
-		assertNotNull(configs, "An unresolvable provider must not abort the resolution.");
-		assertEquals(List.of(), configs.get(0).policies(),
-				"The policies must be dropped rather than applied locally.");
+	@Test
+	void getAuthorizationPolicy_unreadableOfferingFailsTheResolution() {
+		when(productOfferingApiClient.retrieveProductOffering(eq(OFFER_ID), any())).thenReturn(Mono.empty());
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD)).block(),
+				"A referenced offering that cannot be read must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(OFFER_ID),
+				"The message should name the offering that could not be resolved.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_offeringWithoutBodyFailsTheResolution() {
+		when(productOfferingApiClient.retrieveProductOffering(eq(OFFER_ID), any()))
+				.thenReturn(Mono.just(HttpResponse.ok()));
+
+		assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD)).block(),
+				"An offering response without a body must fail the resolution.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_unreadableSpecificationFailsTheResolution() {
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		when(productSpecificationApiClient.retrieveProductSpecification(eq(SPEC_ID), any())).thenReturn(Mono.empty());
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithItem(OrderItemActionTypeVO.ADD)).block(),
+				"A referenced specification that cannot be read must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(SPEC_ID),
+				"The message should name the specification that could not be resolved.");
+	}
+
+	@Test
+	void getAuthorizationPolicy_unreadableQuoteFailsTheResolution() {
+		when(quoteApiClient.retrieveQuote(eq(QUOTE_ID), any())).thenReturn(Mono.empty());
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> policyResolver.getAuthorizationPolicy(orderWithQuote()).block(),
+				"A referenced quote that cannot be read must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(QUOTE_ID),
+				"The message should name the quote that could not be resolved.");
 	}
 
 	@Test
@@ -263,7 +315,7 @@ class PolicyResolverTest {
 		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
 		ProductSpecificationVO specification = specificationWithPolicyValue(Map.of("odrl:uid", POLICY_ID))
 				.relatedParty(List.of(new org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO()
-						.id("urn:ngsi-ld:organization:provider")
+						.id(PROVIDER_ORG_ID)
 						.role("provider")));
 		mockSpecification(specification);
 		when(organizationResolver.hasProviderRole("provider")).thenReturn(true);

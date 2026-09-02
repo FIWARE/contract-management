@@ -3,6 +3,7 @@ package org.fiware.iam.tmforum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import org.fiware.iam.domain.ContractManagement;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
@@ -33,16 +34,22 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Tests the tolerance of the credential configuration resolution. Every case in
- * {@link #incompleteSpecifications()} is a specification shape that occurs in deployed catalogs and
- * used to either raise a {@link NullPointerException} or make the resolution complete empty - both
- * of which abort the activation of the <i>whole</i> order.
+ * Tests the credential configuration resolution's two distinct outcomes.
+ * <p>
+ * Every case in {@link #incompleteSpecifications()} is a specification shape that occurs in deployed
+ * catalogs and used to either raise a {@link NullPointerException} or make the resolution complete
+ * empty - both of which abort the activation of the <i>whole</i> order. They must resolve to
+ * "nothing configured".
+ * <p>
+ * A reference that cannot be read, in contrast, must fail loudly - one test per reference kind
+ * (offering, specification, quote, provider).
  */
 class CredentialsConfigResolverTest {
 
@@ -52,6 +59,7 @@ class CredentialsConfigResolverTest {
 	private static final String CREDENTIALS_CONFIGURATION = "credentialsConfiguration";
 	private static final String CREDENTIAL_TYPE = "OperatorCredential";
 	private static final String PROVIDER_ROLE = "provider";
+	private static final String PROVIDER_ORG_ID = "urn:ngsi-ld:organization:provider";
 
 	private ProductOfferingApiClient productOfferingApiClient;
 	private ProductSpecificationApiClient productSpecificationApiClient;
@@ -199,23 +207,67 @@ class CredentialsConfigResolverTest {
 	}
 
 	@Test
-	void getCredentialsConfig_unresolvableProviderDropsTheCredentials() {
+	void getCredentialsConfig_unresolvableProviderFailsTheResolution() {
 		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
 		mockSpecification(specificationWithCredentialsValue(Map.of("credentialsType", CREDENTIAL_TYPE))
 				.relatedParty(List.of(new RelatedPartyVO()
-						.id("urn:ngsi-ld:organization:provider")
+						.id(PROVIDER_ORG_ID)
 						.role(PROVIDER_ROLE))));
 		when(organizationResolver.hasProviderRole(PROVIDER_ROLE)).thenReturn(true);
 		// the provider's contract-management cannot be resolved
 		when(organizationResolver.getContractManagement(any(String.class))).thenReturn(Mono.empty());
 
-		List<CredentialsConfigResolver.CredentialConfig> configs = credentialsConfigResolver
-				.getCredentialsConfig(orderWithItem())
-				.block();
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> credentialsConfigResolver.getCredentialsConfig(orderWithItem()).block(),
+				"A referenced provider that cannot be resolved must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(PROVIDER_ORG_ID),
+				"The message should name the provider that could not be resolved.");
+		assertEquals(true, exception.getMessage().contains(SPEC_ID),
+				"The message should name the specification holding the reference.");
+	}
 
-		assertNotNull(configs, "An unresolvable provider must not abort the resolution.");
-		assertEquals(List.of(), configs.get(0).credentialsVOS(),
-				"The credentials must be dropped rather than granted locally.");
+	@Test
+	void getCredentialsConfig_unreadableOfferingFailsTheResolution() {
+		when(productOfferingApiClient.retrieveProductOffering(eq(OFFER_ID), any())).thenReturn(Mono.empty());
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> credentialsConfigResolver.getCredentialsConfig(orderWithItem()).block(),
+				"A referenced offering that cannot be read must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(OFFER_ID),
+				"The message should name the offering that could not be resolved.");
+	}
+
+	@Test
+	void getCredentialsConfig_offeringWithoutBodyFailsTheResolution() {
+		when(productOfferingApiClient.retrieveProductOffering(eq(OFFER_ID), any()))
+				.thenReturn(Mono.just(HttpResponse.ok()));
+
+		assertThrows(TMForumException.class,
+				() -> credentialsConfigResolver.getCredentialsConfig(orderWithItem()).block(),
+				"An offering response without a body must fail the resolution.");
+	}
+
+	@Test
+	void getCredentialsConfig_unreadableSpecificationFailsTheResolution() {
+		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
+		when(productSpecificationApiClient.retrieveProductSpecification(eq(SPEC_ID), any())).thenReturn(Mono.empty());
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> credentialsConfigResolver.getCredentialsConfig(orderWithItem()).block(),
+				"A referenced specification that cannot be read must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(SPEC_ID),
+				"The message should name the specification that could not be resolved.");
+	}
+
+	@Test
+	void getCredentialsConfig_unreadableQuoteFailsTheResolution() {
+		when(quoteApiClient.retrieveQuote(eq(QUOTE_ID), any())).thenReturn(Mono.empty());
+
+		TMForumException exception = assertThrows(TMForumException.class,
+				() -> credentialsConfigResolver.getCredentialsConfig(orderWithQuote()).block(),
+				"A referenced quote that cannot be read must fail the resolution.");
+		assertEquals(true, exception.getMessage().contains(QUOTE_ID),
+				"The message should name the quote that could not be resolved.");
 	}
 
 	@Test
@@ -223,7 +275,7 @@ class CredentialsConfigResolverTest {
 		mockOffer(new ProductOfferingVO().id(OFFER_ID).productSpecification(new ProductSpecificationRefVO().id(SPEC_ID)));
 		mockSpecification(specificationWithCredentialsValue(Map.of("credentialsType", CREDENTIAL_TYPE))
 				.relatedParty(List.of(new RelatedPartyVO()
-						.id("urn:ngsi-ld:organization:provider")
+						.id(PROVIDER_ORG_ID)
 						.role(PROVIDER_ROLE))));
 		when(organizationResolver.hasProviderRole(PROVIDER_ROLE)).thenReturn(true);
 		when(organizationResolver.getContractManagement(any(String.class)))
