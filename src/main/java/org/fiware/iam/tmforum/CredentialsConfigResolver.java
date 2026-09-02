@@ -223,7 +223,21 @@ public class CredentialsConfigResolver {
     }
 
     private List<CredentialsVO> getCredentialsConfigFromPSC(List<ProductSpecificationCharacteristicVO> pscList) {
-        return CharacteristicValues.byValueType(pscList, CREDENTIALS_CONFIG_KEY)
+        return getCredentialsConfigFrom(CharacteristicValues.ofProductSpecification(pscList));
+    }
+
+    /**
+     * Read the credential configuration from already normalized characteristics.
+     * <p>
+     * Only the first matching characteristic is read, which is the behaviour every writer in the data
+     * space currently relies on.
+     *
+     * @param characteristics the characteristics of one or more specifications
+     * @return the configured credentials, empty if none is configured
+     */
+    private List<CredentialsVO> getCredentialsConfigFrom(
+            List<CharacteristicValues.Characteristic> characteristics) {
+        return CharacteristicValues.byValueType(characteristics, CREDENTIALS_CONFIG_KEY)
                 .map(characteristic -> CharacteristicValues.flatten(objectMapper, characteristic, CREDENTIALS_TYPE))
                 .orElseGet(List::of);
     }
