@@ -40,8 +40,11 @@ public class ContractManagementController implements OrderApi {
                 .map(policy -> papAdapter.createPolicy(orderVO.getCustomerId(), orderVO.getOrderId(), policy.getAdditionalProperties()))
                 .toList();
         List<CredentialsVO> credentialsVOS = orderVO.getCredentialsConfig().stream().map(cmMapper::map).toList();
+        // the originating order scopes the grant here too, so this participant can revoke exactly it
         Mono<Boolean> tilResult = trustedIssuersListAdapter
-                .allowIssuer(orderVO.getCustomerId(), List.of(new CredentialsConfigResolver.CredentialConfig(new ContractManagement(true), credentialsVOS)));
+                .allowIssuer(orderVO.getCustomerId(), orderVO.getOrderId(),
+                        List.of(new CredentialsConfigResolver.CredentialConfig(new ContractManagement(true),
+                                credentialsVOS)));
 
         List<Mono<Boolean>> successList = new ArrayList<>(creationResults);
         successList.add(tilResult);
@@ -51,21 +54,15 @@ public class ContractManagementController implements OrderApi {
 
     @Override
     public Mono<HttpResponse<Object>> handleOrderStop(OrderEventVO orderStopEventVO) {
-        CredentialsConfigResolver.CredentialConfig credentialConfig = new CredentialsConfigResolver.CredentialConfig(
-                new ContractManagement(true),
-                orderStopEventVO.getCredentialsConfig()
-                        .stream()
-                        .map(cmMapper::map)
-                        .toList());
-
         String orderId = orderStopEventVO.getOrderId();
         String issuerId = orderStopEventVO.getCustomerId();
         List<Mono<Boolean>> policyDeleteResults = orderStopEventVO.getPolicies()
                 .stream()
                 .map(odrlPolicyJsonVO -> papAdapter.deletePolicy(orderId, odrlPolicyJsonVO.getAdditionalProperties()))
                 .toList();
-        Mono<Boolean> issuerDenyResult = trustedIssuersListAdapter.denyIssuer(issuerId,
-                        List.of(credentialConfig))
+        // what has to be revoked is what was granted, which the trusted-issuers-list records under
+        // the order's id - the credentials in the event are not needed for it
+        Mono<Boolean> issuerDenyResult = trustedIssuersListAdapter.denyIssuer(issuerId, orderId)
                 .map(HttpResponse::getStatus)
                 .map(HttpStatus::getCode)
                 .map(code -> code > 199 && code < 300);

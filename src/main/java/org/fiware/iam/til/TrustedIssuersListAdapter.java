@@ -1,25 +1,29 @@
 package org.fiware.iam.til;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
-import io.micronaut.http.exceptions.HttpException;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
-import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
-import org.fiware.iam.til.model.TrustedIssuerVO;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
 import reactor.core.publisher.Mono;
 
-import java.util.*;
+import java.util.List;
 
+/**
+ * Grants and revokes credentials at the trusted-issuers-list on behalf of a product order.
+ * <p>
+ * Every credential is attributed to the order that granted it - its <i>scope</i> - so that revoking
+ * one order cannot remove a credential another order still requires. That matters as soon as two
+ * products share configuration, which is the normal case once the configuration lives on a
+ * {@code ServiceSpecification} several products are composed of.
+ * <p>
+ * Requires trusted-issuers-list {@code 0.9.0} or newer for the scope-addressed endpoints.
+ */
 @Singleton
 @RequiredArgsConstructor
 @Slf4j
@@ -27,101 +31,77 @@ public class TrustedIssuersListAdapter {
 
     private final IssuerApiClient apiClient;
 
-    public Mono<Boolean> allowIssuer(String issuerDid, List<CredentialsConfigResolver.CredentialConfig> credentialsConfig) {
+    /**
+     * Grant the credentials an order configures to the given issuer.
+     * <p>
+     * The grant replaces whatever the same order granted before, so a redelivered notification
+     * converges instead of accumulating entries. The issuer is created by the trusted-issuers-list if
+     * it is not known yet.
+     *
+     * @param issuerDid         the issuer to grant to
+     * @param orderId           the order the credentials are granted by
+     * @param credentialsConfig the resolved configuration, of which only the locally managed part is granted
+     * @return whether the grant succeeded
+     */
+    public Mono<Boolean> allowIssuer(String issuerDid, String orderId,
+            List<CredentialsConfigResolver.CredentialConfig> credentialsConfig) {
 
         List<CredentialsVO> credentialsVOS = filterLocalCredentialsVO(credentialsConfig);
         if (credentialsVOS.isEmpty()) {
-            // nothing to do, if no local cm is configured
+            // nothing to grant locally - and creating an empty issuer entry would be misleading
+            log.debug("Order {} grants no locally managed credential to {}.", orderId, issuerDid);
             return Mono.just(true);
         }
 
-        return getIssuer(issuerDid)
-                .onErrorResume(e -> {
-                    if (e instanceof HttpClientResponseException hcr && hcr.getStatus() == HttpStatus.NOT_FOUND) {
-                        log.debug("Requested issuer {} does not exist.", issuerDid);
-                        return Mono.just(Optional.empty());
-                    }
-                    throw new TrustedIssuersException("Client error on issuer retrieval.", e);
-                })
-                .flatMap(optionalIssuer -> {
-                    if (optionalIssuer.isPresent()) {
-                        TrustedIssuerVO trustedIssuerVO = optionalIssuer.get();
-                        Set<CredentialsVO> credentialsVOSet = new HashSet<>(trustedIssuerVO.getCredentials());
-                        credentialsVOSet.addAll(credentialsVOS);
-                        trustedIssuerVO.setCredentials(new ArrayList<>(credentialsVOSet));
-                        try {
-                            log.debug("Updating existing issuer with {}", new ObjectMapper().writeValueAsString(trustedIssuerVO));
-                        } catch (JsonProcessingException e) {
-                            throw new RuntimeException(e);
-                        }
-                        return apiClient.updateIssuer(issuerDid, trustedIssuerVO)
-                                .map(TrustedIssuersListAdapter::isSuccess);
-                    } else {
-                        //remove duplicates
-                        Set<CredentialsVO> credentialsVOSet = new HashSet<>(credentialsVOS);
-                        TrustedIssuerVO newIssuer = new TrustedIssuerVO().did(issuerDid).credentials(new ArrayList<>(credentialsVOSet));
-                        log.debug("Adding new issuer with {}", newIssuer);
-                        return apiClient.createTrustedIssuer(newIssuer).map(TrustedIssuersListAdapter::isSuccess);
-                    }
-                })
+        // deferred, so the call is issued on subscription and a synchronous failure of the client is
+        // signalled through the returned Mono like any other error
+        return Mono.defer(() -> apiClient.replaceCredentialsByScope(issuerDid, orderId, credentialsVOS))
+                .map(TrustedIssuersListAdapter::isSuccess)
                 .onErrorMap(e -> {
                     log.warn("Failed to allow.", e);
                     throw new TrustedIssuersException("Was not able to allow the issuer.", e);
                 });
     }
 
-    private static boolean isSuccess(HttpResponse response) {
-        return response.getStatus().getCode() > 199 && response.getStatus().getCode() < 300;
-    }
-
-    public Mono<HttpResponse<?>> denyIssuer(String issuerDid, List<CredentialsConfigResolver.CredentialConfig> credentialsConfig) {
-
-        List<CredentialsVO> credentialsVOS = filterLocalCredentialsVO(credentialsConfig);
-        if (credentialsVOS.isEmpty()) {
-            // nothing to do, if no local cm is configured
-            return Mono.just(HttpResponse.noContent());
-        }
-        return getIssuer(issuerDid)
+    /**
+     * Revoke everything the given order granted to the given issuer.
+     * <p>
+     * Deliberately does not resolve the order's configuration: what has to be revoked is what was
+     * granted, and that is recorded at the trusted-issuers-list under the order's id. A specification
+     * that changed - or became unreadable - since the grant therefore cannot prevent the revocation.
+     * Credentials granted by another order, and credentials an operator manages by hand, are not
+     * touched.
+     *
+     * @param issuerDid the issuer to revoke from
+     * @param orderId   the order whose grants are revoked
+     * @return the response of the trusted-issuers-list
+     */
+    public Mono<HttpResponse<?>> denyIssuer(String issuerDid, String orderId) {
+        return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId))
+                .<HttpResponse<?>>map(response -> response)
                 .onErrorResume(e -> {
-                    log.info("Was not able to get the issuer.", e);
-                    return Mono.just(Optional.empty());
-                })
-                .flatMap(optionalIssuer -> {
-                    if (optionalIssuer.isPresent()) {
-                        TrustedIssuerVO updatedIssuer = optionalIssuer.get();
-                        credentialsVOS.forEach(updatedIssuer::removeCredentialsItem);
-                        try {
-                            log.debug("Updating existing issuer with {}", new ObjectMapper().writeValueAsString(updatedIssuer));
-                        } catch (JsonProcessingException e) {
-                            throw new RuntimeException(e);
-                        }
-                        return apiClient.updateIssuer(issuerDid, updatedIssuer);
+                    if (e instanceof HttpClientResponseException hcr && hcr.getStatus() == HttpStatus.NOT_FOUND) {
+                        // nothing was ever granted to that issuer, so there is nothing to revoke
+                        log.debug("Issuer {} is unknown to the trusted-issuers-list, nothing to revoke for order {}.",
+                                issuerDid, orderId);
+                        return Mono.just(HttpResponse.noContent());
                     }
-                    return Mono.just(HttpResponse.noContent());
-                })
-                .onErrorMap(e -> {
                     throw new TrustedIssuersException("Was not able to deny the issuer.", e);
                 });
     }
 
-    private Mono<Optional<TrustedIssuerVO>> getIssuer(String issuerDid) {
-        return apiClient.getIssuer(issuerDid)
-                .map(trustedIssuerVOHttpResponse -> {
-                    if (trustedIssuerVOHttpResponse.code() != HttpStatus.OK.getCode()) {
-                        log.debug("Could not find issuer {} in Trusted Issuers List. Status {}", issuerDid, trustedIssuerVOHttpResponse.code());
-                        return Optional.empty();
-                    }
-                    return Optional.ofNullable(trustedIssuerVOHttpResponse.body());
-                });
-
+    private static boolean isSuccess(HttpResponse<?> response) {
+        return response.getStatus().getCode() > 199 && response.getStatus().getCode() < 300;
     }
 
     // only return credentials intended for local
-    private List<CredentialsVO> filterLocalCredentialsVO(List<CredentialsConfigResolver.CredentialConfig> credentialsConfig) {
+    private List<CredentialsVO> filterLocalCredentialsVO(
+            List<CredentialsConfigResolver.CredentialConfig> credentialsConfig) {
         return credentialsConfig.stream()
                 .filter(credentialConfig -> credentialConfig.contractManagement().isLocal())
                 .map(CredentialsConfigResolver.CredentialConfig::credentialsVOS)
                 .flatMap(List::stream)
+                .distinct()
                 .toList();
     }
 }
