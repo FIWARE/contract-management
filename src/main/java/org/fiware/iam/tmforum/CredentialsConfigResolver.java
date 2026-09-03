@@ -3,17 +3,16 @@ package org.fiware.iam.tmforum;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
-import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.ProductSpecificationRefVO;
-import org.fiware.iam.tmforum.productcatalog.model.RelatedPartyVO;
 import org.fiware.iam.tmforum.productcatalog.model.*;
 import org.fiware.iam.tmforum.productorder.model.ProductOfferingRefVO;
 import org.fiware.iam.tmforum.productorder.model.*;
@@ -23,11 +22,38 @@ import org.fiware.iam.tmforum.quote.model.QuoteStateTypeVO;
 import org.fiware.iam.tmforum.quote.model.QuoteVO;
 import reactor.core.publisher.Mono;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+/**
+ * Extract the credential configuration from ProductOrders, either from the connected Quote or
+ * ProductSpec.
+ * <p>
+ * Resolution distinguishes two cases that used to look the same:
+ * <ul>
+ *     <li><b>Nothing is configured.</b> An order without items, an offering that bundles others
+ *     instead of referencing a specification, a specification without a
+ *     {@code credentialsConfiguration} characteristic - all of these legitimately configure no
+ *     credential and contribute an empty configuration. They must not fail the resolution, because
+ *     the result is consumed inside a TMForum notification handler: an aborted resolution answers
+ *     the hub with an error, the hub redelivers the notification, and every other handler of the
+ *     same order runs again.</li>
+ *     <li><b>A referenced configuration cannot be resolved.</b> An offering, specification, quote or
+ *     provider that is referenced but cannot be read is a broken catalog, not an empty
+ *     configuration. It is logged and raised as a {@link TMForumException} rather than silently
+ *     ignored - activating an order while parts of its configuration could not be read would grant
+ *     access nobody can account for.</li>
+ * </ul>
+ * <p>
+ * When the ordered specification is composed of {@code ServiceSpecification}s, the credential
+ * configuration of every part is <b>unioned</b>: the effective configuration of a product is the
+ * union over the product and its parts, de-duplicated by value. Note that the trusted-issuers-list
+ * evaluates several configurations of the same credential type as an OR, so the union is a widening
+ * operation - a permissive part relaxes a restrictive one.
+ */
 @Requires(condition = GeneralProperties.TmForumCondition.class)
 @Singleton
 @Slf4j
@@ -36,6 +62,13 @@ public class CredentialsConfigResolver {
 
     private static final String CREDENTIALS_CONFIG_KEY = "credentialsConfiguration";
     private static final String QUOTE_DELETE_ACTION = "delete";
+    private static final String OFFERING_NOT_RESOLVABLE = "The referenced product offering %s could not be resolved.";
+    private static final String SPECIFICATION_NOT_RESOLVABLE = "The product specification %s referenced by offering %s could not be resolved.";
+    private static final String PROVIDER_NOT_RESOLVABLE = "The contract-management of provider %s referenced by product specification %s could not be resolved.";
+    private static final String QUOTE_NOT_RESOLVABLE = "The quote %s referenced by the order could not be resolved.";
+    private static final String CONFLICTING_PROVIDERS = "The composition of specification %s declares more than one provider: %s. Composition across providers is not supported.";
+    private static final TypeReference<CredentialsVO> CREDENTIALS_TYPE = new TypeReference<>() {
+    };
 
     private final ObjectMapper objectMapper;
     private final OrganizationResolver organizationResolver;
@@ -43,105 +76,255 @@ public class CredentialsConfigResolver {
     private final ProductOfferingApiClient productOfferingApiClient;
     private final ProductSpecificationApiClient productSpecificationApiClient;
     private final QuoteApiClient quoteApiClient;
-    private final OrganizationResolver orgResolver;
+    private final SpecificationGraphResolver specificationGraphResolver;
 
+    /**
+     * Resolve the credential configurations for the given order.
+     * <p>
+     * The configuration is taken from the accepted quote when the order references one, and from the
+     * ordered offerings otherwise.
+     *
+     * @param productOrder the completed (or stopped) order
+     * @return one configuration per resolved offering, empty list if the order configures nothing
+     * @throws TMForumException if a referenced offering, specification, quote or provider cannot be resolved
+     */
     public Mono<List<CredentialConfig>> getCredentialsConfig(ProductOrderVO productOrder) {
         if (productOrder.getQuote() != null && !productOrder.getQuote().isEmpty()) {
             return getCredentialsConfigFromQuote(productOrder.getQuote());
         }
         log.debug("No quote found, take the original offer from the order item.");
-        List<Mono<CredentialConfig>> credentialsVOMonoList = productOrder.getProductOrderItem()
+        List<Mono<CredentialConfig>> credentialsVOMonoList = Optional
+                .ofNullable(productOrder.getProductOrderItem())
+                .orElseGet(List::of)
                 .stream()
+                .filter(Objects::nonNull)
                 .filter(poi -> poi.getAction() == OrderItemActionTypeVO.ADD || poi.getAction() == OrderItemActionTypeVO.MODIFY)
                 .map(ProductOrderItemVO::getProductOffering)
+                .filter(Objects::nonNull)
                 .map(ProductOfferingRefVO::getId)
+                .filter(Objects::nonNull)
                 .map(this::getCredentialsConfigFromOffer)
                 .toList();
 
-        return zipMonoListCC(credentialsVOMonoList);
+        return zipToList(credentialsVOMonoList);
     }
 
-
-    private Mono<List<CredentialConfig>> zipMonoListCC(List<Mono<CredentialConfig>> monoList) {
-        return Mono.zip(monoList, results -> Stream.of(results).map(r -> (CredentialConfig) r).toList());
-
+    /**
+     * Combine the per-offering resolutions into one list.
+     * <p>
+     * {@link Mono#zip(Iterable, java.util.function.Function)} completes <i>empty</i> for an empty
+     * iterable, which would silently drop the whole order, so the empty case is answered with an
+     * empty list instead. Every element mono is guaranteed to either emit exactly one value or fail.
+     */
+    private static <T> Mono<List<T>> zipToList(List<Mono<T>> monoList) {
+        if (monoList.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        return Mono.zip(monoList, results -> Stream.of(results).map(result -> (T) result).toList());
     }
 
-    private Mono<List<CredentialConfig>> zipMonoList(List<Mono<List<CredentialConfig>>> monoList) {
-        return Mono.zip(monoList, results -> Stream.of(results).map(r -> (List<CredentialConfig>) r).flatMap(List::stream).toList());
-
+    /**
+     * Combine resolutions that each already yield a list, flattening the result.
+     *
+     * @see #zipToList(List)
+     */
+    private static <T> Mono<List<T>> zipToFlatList(List<Mono<List<T>>> monoList) {
+        if (monoList.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        return Mono.zip(monoList, results -> Stream.of(results)
+                .map(result -> (List<T>) result)
+                .flatMap(List::stream)
+                .toList());
     }
 
     private Mono<CredentialConfig> getCredentialsConfigFromOffer(String offerId) {
-
         return productOfferingApiClient
                 .retrieveProductOffering(offerId, null)
-                .map(HttpResponse::body)
-                .map(ProductOfferingVO::getProductSpecification)
-                .map(ProductSpecificationRefVO::getId)
-                .flatMap(specId -> productSpecificationApiClient.retrieveProductSpecification(specId, null))
-                .map(HttpResponse::body)
-                .flatMap(psvo -> {
-                    List<CredentialsVO> credentialsVOS = getCredentialsConfigFromPSC(psvo.getProductSpecCharacteristic());
-
-                    Optional<String> partyId = Optional.ofNullable(psvo.getRelatedParty())
-                            .orElse(List.of())
-                            .stream()
-                            .filter(relatedPartyVO -> orgResolver.hasProviderRole(relatedPartyVO.getRole()))
-                            .map(RelatedPartyVO::getId)
-                            .findAny();
-                    return partyId.map(string ->
-                                    organizationResolver.getContractManagement(string)
-                                            .map(cm -> new CredentialConfig(cm, credentialsVOS)))
-                            .orElseGet(() -> Mono.just(new CredentialConfig(new ContractManagement(true), credentialsVOS)));
-                });
+                .flatMap(response -> getCredentialsConfigFromSpecificationOf(response.body(), offerId))
+                .switchIfEmpty(Mono.error(() -> unresolvableReference(OFFERING_NOT_RESOLVABLE.formatted(offerId))));
     }
 
+    private Mono<CredentialConfig> getCredentialsConfigFromSpecificationOf(ProductOfferingVO productOffering,
+            String offerId) {
+        if (productOffering == null) {
+            return Mono.error(unresolvableReference(OFFERING_NOT_RESOLVABLE.formatted(offerId)));
+        }
+        String specificationId = Optional.ofNullable(productOffering.getProductSpecification())
+                .map(ProductSpecificationRefVO::getId)
+                .orElse(null);
+        if (specificationId == null) {
+            // bundled offerings do not reference a specification of their own - nothing to configure here
+            log.info("The offering {} does not reference a product specification, no credentials config will be resolved.",
+                    productOffering.getId());
+            return Mono.just(emptyConfig());
+        }
+        return productSpecificationApiClient.retrieveProductSpecification(specificationId, null)
+                .flatMap(response -> toCredentialConfig(response.body(), specificationId, offerId))
+                .switchIfEmpty(Mono.error(() -> unresolvableReference(
+                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId))));
+    }
+
+    private Mono<CredentialConfig> toCredentialConfig(ProductSpecificationVO productSpecification,
+            String specificationId, String offerId) {
+        if (productSpecification == null) {
+            return Mono.error(unresolvableReference(
+                    SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId)));
+        }
+        return specificationGraphResolver.resolve(productSpecification)
+                .flatMap(graph -> toCredentialConfig(graph, productSpecification.getId()));
+    }
+
+    private Mono<CredentialConfig> toCredentialConfig(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<CredentialsVO> credentialsVOS = aggregateCredentials(graph);
+        return governingProvider(graph, specificationId)
+                .map(id -> organizationResolver.getContractManagement(id)
+                        .map(cm -> new CredentialConfig(cm, credentialsVOS))
+                        // a referenced provider that cannot be resolved is a broken reference, not an empty config
+                        .switchIfEmpty(Mono.error(() -> unresolvableReference(
+                                PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId)))))
+                .orElseGet(() -> Mono.just(new CredentialConfig(new ContractManagement(true), credentialsVOS)));
+    }
+
+    /**
+     * Union the credential configuration of every specification in the composition.
+     * <p>
+     * The first matching characteristic is read <i>per specification</i>, so a composed product
+     * contributes one credential configuration per part rather than only the first one found.
+     * Identical entries are de-duplicated, since a service specification shared by several parts of
+     * the same product is normal - and the trusted-issuers-list de-duplicates by value as well.
+     *
+     * @param graph the resolved composition
+     * @return the effective credential configuration of the product
+     */
+    private List<CredentialsVO> aggregateCredentials(SpecificationGraphResolver.SpecificationGraph graph) {
+        return List.copyOf(new LinkedHashSet<>(graph.nodes()
+                .stream()
+                .map(SpecificationGraphResolver.SpecificationNode::characteristics)
+                .map(this::getCredentialsConfigFrom)
+                .flatMap(List::stream)
+                .toList()));
+    }
+
+    /**
+     * The single provider responsible for the whole composition.
+     * <p>
+     * One order activates at exactly one contract-management, so a composition that declares more
+     * than one provider is refused: splitting an activation across two contract-managements has no
+     * rollback story - one side would grant and the other would not. A part that declares no provider
+     * inherits the one of the composition, which is the shape BAE produces (it replaces
+     * {@code relatedParty} with commercial roles only).
+     *
+     * @param graph           the resolved composition
+     * @param specificationId the ordered specification, for the error message
+     * @return the responsible provider, or empty if the composition declares none
+     * @throws TMForumException if the composition declares more than one provider
+     */
+    private Optional<String> governingProvider(SpecificationGraphResolver.SpecificationGraph graph,
+            String specificationId) {
+        List<String> providers = graph.nodes()
+                .stream()
+                .map(SpecificationGraphResolver.SpecificationNode::relatedParties)
+                .flatMap(List::stream)
+                .filter(party -> organizationResolver.hasProviderRole(party.role()))
+                .map(SpecificationGraphResolver.PartyReference::id)
+                .distinct()
+                .toList();
+        if (providers.size() > 1) {
+            String message = CONFLICTING_PROVIDERS.formatted(specificationId, providers);
+            log.error(message);
+            throw new TMForumException(message);
+        }
+        return providers.stream().findFirst();
+    }
 
     private Mono<List<CredentialConfig>> getCredentialsConfigFromQuote(List<QuoteRefVO> quoteRefVOS) {
-        return zipMonoList(quoteRefVOS.stream()
+        return zipToFlatList(quoteRefVOS.stream()
+                .filter(Objects::nonNull)
                 .map(QuoteRefVO::getId)
+                .filter(Objects::nonNull)
                 .map(quoteId -> quoteApiClient.retrieveQuote(quoteId, null)
-                        .map(HttpResponse::body)
-                        .filter(quoteVO -> quoteVO.getState() == QuoteStateTypeVO.ACCEPTED)
-                        .map(QuoteVO::getQuoteItem)
-                        .flatMap(quoteItemList -> {
-                            List<Mono<CredentialConfig>> configMonos = quoteItemList.stream()
-                                    .filter(item -> item.getState().equals(QuoteStateTypeVO.ACCEPTED.getValue()))
-                                    .filter(item -> !item.getAction().equals(QUOTE_DELETE_ACTION))
-                                    .map(QuoteItemVO::getProductOffering)
-                                    .map(org.fiware.iam.tmforum.quote.model.ProductOfferingRefVO::getId)
-                                    .map(this::getCredentialsConfigFromOffer)
-                                    .toList();
-                            return zipMonoListCC(configMonos);
-                        }))
+                        .flatMap(response -> getCredentialsConfigFrom(response.body(), quoteId))
+                        .switchIfEmpty(Mono.error(() -> unresolvableReference(
+                                QUOTE_NOT_RESOLVABLE.formatted(quoteId)))))
+                .toList());
+    }
+
+    private Mono<List<CredentialConfig>> getCredentialsConfigFrom(QuoteVO quote, String quoteId) {
+        if (quote == null) {
+            return Mono.error(unresolvableReference(QUOTE_NOT_RESOLVABLE.formatted(quoteId)));
+        }
+        if (quote.getState() != QuoteStateTypeVO.ACCEPTED) {
+            // a quote that is not accepted (anymore) configures nothing
+            log.debug("The quote {} is in state {}, no credentials config will be resolved.", quoteId,
+                    quote.getState());
+            return Mono.just(List.of());
+        }
+        return getCredentialsConfigFromQuoteItems(quote.getQuoteItem());
+    }
+
+    private Mono<List<CredentialConfig>> getCredentialsConfigFromQuoteItems(List<QuoteItemVO> quoteItems) {
+        return zipToList(Optional.ofNullable(quoteItems)
+                .orElseGet(List::of)
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(item -> QuoteStateTypeVO.ACCEPTED.getValue().equals(item.getState()))
+                .filter(item -> !QUOTE_DELETE_ACTION.equals(item.getAction()))
+                .map(QuoteItemVO::getProductOffering)
+                .filter(Objects::nonNull)
+                .map(org.fiware.iam.tmforum.quote.model.ProductOfferingRefVO::getId)
+                .filter(Objects::nonNull)
+                .map(this::getCredentialsConfigFromOffer)
                 .toList());
     }
 
     private List<CredentialsVO> getCredentialsConfigFromPSC(List<ProductSpecificationCharacteristicVO> pscList) {
-        return pscList.stream()
-                .filter(psc -> psc.getValueType().equals(CREDENTIALS_CONFIG_KEY))
-                .findFirst()
-                .map(productSpecificationCharacteristicVO -> productSpecificationCharacteristicVO
-                        .getProductSpecCharacteristicValue()
-                        .stream()
-                        .map(CharacteristicValueSpecificationVO::getValue)
-                        .map(value -> {
-                            try {
-                                List<CredentialsVO> credentialsVOS = objectMapper.convertValue(value, new TypeReference<List<CredentialsVO>>() {
-                                });
-                                log.debug("Config is {}", credentialsVOS);
-                                return credentialsVOS;
-                            } catch (IllegalArgumentException iae) {
-                                log.warn("The characteristic value is invalid.", iae);
-                                return null;
-                            }
-                        })
-                        .filter(Objects::nonNull)
-                        .flatMap(List::stream)
-                        .toList()).orElseGet(List::of);
+        return getCredentialsConfigFrom(CharacteristicValues.ofProductSpecification(pscList));
     }
 
+    /**
+     * Read the credential configuration from already normalized characteristics.
+     * <p>
+     * Only the first matching characteristic is read, which is the behaviour every writer in the data
+     * space currently relies on.
+     *
+     * @param characteristics the characteristics of one or more specifications
+     * @return the configured credentials, empty if none is configured
+     */
+    private List<CredentialsVO> getCredentialsConfigFrom(
+            List<CharacteristicValues.Characteristic> characteristics) {
+        return CharacteristicValues.byValueType(characteristics, CREDENTIALS_CONFIG_KEY)
+                .map(characteristic -> CharacteristicValues.flatten(objectMapper, characteristic, CREDENTIALS_TYPE))
+                .orElseGet(List::of);
+    }
+
+    private static CredentialConfig emptyConfig() {
+        return new CredentialConfig(new ContractManagement(true), List.of());
+    }
+
+    /**
+     * Log and build the exception for a configuration that is referenced but cannot be read.
+     * <p>
+     * Only ever called on the failing path, so it is safe to log here - but it must be invoked
+     * lazily (via {@link Mono#error(java.util.function.Supplier)}), since the arguments of
+     * {@code switchIfEmpty} are evaluated when the pipeline is assembled, not when it fails.
+     *
+     * @param message what could not be resolved
+     * @return the exception to raise
+     */
+    private static TMForumException unresolvableReference(String message) {
+        log.error(message);
+        return new TMForumException(message);
+    }
+
+    /**
+     * The credential configuration of one offering, together with the contract-management responsible
+     * for granting it.
+     *
+     * @param contractManagement the responsible contract-management, local unless the provider declares one
+     * @param credentialsVOS     the configured credentials, possibly empty
+     */
     public record CredentialConfig(ContractManagement contractManagement, List<CredentialsVO> credentialsVOS) {
     }
 }
