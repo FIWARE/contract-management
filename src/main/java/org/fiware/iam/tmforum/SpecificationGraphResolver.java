@@ -5,6 +5,9 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
+import io.micronaut.core.annotation.Nullable;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
 import org.fiware.iam.tmforum.productcatalog.model.BundledProductSpecificationVO;
@@ -180,6 +183,7 @@ public class SpecificationGraphResolver {
 
 	private Mono<SpecificationNode> resolveServiceSpecification(String serviceId, String referencedBy) {
 		return serviceSpecificationApiClient.retrieveServiceSpecification(serviceId, null)
+				.onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(KIND_SERVICE, serviceId, referencedBy, e))
 				.flatMap(response -> {
 					ServiceSpecificationVO serviceSpecification = response.body();
 					if (serviceSpecification == null) {
@@ -192,6 +196,7 @@ public class SpecificationGraphResolver {
 
 	private Mono<ProductSpecificationVO> resolveProductSpecification(String specificationId, String referencedBy) {
 		return productSpecificationApiClient.retrieveProductSpecification(specificationId, null)
+				.onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(KIND_PRODUCT, specificationId, referencedBy, e))
 				.flatMap(response -> {
 					ProductSpecificationVO productSpecification = response.body();
 					if (productSpecification == null) {
@@ -245,16 +250,21 @@ public class SpecificationGraphResolver {
 	}
 
 	/**
-	 * Log and build the exception for a specification that is referenced but cannot be read.
+	 * Build the exception for a specification that is referenced but cannot be read. It is not logged
+	 * here: the order handler logs it once, together with the order it belongs to.
 	 * <p>
 	 * Must be invoked lazily from {@code switchIfEmpty} (via
 	 * {@link Mono#error(java.util.function.Supplier)}), since the arguments of {@code switchIfEmpty}
 	 * are evaluated when the pipeline is assembled, not when it fails.
 	 */
 	private static TMForumException unresolvableReference(String kind, String specificationId, String referencedBy) {
-		String message = SPECIFICATION_NOT_RESOLVABLE.formatted(kind, specificationId, referencedBy);
-		log.error(message);
-		return new TMForumException(message);
+		return unresolvableReference(kind, specificationId, referencedBy, null);
+	}
+
+	private static TMForumException unresolvableReference(String kind, String specificationId, String referencedBy,
+			@Nullable Throwable cause) {
+		return new TMForumException(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+				SPECIFICATION_NOT_RESOLVABLE.formatted(kind, specificationId, referencedBy), cause);
 	}
 
 	private static List<SpecificationNode> withParentFirst(SpecificationNode parent, List<SpecificationNode> children) {

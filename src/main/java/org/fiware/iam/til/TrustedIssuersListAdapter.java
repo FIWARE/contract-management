@@ -6,6 +6,7 @@ import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.CredentialsVO;
@@ -55,11 +56,20 @@ public class TrustedIssuersListAdapter {
 
         // deferred, so the call is issued on subscription and a synchronous failure of the client is
         // signalled through the returned Mono like any other error
+        List<String> credentialTypes = credentialsVOS.stream().map(CredentialsVO::getCredentialsType).toList();
         return Mono.defer(() -> apiClient.replaceCredentialsByScope(issuerDid, orderId, credentialsVOS))
-                .map(TrustedIssuersListAdapter::isSuccess)
-                .onErrorMap(e -> {
-                    log.warn("Failed to allow.", e);
-                    throw new TrustedIssuersException("Was not able to allow the issuer.", e);
+                .onErrorMap(e -> new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER,
+                        "The trusted-issuers-list did not allow issuer %s the credentials %s for order %s.".formatted(
+                                issuerDid, credentialTypes, orderId), e))
+                .map(response -> {
+                    if (!isSuccess(response)) {
+                        log.warn("Order {}: the trusted-issuers-list answered the grant of {} to issuer {} with status {}.",
+                                orderId, credentialTypes, issuerDid, response.getStatus().getCode());
+                        return false;
+                    }
+                    log.info("Order {}: allowed issuer {} the credentials {} at the trusted-issuers-list.",
+                            orderId, issuerDid, credentialTypes);
+                    return true;
                 });
     }
 
@@ -78,7 +88,10 @@ public class TrustedIssuersListAdapter {
      */
     public Mono<HttpResponse<?>> denyIssuer(String issuerDid, String orderId) {
         return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId))
-                .<HttpResponse<?>>map(response -> response)
+                .<HttpResponse<?>>map(response -> {
+                    log.info("Order {}: revoked the credentials of issuer {} at the trusted-issuers-list.", orderId, issuerDid);
+                    return response;
+                })
                 .onErrorResume(e -> {
                     if (e instanceof HttpClientResponseException hcr && hcr.getStatus() == HttpStatus.NOT_FOUND) {
                         // nothing was ever granted to that issuer, so there is nothing to revoke
@@ -86,7 +99,8 @@ public class TrustedIssuersListAdapter {
                                 issuerDid, orderId);
                         return Mono.just(HttpResponse.noContent());
                     }
-                    throw new TrustedIssuersException("Was not able to deny the issuer.", e);
+                    return Mono.error(new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER,
+                            "The trusted-issuers-list did not revoke the credentials of issuer %s for order %s.".formatted(issuerDid, orderId), e));
                 });
     }
 

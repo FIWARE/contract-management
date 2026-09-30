@@ -8,6 +8,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
+import io.micronaut.core.annotation.Nullable;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
@@ -43,7 +46,7 @@ import java.util.stream.Stream;
  *     same order runs again.</li>
  *     <li><b>A referenced configuration cannot be resolved.</b> An offering, specification, quote or
  *     provider that is referenced but cannot be read is a broken catalog, not an empty
- *     configuration. It is logged and raised as a {@link TMForumException} rather than silently
+ *     configuration. It is raised as a {@link TMForumException} rather than silently
  *     ignored - activating an order while parts of its configuration could not be read would grant
  *     access nobody can account for.</li>
  * </ul>
@@ -92,7 +95,7 @@ public class CredentialsConfigResolver {
         if (productOrder.getQuote() != null && !productOrder.getQuote().isEmpty()) {
             return getCredentialsConfigFromQuote(productOrder.getQuote());
         }
-        log.debug("No quote found, take the original offer from the order item.");
+        log.debug("Order {} references no quote, the credentials config is taken from the ordered offerings.", productOrder.getId());
         List<Mono<CredentialConfig>> credentialsVOMonoList = Optional
                 .ofNullable(productOrder.getProductOrderItem())
                 .orElseGet(List::of)
@@ -141,35 +144,41 @@ public class CredentialsConfigResolver {
     private Mono<CredentialConfig> getCredentialsConfigFromOffer(String offerId) {
         return productOfferingApiClient
                 .retrieveProductOffering(offerId, null)
+                .onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(FailureReason.OFFERING_NOT_RESOLVABLE,
+                        OFFERING_NOT_RESOLVABLE.formatted(offerId), e))
                 .flatMap(response -> getCredentialsConfigFromSpecificationOf(response.body(), offerId))
-                .switchIfEmpty(Mono.error(() -> unresolvableReference(OFFERING_NOT_RESOLVABLE.formatted(offerId))));
+                .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.OFFERING_NOT_RESOLVABLE,
+                        OFFERING_NOT_RESOLVABLE.formatted(offerId), null)));
     }
 
     private Mono<CredentialConfig> getCredentialsConfigFromSpecificationOf(ProductOfferingVO productOffering,
             String offerId) {
         if (productOffering == null) {
-            return Mono.error(unresolvableReference(OFFERING_NOT_RESOLVABLE.formatted(offerId)));
+            return Mono.error(unresolvableReference(FailureReason.OFFERING_NOT_RESOLVABLE,
+                        OFFERING_NOT_RESOLVABLE.formatted(offerId), null));
         }
         String specificationId = Optional.ofNullable(productOffering.getProductSpecification())
                 .map(ProductSpecificationRefVO::getId)
                 .orElse(null);
         if (specificationId == null) {
             // bundled offerings do not reference a specification of their own - nothing to configure here
-            log.info("The offering {} does not reference a product specification, no credentials config will be resolved.",
+            log.debug("The offering {} does not reference a product specification, no credentials config will be resolved.",
                     productOffering.getId());
             return Mono.just(emptyConfig());
         }
         return productSpecificationApiClient.retrieveProductSpecification(specificationId, null)
+                .onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId), e))
                 .flatMap(response -> toCredentialConfig(response.body(), specificationId, offerId))
-                .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId))));
+                .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId), null)));
     }
 
     private Mono<CredentialConfig> toCredentialConfig(ProductSpecificationVO productSpecification,
             String specificationId, String offerId) {
         if (productSpecification == null) {
-            return Mono.error(unresolvableReference(
-                    SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId)));
+            return Mono.error(unresolvableReference(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId), null));
         }
         return specificationGraphResolver.resolve(productSpecification)
                 .flatMap(graph -> toCredentialConfig(graph, productSpecification.getId()));
@@ -178,12 +187,14 @@ public class CredentialsConfigResolver {
     private Mono<CredentialConfig> toCredentialConfig(SpecificationGraphResolver.SpecificationGraph graph,
             String specificationId) {
         List<CredentialsVO> credentialsVOS = aggregateCredentials(graph);
+        log.debug("Specification {} configures the credentials {}.", specificationId,
+                credentialsVOS.stream().map(CredentialsVO::getCredentialsType).toList());
         return governingProvider(graph, specificationId)
                 .map(id -> organizationResolver.getContractManagement(id)
                         .map(cm -> new CredentialConfig(cm, credentialsVOS))
                         // a referenced provider that cannot be resolved is a broken reference, not an empty config
-                        .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                                PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId)))))
+                        .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.PROVIDER_NOT_RESOLVABLE,
+                        PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId), null))))
                 .orElseGet(() -> Mono.just(new CredentialConfig(new ContractManagement(true), credentialsVOS)));
     }
 
@@ -232,9 +243,7 @@ public class CredentialsConfigResolver {
                 .distinct()
                 .toList();
         if (providers.size() > 1) {
-            String message = CONFLICTING_PROVIDERS.formatted(specificationId, providers);
-            log.error(message);
-            throw new TMForumException(message);
+            throw new TMForumException(FailureReason.CONFLICTING_PROVIDERS, CONFLICTING_PROVIDERS.formatted(specificationId, providers));
         }
         return providers.stream().findFirst();
     }
@@ -245,15 +254,18 @@ public class CredentialsConfigResolver {
                 .map(QuoteRefVO::getId)
                 .filter(Objects::nonNull)
                 .map(quoteId -> quoteApiClient.retrieveQuote(quoteId, null)
+                        .onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(FailureReason.QUOTE_NOT_RESOLVABLE,
+                                QUOTE_NOT_RESOLVABLE.formatted(quoteId), e))
                         .flatMap(response -> getCredentialsConfigFrom(response.body(), quoteId))
-                        .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                                QUOTE_NOT_RESOLVABLE.formatted(quoteId)))))
+                        .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.QUOTE_NOT_RESOLVABLE,
+                        QUOTE_NOT_RESOLVABLE.formatted(quoteId), null))))
                 .toList());
     }
 
     private Mono<List<CredentialConfig>> getCredentialsConfigFrom(QuoteVO quote, String quoteId) {
         if (quote == null) {
-            return Mono.error(unresolvableReference(QUOTE_NOT_RESOLVABLE.formatted(quoteId)));
+            return Mono.error(unresolvableReference(FailureReason.QUOTE_NOT_RESOLVABLE,
+                        QUOTE_NOT_RESOLVABLE.formatted(quoteId), null));
         }
         if (quote.getState() != QuoteStateTypeVO.ACCEPTED) {
             // a quote that is not accepted (anymore) configures nothing
@@ -304,18 +316,16 @@ public class CredentialsConfigResolver {
     }
 
     /**
-     * Log and build the exception for a configuration that is referenced but cannot be read.
-     * <p>
-     * Only ever called on the failing path, so it is safe to log here - but it must be invoked
-     * lazily (via {@link Mono#error(java.util.function.Supplier)}), since the arguments of
-     * {@code switchIfEmpty} are evaluated when the pipeline is assembled, not when it fails.
+     * Build the exception for a configuration that is referenced but cannot be read. It is not logged
+     * here: the order handler logs it once, together with the order it belongs to.
      *
+     * @param reason  the failure reason
      * @param message what could not be resolved
+     * @param cause   the failed call, if any
      * @return the exception to raise
      */
-    private static TMForumException unresolvableReference(String message) {
-        log.error(message);
-        return new TMForumException(message);
+    private static TMForumException unresolvableReference(FailureReason reason, String message, @Nullable Throwable cause) {
+        return new TMForumException(reason, message, cause);
     }
 
     /**

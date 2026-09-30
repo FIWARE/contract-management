@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.handlers.ProductOrderHandler;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.TMFMapper;
 import org.fiware.iam.tmforum.TMForumAdapter;
 import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
@@ -44,6 +45,11 @@ import java.util.Optional;
 @Singleton
 @Slf4j
 public class AgreementProductOrderHandler implements ProductOrderHandler {
+
+    @Override
+    public String getName() {
+        return "agreement";
+    }
 
     /** State marking a quote item the parties agreed on. */
     private static final String QUOTE_ITEM_STATE_ACCEPTED = "accepted";
@@ -87,7 +93,7 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
                             .<HttpResponse<?>>map(order -> HttpResponse.noContent());
                 })
                 .onErrorResume(t -> {
-                    log.warn("Was not able to create the agreement for order {}.", productOrderVO.getId(), t);
+                    log.warn("Order {}: the TM Forum agreement could not be created: {}", productOrderVO.getId(), DownstreamError.describe(t));
                     return Mono.just(HttpResponse.serverError());
                 });
     }
@@ -156,7 +162,13 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
         }
         return Mono.zipDelayError(
                         agreementIds.stream().map(tmForumAdapter::terminateAgreement).toList(),
-                        terminations -> (HttpResponse<?>) HttpResponse.noContent());
+                        terminations -> {
+                            if (Arrays.asList(terminations).contains(false)) {
+                                // the stop itself is not blocked by it - the order is gone anyway - but it has to be visible
+                                log.warn("Order {}: not all of the agreements {} could be terminated.", productOrderVO.getId(), agreementIds);
+                            }
+                            return (HttpResponse<?>) HttpResponse.noContent();
+                        });
     }
 
     @Override

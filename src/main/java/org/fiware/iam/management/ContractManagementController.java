@@ -13,6 +13,7 @@ import org.fiware.iam.cm.api.OrderApi;
 import org.fiware.iam.cm.model.OrderEventVO;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
@@ -21,6 +22,7 @@ import reactor.core.publisher.Mono;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 @Requires(condition = GeneralProperties.CentralMarketplaceCondition.class)
 @Slf4j
@@ -34,12 +36,15 @@ public class ContractManagementController implements OrderApi {
 
     @Override
     public Mono<HttpResponse<Object>> handleOrderStart(OrderEventVO orderVO) {
+        log.info("Order {}: received start from a remote contract management for customer {} with {} policies and {} credentials.",
+                orderVO.getOrderId(), orderVO.getCustomerId(), sizeOf(orderVO.getPolicies()), sizeOf(orderVO.getCredentialsConfig()));
 
-        List<Mono<Boolean>> creationResults = orderVO.getPolicies()
+        List<Mono<Boolean>> creationResults = Optional.ofNullable(orderVO.getPolicies()).orElse(List.of())
                 .stream()
                 .map(policy -> papAdapter.createPolicy(orderVO.getCustomerId(), orderVO.getOrderId(), policy.getAdditionalProperties()))
                 .toList();
-        List<CredentialsVO> credentialsVOS = orderVO.getCredentialsConfig().stream().map(cmMapper::map).toList();
+        List<CredentialsVO> credentialsVOS = Optional.ofNullable(orderVO.getCredentialsConfig()).orElse(List.of())
+                .stream().map(cmMapper::map).toList();
         // the originating order scopes the grant here too, so this participant can revoke exactly it
         Mono<Boolean> tilResult = trustedIssuersListAdapter
                 .allowIssuer(orderVO.getCustomerId(), orderVO.getOrderId(),
@@ -49,14 +54,15 @@ public class ContractManagementController implements OrderApi {
         List<Mono<Boolean>> successList = new ArrayList<>(creationResults);
         successList.add(tilResult);
 
-        return toResponse(successList);
+        return toResponse(orderVO.getOrderId(), "start", successList);
     }
 
     @Override
     public Mono<HttpResponse<Object>> handleOrderStop(OrderEventVO orderStopEventVO) {
         String orderId = orderStopEventVO.getOrderId();
         String issuerId = orderStopEventVO.getCustomerId();
-        List<Mono<Boolean>> policyDeleteResults = orderStopEventVO.getPolicies()
+        log.info("Order {}: received stop from a remote contract management for customer {}.", orderId, issuerId);
+        List<Mono<Boolean>> policyDeleteResults = Optional.ofNullable(orderStopEventVO.getPolicies()).orElse(List.of())
                 .stream()
                 .map(odrlPolicyJsonVO -> papAdapter.deletePolicy(orderId, odrlPolicyJsonVO.getAdditionalProperties()))
                 .toList();
@@ -69,19 +75,29 @@ public class ContractManagementController implements OrderApi {
         List<Mono<Boolean>> successList = new ArrayList<>(policyDeleteResults);
         successList.add(issuerDenyResult);
 
-        return toResponse(successList);
+        return toResponse(orderId, "stop", successList);
     }
 
-    private Mono<HttpResponse<Object>> toResponse(List<Mono<Boolean>> successList) {
-        return Mono.zip(successList, results ->
-                Arrays.stream(results)
-                        .filter(Boolean.class::isInstance)
-                        .map(Boolean.class::cast)
-                        .filter(isSuccessfull -> !isSuccessfull)
-                        .findAny()
-                        // if something is wrong -> bad gateway
-                        .map(b -> HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
-                        .orElse(HttpResponseFactory.INSTANCE.status(HttpStatus.OK))
-        );
+    private static int sizeOf(List<?> list) {
+        return list == null ? 0 : list.size();
+    }
+
+    private Mono<HttpResponse<Object>> toResponse(String orderId, String action, List<Mono<Boolean>> successList) {
+        // delay errors, so that one failing call does not cancel the others and leave an unlogged partial state
+        return Mono.<HttpResponse<Object>>zipDelayError(successList, results -> {
+                    long failed = Arrays.stream(results)
+                            .filter(Boolean.class::isInstance)
+                            .map(Boolean.class::cast)
+                            .filter(isSuccessfull -> !isSuccessfull)
+                            .count();
+                    if (failed > 0) {
+                        log.warn("Order {}: {} failed, {} of {} calls to the pap and trusted-issuers-list did not succeed.",
+                                orderId, action, failed, results.length);
+                        return HttpResponseFactory.INSTANCE.<Object>status(HttpStatus.BAD_GATEWAY);
+                    }
+                    log.info("Order {}: {} succeeded.", orderId, action);
+                    return HttpResponseFactory.INSTANCE.<Object>status(HttpStatus.OK);
+                })
+                .doOnError(e -> log.warn("Order {}: {} failed: {}", orderId, action, DownstreamError.describe(e)));
     }
 }

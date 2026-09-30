@@ -11,6 +11,8 @@ import org.fiware.iam.cm.model.CredentialVO;
 import org.fiware.iam.cm.model.OdrlPolicyJsonVO;
 import org.fiware.iam.cm.model.OrderEventVO;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.exception.FailureReason;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.domain.ContractManagement;
 import org.fiware.iam.handlers.ProductOrderHandler;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
@@ -28,6 +30,11 @@ import java.util.function.BiFunction;
 @Singleton
 @Slf4j
 public class ContractManagementProductOrderHandler implements ProductOrderHandler {
+
+    @Override
+    public String getName() {
+        return "contract-management";
+    }
 
     private final ContractManagementAdapter contractManagementAdapter;
     private final OrganizationResolver organizationResolver;
@@ -54,34 +61,54 @@ public class ContractManagementProductOrderHandler implements ProductOrderHandle
 
 
     private Mono<HttpResponse<?>> handleOrderEvent(String organizationId, ProductOrderVO productOrderVO, BiFunction<ContractManagement, OrderEventVO, Mono<HttpResponse>> handler) {
+        String orderId = productOrderVO.getId();
         return organizationResolver.getDID(organizationId)
+                .switchIfEmpty(Mono.error(() -> new TMForumException(FailureReason.ORGANIZATION_DID_MISSING,
+                        "No DID could be resolved for the customer organization %s.".formatted(organizationId))))
                 .flatMap(did -> {
                     Mono<List<PolicyResolver.PolicyConfig>> policyConfigs = policyResolver.getAuthorizationPolicy(productOrderVO);
                     Mono<List<CredentialsConfigResolver.CredentialConfig>> credentialConfigs = credentialsConfigResolver.getCredentialsConfig(productOrderVO);
                     return Mono.zipDelayError(policyConfigs, credentialConfigs)
                             .map(resultTuple -> toOrderMap(productOrderVO, did, resultTuple))
                             .flatMap(orderMap -> {
-                                List<Mono<HttpResponse>> orderResponses = orderMap.entrySet()
+                                List<Mono<Boolean>> orderResponses = orderMap.entrySet()
                                         .stream()
                                         // only external configs should be handled
                                         .filter(orderMapEntry -> !orderMapEntry.getKey().isLocal())
-                                        .map(orderMapEntry -> handler.apply(orderMapEntry.getKey(), orderMapEntry.getValue()))
+                                        .map(orderMapEntry -> forward(orderId, orderMapEntry.getKey(), orderMapEntry.getValue(), handler))
                                         .toList();
                                 if (orderResponses.isEmpty()) {
+                                    log.debug("Order {} has no configuration managed by a remote contract management.", orderId);
                                     return Mono.just(HttpResponseFactory.INSTANCE.status(HttpStatus.NO_CONTENT));
                                 }
-                                return Mono.zip(orderResponses, responses -> Arrays.stream(responses)
-                                        .filter(HttpResponse.class::isInstance)
-                                        .map(HttpResponse.class::cast)
-                                        .map(HttpResponse::getStatus)
-                                        .map(HttpStatus::getCode)
-                                        .map(res -> res >= 200 && res < 300)
+                                return Mono.zipDelayError(orderResponses, results -> Arrays.stream(results)
+                                        .map(Boolean.class::cast)
                                         .filter(isSuccess -> !isSuccess)
                                         .map(s -> HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
                                         .findAny()
                                         .orElse(HttpResponseFactory.INSTANCE.status(HttpStatus.NO_CONTENT))
                                 );
                             });
+                });
+    }
+
+    private Mono<Boolean> forward(String orderId, ContractManagement contractManagement, OrderEventVO orderEventVO,
+                                  BiFunction<ContractManagement, OrderEventVO, Mono<HttpResponse>> handler) {
+        int policies = Optional.ofNullable(orderEventVO.getPolicies()).map(List::size).orElse(0);
+        int credentials = Optional.ofNullable(orderEventVO.getCredentialsConfig()).map(List::size).orElse(0);
+        return Mono.defer(() -> handler.apply(contractManagement, orderEventVO))
+                .onErrorMap(e -> new TMForumException(FailureReason.REMOTE_CM_REJECTED,
+                        "The contract management at %s did not accept order %s.".formatted(contractManagement.getAddress(), orderId), e))
+                .map(response -> {
+                    int code = response.getStatus().getCode();
+                    if (code < 200 || code > 299) {
+                        log.warn("Order {}: the contract management at {} answered with status {}: {}", orderId,
+                                contractManagement.getAddress(), code, response.getBody(String.class).orElse("<empty>"));
+                        return false;
+                    }
+                    log.info("Order {}: forwarded {} policies and {} credentials to the contract management at {}.",
+                            orderId, policies, credentials, contractManagement.getAddress());
+                    return true;
                 });
     }
 

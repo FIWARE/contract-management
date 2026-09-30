@@ -8,7 +8,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.dsp.OfferingParameters;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TMForumException;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.agreement.api.AgreementApiClient;
 import org.fiware.iam.tmforum.agreement.model.*;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
@@ -35,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Adapter to handle communication with TMForum APIs.
@@ -65,6 +68,8 @@ public class TMForumAdapter {
     /** Agreement status the consent-facade maps to a terminated contract. */
     private static final String AGREEMENT_STATUS_CANCELLED = "cancelled";
     public static final String CONSUMER_ROLE = "Consumer";
+
+    private final AtomicBoolean selfDescriptionWarningLogged = new AtomicBoolean(false);
 
     private final ObjectMapper objectMapper;
 
@@ -117,7 +122,8 @@ public class TMForumAdapter {
                 .doOnNext(existingId -> log.info("Order {} already references agreement {}; not creating another.",
                         productOrderId, existingId))
                 .onErrorResume(t -> {
-                    log.warn("Could not read order {} to check for an existing agreement.", productOrderId, t);
+                    log.warn("Could not read order {} to check for an existing agreement, creating one: {}",
+                            productOrderId, DownstreamError.describe(t));
                     return Mono.empty();
                 });
     }
@@ -149,7 +155,7 @@ public class TMForumAdapter {
                             // prevent empty refs
                             .agreementSpecification(null)
                             .addAgreementItemItem(agreementItemTmfVO);
-                    return createAgreement(agreementCreateTmfVO);
+                    return createAgreement(productOrderId, productOfferingId, agreementCreateTmfVO);
                 });
     }
 
@@ -169,7 +175,9 @@ public class TMForumAdapter {
             return Mono.just(List.of());
         }
         if (consentProperties.getSelfDescriptionBaseUrl() == null || consentProperties.getSelfDescriptionBaseUrl().isBlank()) {
-            log.warn("Consent enrichment is enabled but consent.self-description-base-url is unset; agreements are written unenriched.");
+            if (selfDescriptionWarningLogged.compareAndSet(false, true)) {
+                log.warn("Consent enrichment is enabled but consent.self-description-base-url is unset; agreements are written unenriched. This is only logged once.");
+            }
             return Mono.just(List.of());
         }
         if (customerOrganizationId == null || customerOrganizationId.isBlank()) {
@@ -181,8 +189,8 @@ public class TMForumAdapter {
                 // an offering whose specification cannot be read must still yield an agreement:
                 // failing here would block the order over a consent concern.
                 .onErrorResume(t -> {
-                    log.warn("Could not resolve the specification of offering {}; agreement is written unenriched.",
-                            productOfferingId, t);
+                    log.warn("Could not resolve the specification of offering {}; agreement is written unenriched: {}",
+                            productOfferingId, DownstreamError.describe(t));
                     return Mono.just(List.<CharacteristicTmfVO>of());
                 })
                 .defaultIfEmpty(List.of());
@@ -256,15 +264,14 @@ public class TMForumAdapter {
         return (base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + "/participants/" + organizationId;
     }
 
-    private Mono<String> createAgreement(AgreementCreateTmfVO agreementCreateTmfVO) {
+    private Mono<String> createAgreement(String productOrderId, String productOfferingId, AgreementCreateTmfVO agreementCreateTmfVO) {
         return agreementApiClient
                 .createAgreement(agreementCreateTmfVO)
                 .map(HttpResponse::body)
                 .map(AgreementTmfVO::getId)
-                .onErrorMap(t -> {
-                    log.warn("Was not able to create aggreement", t);
-                    throw new TMForumException("Was not able to create agreement", t);
-                });
+                .onErrorMap(t -> new TMForumException(FailureReason.AGREEMENT_FAILED,
+                        "The TM Forum agreement API did not create the agreement for order %s and offering %s.".formatted(productOrderId, productOfferingId), t))
+                .doOnNext(id -> log.info("Order {}: created agreement {} for offering {}.", productOrderId, id, productOfferingId));
     }
 
 
@@ -333,7 +340,7 @@ public class TMForumAdapter {
                 })
                 .map(response -> true)
                 .onErrorResume(t -> {
-                    log.warn("Was not able to terminate agreement {}.", agreementId, t);
+                    log.warn("Was not able to terminate agreement {}: {}", agreementId, DownstreamError.describe(t));
                     return Mono.just(false);
                 })
                 .defaultIfEmpty(false);
@@ -347,7 +354,7 @@ public class TMForumAdapter {
         return productOrderApiClient.retrieveProductOrder(productOrderId, null)
                 .map(HttpResponse::body)
                 .onErrorResume(t -> {
-                    log.warn("Could not read the order {}; writing only the new agreements.", productOrderId, t);
+                    log.warn("Could not read the order {}; writing only the new agreements: {}", productOrderId, DownstreamError.describe(t));
                     return Mono.empty();
                 });
     }
@@ -372,10 +379,8 @@ public class TMForumAdapter {
         return productOrderApiClient
                 .patchProductOrder(productOrderId, productOrderUpdateVO)
                 .map(HttpResponse::body)
-                .onErrorMap(t -> {
-                    log.warn("Was not able to update the product order {}", productOrderId, t);
-                    throw new TMForumException("Was not able to update the product order");
-                });
+                .onErrorMap(t -> new TMForumException(FailureReason.AGREEMENT_FAILED,
+                        "Was not able to link the agreements %s to the product order %s.".formatted(agreementIds, productOrderId), t));
     }
 
     /**
@@ -389,10 +394,7 @@ public class TMForumAdapter {
         quoteUpdateVO.setUnknownProperties("quoteDate", null);
 
         return quoteApiClient.patchQuote(quoteVO.getId(), quoteUpdateVO)
-                .onErrorMap(t -> {
-                    log.warn("Was not able to update the quote", t);
-                    throw new TMForumException(String.format("Was not able to update the quote %s.", quoteVO.getId()), t);
-                })
+                .onErrorMap(t -> new TMForumException(FailureReason.TMFORUM_ERROR, String.format("Was not able to update the quote %s.", quoteVO.getId()), t))
                 .map(HttpResponse::body);
     }
 
@@ -401,20 +403,18 @@ public class TMForumAdapter {
      */
     public Mono<QuoteVO> getQuoteById(String id) {
         return quoteApiClient.retrieveQuote(id, null)
-                .onErrorMap(t -> {
-                    throw new TMForumException(String.format("Was not able to get the quote %s.", id), t);
-                })
+                .onErrorMap(t -> new TMForumException(FailureReason.QUOTE_NOT_RESOLVABLE, String.format("Was not able to get the quote %s.", id), t))
                 .map(HttpResponse::body);
     }
 
     public Mono<ProductSpecificationVO> getSpecFromOfferRef(String refId) {
         return productOfferingApiClient.retrieveProductOffering(refId, null)
-                .onErrorMap(t -> new TMForumException(String.format("Was not able to retrieve offering %s", refId), t))
+                .onErrorMap(t -> new TMForumException(FailureReason.OFFERING_NOT_RESOLVABLE, String.format("Was not able to retrieve offering %s.", refId), t))
                 .map(HttpResponse::body)
                 .map(ProductOfferingVO::getProductSpecification)
                 .map(ProductSpecificationRefVO::getId)
                 .flatMap(id -> productSpecificationApiClient.retrieveProductSpecification(id, null))
-                .onErrorMap(t -> new TMForumException(String.format("Was not able to retrieve specification for offering %s", refId), t))
+                .onErrorMap(t -> new TMForumException(FailureReason.SPECIFICATION_NOT_RESOLVABLE, String.format("Was not able to retrieve the specification of offering %s.", refId), t))
                 .map(HttpResponse::body);
     }
 

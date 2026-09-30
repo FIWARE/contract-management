@@ -3,17 +3,19 @@ package org.fiware.iam.tmforum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.annotation.Value;
-import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.party.api.OrganizationApiClient;
 import org.fiware.iam.tmforum.party.model.CharacteristicVO;
 import org.fiware.iam.tmforum.party.model.ExternalReferenceVO;
+import org.fiware.iam.tmforum.party.model.OrganizationVO;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -39,39 +41,51 @@ public class OrganizationResolver {
 
     //TODO Cache me if you can
     public Mono<String> getDID(String organizationId) {
-        return apiClient.retrieveOrganization(organizationId, null)
-                .filter(response -> response.getStatus().equals(HttpStatus.OK))
-                .map(HttpResponse::body)
-                .map(ovo -> {
-                            String did = getDidFromExternalReference(ovo.getExternalReference())
-                                    .or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
-                                    .orElseThrow(() -> new TMForumException("Could not find organizations DID (%s) in response.".formatted(organizationId)));
-                            log.debug("Did is {}", did);
-                            return did;
-                        }
-                );
+        return retrieveOrganization(organizationId)
+                .map(ovo -> getDid(organizationId, ovo));
     }
 
     public Mono<ContractManagement> getContractManagement(String organizationId) {
-        return getDID(organizationId)
-                .flatMap(did -> {
-                    if (did.equals(generalProperties.getDid())) {
-                        return Mono.just(new ContractManagement(true));
-                    } else {
-                        return apiClient.retrieveOrganization(organizationId, null)
-                                .filter(response -> response.getStatus().equals(HttpStatus.OK))
-                                .map(HttpResponse::body)
-                                .map(ovo ->
-                                        ovo.getPartyCharacteristic()
-                                                .stream()
-                                                .filter(pc -> pc.getName().equals(FIELD_NAME_CONTRACT_MANAGEMENT))
-                                                .map(CharacteristicVO::getValue)
-                                                .map(pcv -> objectMapper.convertValue(pcv, ContractManagement.class))
-                                                .findAny()
-                                                .orElse(new ContractManagement(true))
-                                );
+        return retrieveOrganization(organizationId)
+                .map(ovo -> {
+                    if (getDid(organizationId, ovo).equals(generalProperties.getDid())) {
+                        return new ContractManagement(true);
                     }
+                    return Optional.ofNullable(ovo.getPartyCharacteristic())
+                            .orElse(List.of())
+                            .stream()
+                            .filter(pc -> FIELD_NAME_CONTRACT_MANAGEMENT.equals(pc.getName()))
+                            .map(CharacteristicVO::getValue)
+                            .map(pcv -> objectMapper.convertValue(pcv, ContractManagement.class))
+                            .findAny()
+                            .orElse(new ContractManagement(true));
                 });
+    }
+
+    private Mono<OrganizationVO> retrieveOrganization(String organizationId) {
+        return apiClient.retrieveOrganization(organizationId, null)
+                .onErrorMap(HttpClientResponseException.class, e -> new TMForumException(FailureReason.ORGANIZATION_NOT_FOUND,
+                        "Organization %s could not be retrieved from the TM Forum party API.".formatted(organizationId), e))
+                .map(response -> {
+                    if (!response.getStatus().equals(HttpStatus.OK) || response.body() == null) {
+                        throw new TMForumException(FailureReason.ORGANIZATION_NOT_FOUND,
+                                "Organization %s could not be retrieved from the TM Forum party API, it answered with status %s and %s.".formatted(
+                                        organizationId, response.getStatus().getCode(), response.body() == null ? "no body" : "a body"));
+                    }
+                    return response.body();
+                })
+                .switchIfEmpty(Mono.error(() -> new TMForumException(FailureReason.ORGANIZATION_NOT_FOUND,
+                        "Organization %s could not be retrieved from the TM Forum party API, the response was empty.".formatted(organizationId))));
+    }
+
+    private String getDid(String organizationId, OrganizationVO ovo) {
+        String did = getDidFromExternalReference(ovo.getExternalReference())
+                .or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
+                .orElseThrow(() -> new TMForumException(FailureReason.ORGANIZATION_DID_MISSING,
+                        ("Organization %s has no DID: expected an externalReference of type '%s' or a partyCharacteristic '%s' " +
+                                "holding a did:<method>:<id>.").formatted(organizationId, EXTERNAL_REFERENCE_IDM_ID, PARTY_CHARACTERISTIC_DID)));
+        log.debug("Organization {} has DID {}", organizationId, did);
+        return did;
     }
 
     public boolean hasProviderRole(String role) {
@@ -96,7 +110,7 @@ public class OrganizationResolver {
             return Optional.empty();
         }
         return externalReferenceVOList.stream()
-                .filter(ervo -> ervo.getExternalReferenceType().equals(EXTERNAL_REFERENCE_IDM_ID))
+                .filter(ervo -> EXTERNAL_REFERENCE_IDM_ID.equals(ervo.getExternalReferenceType()))
                 .map(ExternalReferenceVO::getName)
                 .filter(this::isDid)
                 .findFirst();

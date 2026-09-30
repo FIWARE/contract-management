@@ -8,6 +8,8 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.exception.FailureReason;
+import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.handlers.ProductOrderHandler;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
 import org.fiware.iam.tmforum.OrganizationResolver;
@@ -19,6 +21,11 @@ import reactor.core.publisher.Mono;
 @Singleton
 @Slf4j
 public class TilProductOrderHandler implements ProductOrderHandler {
+
+    @Override
+    public String getName() {
+        return "til";
+    }
 
     private final OrganizationResolver organizationResolver;
     private final CredentialsConfigResolver credentialsConfigResolver;
@@ -38,7 +45,7 @@ public class TilProductOrderHandler implements ProductOrderHandler {
      */
     @Override
     public Mono<HttpResponse<?>> handleProductOrderStop(String organizationId, ProductOrderVO productOrderVO) {
-        return organizationResolver.getDID(organizationId)
+        return getDID(organizationId)
                 .flatMap(did -> trustedIssuersListAdapter.denyIssuer(did, productOrderVO.getId()));
     }
 
@@ -50,7 +57,7 @@ public class TilProductOrderHandler implements ProductOrderHandler {
 
     private Mono<HttpResponse<?>> allowIssuer(String organizationId, ProductOrderVO productOrderVO) {
         return Mono.zip(
-                        organizationResolver.getDID(organizationId),
+                        getDID(organizationId),
                         credentialsConfigResolver.getCredentialsConfig(productOrderVO))
                 .flatMap(resultTuple -> trustedIssuersListAdapter.allowIssuer(resultTuple.getT1(),
                         productOrderVO.getId(), resultTuple.getT2()))
@@ -58,9 +65,14 @@ public class TilProductOrderHandler implements ProductOrderHandler {
                     if (success) {
                         return HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED);
                     } else {
-                        log.warn("Was not able to allow issuer {} for product order {}.", organizationId, productOrderVO);
                         return HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY);
                     }
                 });
+    }
+
+    private Mono<String> getDID(String organizationId) {
+        return organizationResolver.getDID(organizationId)
+                .switchIfEmpty(Mono.error(() -> new TMForumException(FailureReason.ORGANIZATION_DID_MISSING,
+                        "No DID could be resolved for the customer organization %s.".formatted(organizationId))));
     }
 }
