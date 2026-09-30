@@ -3,21 +3,22 @@ package org.fiware.iam.tmforum.handlers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.annotation.Value;
-import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.handlers.OrderAction;
 import org.fiware.iam.handlers.ProductOrderHandler;
+import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.productorder.model.*;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
@@ -108,7 +109,7 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
         if (isNotRejected(productOrderVO) && containsQuote(productOrderVO)) {
-            return runHandlers("negotiation", organizationId, productOrderVO,
+            return runHandlers(OrderAction.NEGOTIATION, organizationId, productOrderVO,
                     handler -> handler.handleProductOrderNegotiation(organizationId, productOrderVO));
         }
 
@@ -118,7 +119,7 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
             return Mono.just(HttpResponse.noContent());
         }
 
-        return runHandlers("completion", organizationId, productOrderVO,
+        return runHandlers(OrderAction.COMPLETION, organizationId, productOrderVO,
                 handler -> handler.handleProductOrderComplete(organizationId, productOrderVO));
     }
 
@@ -141,10 +142,10 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
         if (isCompleted(productOrderVO)) {
-            return runHandlers("completion", organizationId, productOrderVO,
+            return runHandlers(OrderAction.COMPLETION, organizationId, productOrderVO,
                     handler -> handler.handleProductOrderComplete(organizationId, productOrderVO));
         }
-        return runHandlers("stop (state %s)".formatted(productOrderVO.getState()), organizationId, productOrderVO,
+        return runHandlers(OrderAction.STOP, organizationId, productOrderVO,
                 handler -> handler.handleProductOrderStop(organizationId, productOrderVO));
     }
 
@@ -154,93 +155,47 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .map(ProductOrderDeleteEventPayloadVO::getProductOrder)
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
-        return runHandlers("stop (deleted)", organizationId, productOrderVO,
+        return runHandlers(OrderAction.DELETION, organizationId, productOrderVO,
                 handler -> handler.handleProductOrderStop(organizationId, productOrderVO));
     }
 
     /**
-     * Run all handlers for the order and write one line telling what each of them did. The response is
-     * a success only if all handlers succeeded; the first error of a handler is propagated, a non-2xx
-     * response of a handler becomes a bad gateway.
+     * Run all handlers for the order. A failing handler is logged once, with its name and the reason, and
+     * answers with a bad gateway - no matter whether it failed with an error or with a non-2xx response.
+     * One final line tells whether the order was handled completely.
      */
-    private Mono<HttpResponse<?>> runHandlers(String action, String organizationId, ProductOrderVO productOrderVO,
+    private Mono<HttpResponse<?>> runHandlers(OrderAction action, String organizationId, ProductOrderVO productOrderVO,
                                               Function<ProductOrderHandler, Mono<HttpResponse<?>>> handlerCall) {
         String orderId = productOrderVO.getId();
-        if (productOrderHandlers.isEmpty()) {
-            log.info("Order {}: {} for customer {}, but no handler is enabled.", orderId, action, organizationId);
-            return Mono.just(HttpResponse.noContent());
-        }
-        log.info("Order {}: handling {} for customer {} with handlers {}.", orderId, action, organizationId,
-                productOrderHandlers.stream().map(ProductOrderHandler::getName).toList());
+        log.debug("Order {}: handling {} (state {}) for customer {} with handlers {}.", orderId, action,
+                productOrderVO.getState(), organizationId, productOrderHandlers.stream().map(ProductOrderHandler::getName).toList());
 
-        List<Mono<HandlerOutcome>> outcomes = productOrderHandlers.stream()
-                .map(handler -> Mono.defer(() -> handlerCall.apply(handler))
-                        .map(response -> HandlerOutcome.of(handler.getName(), response))
-                        .defaultIfEmpty(HandlerOutcome.skipped(handler.getName()))
-                        .onErrorResume(t -> Mono.just(HandlerOutcome.failed(handler.getName(), t))))
-                .toList();
-
-        return Mono.zip(outcomes, results -> Arrays.stream(results).map(HandlerOutcome.class::cast).toList())
-                .flatMap(results -> {
-                    String summary = results.stream().map(HandlerOutcome::toString).collect(Collectors.joining(", "));
-                    if (results.stream().anyMatch(HandlerOutcome::isFailure)) {
-                        log.warn("Order {}: {} failed for customer {} - {}", orderId, action, organizationId, summary);
-                    } else {
-                        log.info("Order {}: {} succeeded for customer {} - {}", orderId, action, organizationId, summary);
-                    }
-                    Optional<Throwable> firstError = results.stream()
-                            .map(HandlerOutcome::error)
-                            .filter(Objects::nonNull)
-                            .findFirst();
-                    if (firstError.isPresent()) {
-                        return Mono.error(firstError.get());
-                    }
-                    return Mono.just(results.stream()
-                            .filter(HandlerOutcome::isFailure)
-                            .findFirst()
-                            .<HttpResponse<?>>map(outcome -> HttpResponse.status(HttpStatus.BAD_GATEWAY).body(outcome.response().body()))
-                            .orElse(HttpResponse.noContent()));
-                });
-    }
-
-    /**
-     * What a single handler did with the order.
-     */
-    private record HandlerOutcome(String handler, @Nullable HttpResponse<?> response, @Nullable Throwable error) {
-
-        static HandlerOutcome of(String handler, HttpResponse<?> response) {
-            return new HandlerOutcome(handler, response, null);
-        }
-
-        static HandlerOutcome skipped(String handler) {
-            return new HandlerOutcome(handler, null, null);
-        }
-
-        static HandlerOutcome failed(String handler, Throwable error) {
-            return new HandlerOutcome(handler, null, error);
-        }
-
-        boolean isFailure() {
-            return error != null || (response != null && !isSuccess(response));
-        }
-
-        private static boolean isSuccess(HttpResponse<?> response) {
-            return response.getStatus().getCode() >= 200 && response.getStatus().getCode() < 300;
-        }
-
-        @Override
-        public String toString() {
-            if (error != null) {
-                return "%s=FAILED(%s)".formatted(handler, DownstreamError.describe(error));
-            }
-            if (response == null) {
-                return "%s=SKIPPED".formatted(handler);
-            }
-            if (isSuccess(response)) {
-                return "%s=OK".formatted(handler);
-            }
-            return "%s=FAILED(status=%s)".formatted(handler, response.getStatus().getCode());
-        }
+        return Mono.defer(() -> {
+            List<String> failedHandlers = new CopyOnWriteArrayList<>();
+            List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
+                    .map(handler -> Mono.defer(() -> handlerCall.apply(handler))
+                            .doOnNext(response -> {
+                                if (!HttpResponses.isSuccess(response)) {
+                                    // the handler logged the reason itself
+                                    failedHandlers.add(handler.getName());
+                                }
+                            })
+                            .onErrorResume(t -> {
+                                failedHandlers.add(handler.getName());
+                                log.warn("Order {}: {} failed in handler {}: {}", orderId, action, handler.getName(),
+                                        DownstreamError.describe(t));
+                                return Mono.just(HttpResponse.status(HttpStatus.BAD_GATEWAY));
+                            }))
+                    .toList();
+            return zipToResponse(responses)
+                    .doOnNext(response -> {
+                        if (failedHandlers.isEmpty()) {
+                            log.info("Order {}: {} succeeded for customer {}.", orderId, action, organizationId);
+                        } else {
+                            log.warn("Order {}: {} failed for customer {} in the handlers {}.", orderId, action, organizationId, failedHandlers);
+                        }
+                    });
+        });
     }
 
     private boolean containsQuote(ProductOrderVO productOrderVO) {

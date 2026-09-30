@@ -21,6 +21,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
@@ -153,14 +154,15 @@ public class AgreementProductOrderHandlerTest {
 	}
 
 	@Test
-	public void aFailingCreationIsReportedAsServerError() {
+	public void aFailingCreationIsPropagated() {
 		when(tmForumAdapter.createAgreement(any(), any(), any(), any(), any()))
 				.thenReturn(Mono.error(new RuntimeException("The agreement api is down.")));
 
-		HttpResponse<?> response = handler.handleProductOrderComplete(CONSUMER_ID, orderWithOffering()).block();
-
-		assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatus(),
+		// the error is logged and answered by the order event handler, together with the ones of all other handlers
+		RuntimeException exception = assertThrows(RuntimeException.class,
+				() -> handler.handleProductOrderComplete(CONSUMER_ID, orderWithOffering()).block(),
 				"A missing agreement should be visible to the caller.");
+		assertEquals("The agreement api is down.", exception.getMessage());
 	}
 
 	@Test

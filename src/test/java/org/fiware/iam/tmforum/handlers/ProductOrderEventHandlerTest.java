@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
@@ -52,6 +51,7 @@ public class ProductOrderEventHandlerTest {
 		til = namedHandler("til");
 		ObjectMapper objectMapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 		eventHandler = new ProductOrderEventHandler(objectMapper, List.of(pap, til));
+		logger.setLevel(Level.INFO);
 		logs.start();
 		logger.addAppender(logs);
 	}
@@ -62,17 +62,15 @@ public class ProductOrderEventHandlerTest {
 	}
 
 	@Test
-	public void aSuccessfulCompletionIsSummarizedPerHandler() {
+	public void aSuccessfulCompletionIsLoggedOnce() {
 		when(pap.handleProductOrderComplete(any(), any())).thenReturn(Mono.just(HttpResponse.ok()));
 		when(til.handleProductOrderComplete(any(), any())).thenReturn(Mono.empty());
 
 		HttpResponse<?> response = eventHandler.handleEvent("ProductOrderStateChangeEvent", COMPLETED_EVENT).block();
 
 		assertEquals(HttpStatus.NO_CONTENT, response.getStatus());
-		ILoggingEvent summary = lastLog();
-		assertEquals(Level.INFO, summary.getLevel());
-		assertTrue(summary.getFormattedMessage().contains(ORDER_ID), "The order has to be named.");
-		assertTrue(summary.getFormattedMessage().contains("pap=OK, til=SKIPPED"), summary.getFormattedMessage());
+		assertEquals(List.of("Order " + ORDER_ID + ": completion succeeded for customer " + CUSTOMER_ID + "."), messages(Level.INFO));
+		assertTrue(messages(Level.WARN).isEmpty());
 	}
 
 	@Test
@@ -81,16 +79,14 @@ public class ProductOrderEventHandlerTest {
 		when(til.handleProductOrderComplete(any(), any())).thenReturn(Mono.error(
 				new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER, "The trusted-issuers-list did not allow issuer did:web:x.")));
 
-		assertThrows(TrustedIssuersException.class,
-				() -> eventHandler.handleEvent("ProductOrderStateChangeEvent", COMPLETED_EVENT).block(),
-				"The failure has to be propagated, so the notification is answered with an error.");
+		HttpResponse<?> response = eventHandler.handleEvent("ProductOrderStateChangeEvent", COMPLETED_EVENT).block();
 
-		ILoggingEvent summary = lastLog();
-		assertEquals(Level.WARN, summary.getLevel());
-		assertTrue(summary.getFormattedMessage().contains(ORDER_ID));
-		assertTrue(summary.getFormattedMessage().contains("pap=OK"), summary.getFormattedMessage());
-		assertTrue(summary.getFormattedMessage().contains(
-				"til=FAILED([til_rejected_issuer] The trusted-issuers-list did not allow issuer did:web:x.)"), summary.getFormattedMessage());
+		assertEquals(HttpStatus.BAD_GATEWAY, response.getStatus(), "A failing handler has to be answered with an error, so the notification is retried.");
+		List<String> warnings = messages(Level.WARN);
+		assertEquals(2, warnings.size(), warnings.toString());
+		assertTrue(warnings.getFirst().startsWith("Order " + ORDER_ID + ": completion failed in handler til: [til_rejected_issuer] The trusted-issuers-list did not allow issuer did:web:x."),
+				warnings.getFirst());
+		assertEquals("Order " + ORDER_ID + ": completion failed for customer " + CUSTOMER_ID + " in the handlers [til].", warnings.getLast());
 		verify(pap).handleProductOrderComplete(any(), any());
 	}
 
@@ -102,11 +98,12 @@ public class ProductOrderEventHandlerTest {
 		HttpResponse<?> response = eventHandler.handleEvent("ProductOrderStateChangeEvent", COMPLETED_EVENT).block();
 
 		assertEquals(HttpStatus.BAD_GATEWAY, response.getStatus());
-		assertTrue(lastLog().getFormattedMessage().contains("pap=FAILED(status=502), til=OK"), lastLog().getFormattedMessage());
+		assertEquals(List.of("Order " + ORDER_ID + ": completion failed for customer " + CUSTOMER_ID + " in the handlers [pap]."),
+				messages(Level.WARN), "The handler logs the reason of a non-2xx answer itself, the order only names it.");
 	}
 
-	private ILoggingEvent lastLog() {
-		return logs.list.getLast();
+	private List<String> messages(Level level) {
+		return logs.list.stream().filter(e -> e.getLevel() == level).map(ILoggingEvent::getFormattedMessage).toList();
 	}
 
 	private static ProductOrderHandler namedHandler(String name) {

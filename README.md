@@ -60,13 +60,14 @@ Levels are used as follows:
 
 * `ERROR` - the service itself is broken (e.g. an unexpected exception, a failed startup registration)
 * `WARN` - something was not applied, always with the reason: a downstream service rejected a call (with its status and body), a configuration is invalid, an order handler failed
-* `INFO` - business results: a notification was received, a policy was created at the PAP, an issuer was allowed at the TIL, and one summary line per order
-* `DEBUG` - how the result was reached: every outgoing call, the resolved specifications, policies and credentials
+* `INFO` - business results: a notification was received, and one line per handled order
+* `DEBUG` - how the result was reached: every outgoing call, the resolved specifications, policies and credentials, each policy created at the PAP and each issuer allowed at the TIL
 
-Every line concerning an order starts with `Order <id>:`. Each handled order ends with one summary line naming the result of every handler, e.g.
+Every line concerning an order starts with `Order <id>:`. A failing order handler is logged once, with its name and the reason, and each handled order ends with one line, e.g.
 
 ```
-WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed for customer urn:ngsi-ld:organization:2 - pap=FAILED([pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org. <- status=400 body={"detail":"..."}), til=OK, agreement=OK
+WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed in handler pap: [pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org. <- status=400 body={"detail":"..."}
+WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed for customer urn:ngsi-ld:organization:2 in the handlers [pap].
 ```
 
 Failures carry a machine-readable code in brackets (`[organization_did_missing]`, `[specification_not_resolvable]`, `[til_rejected_issuer]`, ...), see `org.fiware.iam.exception.FailureReason`.

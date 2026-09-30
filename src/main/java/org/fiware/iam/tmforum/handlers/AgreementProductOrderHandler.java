@@ -7,7 +7,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.handlers.ProductOrderHandler;
-import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.TMFMapper;
 import org.fiware.iam.tmforum.TMForumAdapter;
 import org.fiware.iam.tmforum.agreement.model.RelatedPartyTmfVO;
@@ -91,10 +90,6 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
                                             .toList())
                             .flatMap(agreementIds -> tmForumAdapter.addAgreementToOrder(productOrderVO.getId(), agreementIds))
                             .<HttpResponse<?>>map(order -> HttpResponse.noContent());
-                })
-                .onErrorResume(t -> {
-                    log.warn("Order {}: the TM Forum agreement could not be created: {}", productOrderVO.getId(), DownstreamError.describe(t));
-                    return Mono.just(HttpResponse.serverError());
                 });
     }
 
