@@ -54,6 +54,7 @@ The following table concentrates on the most important configuration parameters:
 | `LOG_LEVEL`                    | Root log level                                                                       | `INFO`  |
 | `LOGGER_LEVELS_ORG_FIWARE_IAM` | Level of the contract-management itself, e.g. `DEBUG` to trace how an order is resolved | `INFO`  |
 | `HTTP_CLIENT_LOG_EXCEPTION`    | Add the stack trace to failed outgoing calls                                         | `false` |
+| `LOG_LEVEL_MICRONAUT_HTTP_CLIENT` | Level of micronaut's own http client logging (its connection errors duplicate the one-line WARN of the failed call) | `OFF` |
 
 Levels are used as follows:
 

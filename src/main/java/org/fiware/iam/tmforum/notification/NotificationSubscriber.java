@@ -13,6 +13,7 @@ import io.micronaut.runtime.server.event.ServerStartupEvent;
 import io.micronaut.scheduling.TaskScheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.configuration.NotificationProperties;
 import org.fiware.iam.tmforum.party.model.EventSubscriptionInputVO;
@@ -95,7 +96,8 @@ public class NotificationSubscriber {
                         }
                         return Mono.empty();
                     }
-                    log.warn("Could not create subscription for {} in TM Forum API - retrying in {}s", entityType, notificationProperties.getSubscriptionRetryInterval(), t);
+                    log.warn("Could not create subscription for {} {} events at {} - retrying in {}s: {}", entityType, eventType,
+                            request.getUri(), notificationProperties.getSubscriptionRetryInterval(), DownstreamError.describe(t));
                     scheduleSubscription(notificationProperties.getSubscriptionRetryInterval(), entityType, eventType, apiAddress);
                     return Mono.empty();
                 }).subscribe();

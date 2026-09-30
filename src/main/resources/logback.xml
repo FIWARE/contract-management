@@ -1,5 +1,8 @@
 <configuration>
 
+    <!-- the unused appender would otherwise make logback print its whole status on every start -->
+    <statusListener class="ch.qos.logback.core.status.NopStatusListener" />
+
     <!--
         LOG_FORMAT: TEXT (default) or JSON
         LOG_LEVEL:  root level, INFO by default. Single packages can be tuned through micronaut,
@@ -21,6 +24,14 @@
             <withFormattedMessage>true</withFormattedMessage>
         </encoder>
     </appender>
+
+    <!--
+        Micronaut logs every failed connection at ERROR with a full stack trace (~125 lines). The same
+        failure reaches the caller and is logged there in one line with its reason
+        (LoggingHttpClientFilter), so it is switched off by default. LOG_LEVEL_MICRONAUT_HTTP_CLIENT=DEBUG
+        brings it back, including the micronaut request tracing.
+    -->
+    <logger name="io.micronaut.http.client.netty.DefaultHttpClient" level="${LOG_LEVEL_MICRONAUT_HTTP_CLIENT:-OFF}" />
 
     <root level="${LOG_LEVEL:-INFO}">
         <appender-ref ref="${LOG_FORMAT:-TEXT}" />
