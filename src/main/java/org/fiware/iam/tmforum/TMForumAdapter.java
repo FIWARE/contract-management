@@ -2,6 +2,8 @@ package org.fiware.iam.tmforum;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.context.event.StartupEvent;
+import io.micronaut.runtime.event.annotation.EventListener;
 import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +39,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Adapter to handle communication with TMForum APIs.
@@ -69,8 +70,6 @@ public class TMForumAdapter {
     private static final String AGREEMENT_STATUS_CANCELLED = "cancelled";
     public static final String CONSUMER_ROLE = "Consumer";
 
-    private final AtomicBoolean selfDescriptionWarningLogged = new AtomicBoolean(false);
-
     private final ObjectMapper objectMapper;
 
     private final OrganizationResolver organizationResolver;
@@ -80,6 +79,16 @@ public class TMForumAdapter {
     private final AgreementApiClient agreementApiClient;
     private final QuoteApiClient quoteApiClient;
     private final ConsentProperties consentProperties;
+
+    /**
+     * The consent configuration is static, so an incomplete one is reported once at startup instead of on every order.
+     */
+    @EventListener
+    public void warnAboutIncompleteConsentConfiguration(StartupEvent startupEvent) {
+        if (consentProperties.isEnabled() && (consentProperties.getSelfDescriptionBaseUrl() == null || consentProperties.getSelfDescriptionBaseUrl().isBlank())) {
+            log.warn("Consent enrichment is enabled but consent.self-description-base-url is unset; agreements are written unenriched.");
+        }
+    }
 
     /**
      * Create a TMForum Agreement for the given product order, unless the order already has one.
@@ -175,9 +184,7 @@ public class TMForumAdapter {
             return Mono.just(List.of());
         }
         if (consentProperties.getSelfDescriptionBaseUrl() == null || consentProperties.getSelfDescriptionBaseUrl().isBlank()) {
-            if (selfDescriptionWarningLogged.compareAndSet(false, true)) {
-                log.warn("Consent enrichment is enabled but consent.self-description-base-url is unset; agreements are written unenriched. This is only logged once.");
-            }
+            // warned about once at startup, see warnAboutIncompleteConsentConfiguration
             return Mono.just(List.of());
         }
         if (customerOrganizationId == null || customerOrganizationId.isBlank()) {

@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TrustedIssuersException;
+import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
@@ -62,12 +63,12 @@ public class TrustedIssuersListAdapter {
                         "The trusted-issuers-list did not allow issuer %s the credentials %s for order %s.".formatted(
                                 issuerDid, credentialTypes, orderId), e))
                 .map(response -> {
-                    if (!isSuccess(response)) {
+                    if (!HttpResponses.isSuccess(response)) {
                         log.warn("Order {}: the trusted-issuers-list answered the grant of {} to issuer {} with status {}.",
                                 orderId, credentialTypes, issuerDid, response.getStatus().getCode());
                         return false;
                     }
-                    log.info("Order {}: allowed issuer {} the credentials {} at the trusted-issuers-list.",
+                    log.debug("Order {}: allowed issuer {} the credentials {} at the trusted-issuers-list.",
                             orderId, issuerDid, credentialTypes);
                     return true;
                 });
@@ -89,7 +90,7 @@ public class TrustedIssuersListAdapter {
     public Mono<HttpResponse<?>> denyIssuer(String issuerDid, String orderId) {
         return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId))
                 .<HttpResponse<?>>map(response -> {
-                    log.info("Order {}: revoked the credentials of issuer {} at the trusted-issuers-list.", orderId, issuerDid);
+                    log.debug("Order {}: revoked the credentials of issuer {} at the trusted-issuers-list.", orderId, issuerDid);
                     return response;
                 })
                 .onErrorResume(e -> {
@@ -102,10 +103,6 @@ public class TrustedIssuersListAdapter {
                     return Mono.error(new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER,
                             "The trusted-issuers-list did not revoke the credentials of issuer %s for order %s.".formatted(issuerDid, orderId), e));
                 });
-    }
-
-    private static boolean isSuccess(HttpResponse<?> response) {
-        return response.getStatus().getCode() > 199 && response.getStatus().getCode() < 300;
     }
 
     // only return credentials intended for local

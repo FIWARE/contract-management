@@ -7,8 +7,6 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
-import org.fiware.iam.exception.FailureReason;
-import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.handlers.ProductOrderHandler;
 import org.fiware.iam.tmforum.OrganizationResolver;
 import org.fiware.iam.tmforum.PolicyResolver;
@@ -55,7 +53,7 @@ public class PapProductOrderHandler implements ProductOrderHandler {
                     }
                     return Mono.zipDelayError(policies.stream()
                                     .map(p -> papAdapter.deletePolicy(productOrderVO.getId(), p)).toList(),
-                            results -> toResponse(productOrderVO.getId(), "deleted", results.length, results));
+                            PapProductOrderHandler::toResponse);
                 });
     }
 
@@ -68,8 +66,6 @@ public class PapProductOrderHandler implements ProductOrderHandler {
     private Mono<HttpResponse<?>> createPolicy(String organizationId, ProductOrderVO productOrderVO) {
 
         return organizationResolver.getDID(organizationId)
-                .switchIfEmpty(Mono.error(() -> new TMForumException(FailureReason.ORGANIZATION_DID_MISSING,
-                        "No DID could be resolved for the customer organization %s.".formatted(organizationId))))
                 .flatMap(did -> policyResolver
                         .getAuthorizationPolicy(productOrderVO)
                         .map(this::filterLocalPolicies)
@@ -84,17 +80,14 @@ public class PapProductOrderHandler implements ProductOrderHandler {
                             }
                             return Mono.zipDelayError(policies.stream()
                                             .map(p -> papAdapter.createPolicy(did, productOrderVO.getId(), p)).toList(),
-                                    results -> toResponse(productOrderVO.getId(), "created", policies.size(), results));
+                                    PapProductOrderHandler::toResponse);
                         }));
     }
 
-    private HttpResponse<?> toResponse(String orderId, String action, int expected, Object[] results) {
-        long failed = Stream.of(results).map(r -> (Boolean) r).filter(success -> !success).count();
-        if (failed > 0) {
-            log.warn("Order {}: only {} of {} policies could be {} at the pap.", orderId, expected - failed, expected, action);
+    private static HttpResponse<?> toResponse(Object[] results) {
+        if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
             return HttpResponse.status(HttpStatus.BAD_GATEWAY);
         }
-        log.debug("Order {}: {} {} policies at the pap.", orderId, action, expected);
         return HttpResponse.ok();
     }
 

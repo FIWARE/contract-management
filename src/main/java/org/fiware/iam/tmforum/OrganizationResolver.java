@@ -82,8 +82,8 @@ public class OrganizationResolver {
         String did = getDidFromExternalReference(ovo.getExternalReference())
                 .or(() -> getDidFromPartyCharacteristics(ovo.getPartyCharacteristic()))
                 .orElseThrow(() -> new TMForumException(FailureReason.ORGANIZATION_DID_MISSING,
-                        ("Organization %s has no DID: expected an externalReference of type '%s' or a partyCharacteristic '%s' " +
-                                "holding a did:<method>:<id>.").formatted(organizationId, EXTERNAL_REFERENCE_IDM_ID, PARTY_CHARACTERISTIC_DID)));
+                        "Organization %s has no valid DID in an externalReference of type '%s' or a partyCharacteristic '%s'.".formatted(
+                                organizationId, EXTERNAL_REFERENCE_IDM_ID, PARTY_CHARACTERISTIC_DID)));
         log.debug("Organization {} has DID {}", organizationId, did);
         return did;
     }

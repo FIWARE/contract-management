@@ -4,7 +4,7 @@ import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
-import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.http.HttpResponses;
 import reactor.core.publisher.Mono;
 
 import java.util.Arrays;
@@ -36,7 +36,7 @@ public interface TMForumEventHandler {
         Mono<HttpResponse<?>> zipped = Mono.zipDelayError(responses, objects -> (HttpResponse<?>) Arrays.stream(objects)
                         .filter(HttpResponse.class::isInstance)
                         .map(HttpResponse.class::cast)
-                        .filter(response -> response.getStatus().getCode() < 200 || response.getStatus().getCode() > 299)
+                        .filter(response -> !HttpResponses.isSuccess(response))
                         .findAny()
                         .map(response -> HttpResponse.status(HttpStatus.BAD_GATEWAY).body(response.body()))
                         .orElse(HttpResponse.noContent()));

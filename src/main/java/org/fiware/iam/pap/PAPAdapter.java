@@ -9,6 +9,7 @@ import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.PapException;
+import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.odrl.pap.api.PolicyApiClient;
 import reactor.core.publisher.Mono;
 
@@ -49,6 +50,7 @@ public class PAPAdapter {
 	 * its ID will be updated to include the product-order it originates from
 	 */
 	public Mono<Boolean> createPolicy(String customer, String orderId, Map<String, Object> policy) {
+		// deferred, so that an invalid policy (thrown while preparing it) is signalled through the returned Mono like any other error
 		return Mono.defer(() -> {
 			Map<String, Object> finalPolicy = addAssignee(customer, updatePolicyId(orderId, policy));
 			String uid = (String) finalPolicy.get(UID_KEY);
@@ -56,35 +58,32 @@ public class PAPAdapter {
 					.onErrorMap(HttpClientResponseException.class, e -> new PapException(FailureReason.PAP_REJECTED_POLICY,
 							"The PAP rejected policy %s for assignee %s.".formatted(uid, customer), e))
 					.map(response -> {
-						if (!isSuccess(response)) {
+						if (!HttpResponses.isSuccess(response)) {
 							log.warn("The PAP answered the creation of policy {} for assignee {} with status {}.", uid, customer, response.code());
 							return false;
 						}
-						log.info("Created policy {} for assignee {} at the PAP.", uid, customer);
+						log.debug("Created policy {} for assignee {} at the PAP.", uid, customer);
 						return true;
 					});
 		});
 	}
 
 	public Mono<Boolean> deletePolicy(String orderId, Map<String, Object> policy) {
+		// deferred, so that an invalid policy (thrown while building its id) is signalled through the returned Mono like any other error
 		return Mono.defer(() -> {
 			String fullId = buildFullId(orderId, policy);
 			return papClient.deletePolicyByUid(fullId)
 					.onErrorMap(HttpClientResponseException.class, e -> new PapException(FailureReason.PAP_REJECTED_POLICY,
 							"The PAP could not delete policy %s.".formatted(fullId), e))
 					.map(response -> {
-						if (!isSuccess(response)) {
+						if (!HttpResponses.isSuccess(response)) {
 							log.warn("The PAP answered the deletion of policy {} with status {}.", fullId, response.code());
 							return false;
 						}
-						log.info("Deleted policy {} from the PAP.", fullId);
+						log.debug("Deleted policy {} from the PAP.", fullId);
 						return true;
 					});
 		});
-	}
-
-	private static boolean isSuccess(HttpResponse<?> response) {
-		return response.code() >= 200 && response.code() < 300;
 	}
 
 	private String buildFullId(String orderId, Map<String, Object> policy) {

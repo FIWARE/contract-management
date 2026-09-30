@@ -24,7 +24,6 @@ public enum FailureReason {
 	POLICY_INVALID_ASSIGNEE("policy_invalid_assignee"),
 	PAP_REJECTED_POLICY("pap_rejected_policy"),
 	TIL_REJECTED_ISSUER("til_rejected_issuer"),
-	REMOTE_CM_REJECTED("remote_cm_rejected"),
 	AGREEMENT_FAILED("agreement_failed"),
 	RAINBOW_ERROR("rainbow_error"),
 	TMFORUM_ERROR("tmforum_error");

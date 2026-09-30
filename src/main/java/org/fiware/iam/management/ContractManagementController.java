@@ -13,6 +13,8 @@ import org.fiware.iam.cm.api.OrderApi;
 import org.fiware.iam.cm.model.OrderEventVO;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
+import org.fiware.iam.handlers.OrderAction;
+import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.til.model.CredentialsVO;
@@ -36,8 +38,8 @@ public class ContractManagementController implements OrderApi {
 
     @Override
     public Mono<HttpResponse<Object>> handleOrderStart(OrderEventVO orderVO) {
-        log.info("Order {}: received start from a remote contract management for customer {} with {} policies and {} credentials.",
-                orderVO.getOrderId(), orderVO.getCustomerId(), sizeOf(orderVO.getPolicies()), sizeOf(orderVO.getCredentialsConfig()));
+        log.info("Order {}: received start from a remote contract management for customer {}.",
+                orderVO.getOrderId(), orderVO.getCustomerId());
 
         List<Mono<Boolean>> creationResults = Optional.ofNullable(orderVO.getPolicies()).orElse(List.of())
                 .stream()
@@ -54,7 +56,7 @@ public class ContractManagementController implements OrderApi {
         List<Mono<Boolean>> successList = new ArrayList<>(creationResults);
         successList.add(tilResult);
 
-        return toResponse(orderVO.getOrderId(), "start", successList);
+        return toResponse(orderVO.getOrderId(), OrderAction.START, successList);
     }
 
     @Override
@@ -69,20 +71,14 @@ public class ContractManagementController implements OrderApi {
         // what has to be revoked is what was granted, which the trusted-issuers-list records under
         // the order's id - the credentials in the event are not needed for it
         Mono<Boolean> issuerDenyResult = trustedIssuersListAdapter.denyIssuer(issuerId, orderId)
-                .map(HttpResponse::getStatus)
-                .map(HttpStatus::getCode)
-                .map(code -> code > 199 && code < 300);
+                .map(HttpResponses::isSuccess);
         List<Mono<Boolean>> successList = new ArrayList<>(policyDeleteResults);
         successList.add(issuerDenyResult);
 
-        return toResponse(orderId, "stop", successList);
+        return toResponse(orderId, OrderAction.STOP, successList);
     }
 
-    private static int sizeOf(List<?> list) {
-        return list == null ? 0 : list.size();
-    }
-
-    private Mono<HttpResponse<Object>> toResponse(String orderId, String action, List<Mono<Boolean>> successList) {
+    private Mono<HttpResponse<Object>> toResponse(String orderId, OrderAction action, List<Mono<Boolean>> successList) {
         // delay errors, so that one failing call does not cancel the others and leave an unlogged partial state
         return Mono.<HttpResponse<Object>>zipDelayError(successList, results -> {
                     long failed = Arrays.stream(results)

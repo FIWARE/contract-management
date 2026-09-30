@@ -8,8 +8,6 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
-import org.fiware.iam.exception.FailureReason;
-import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.handlers.ProductOrderHandler;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
 import org.fiware.iam.tmforum.OrganizationResolver;
@@ -45,7 +43,7 @@ public class TilProductOrderHandler implements ProductOrderHandler {
      */
     @Override
     public Mono<HttpResponse<?>> handleProductOrderStop(String organizationId, ProductOrderVO productOrderVO) {
-        return getDID(organizationId)
+        return organizationResolver.getDID(organizationId)
                 .flatMap(did -> trustedIssuersListAdapter.denyIssuer(did, productOrderVO.getId()));
     }
 
@@ -57,7 +55,7 @@ public class TilProductOrderHandler implements ProductOrderHandler {
 
     private Mono<HttpResponse<?>> allowIssuer(String organizationId, ProductOrderVO productOrderVO) {
         return Mono.zip(
-                        getDID(organizationId),
+                        organizationResolver.getDID(organizationId),
                         credentialsConfigResolver.getCredentialsConfig(productOrderVO))
                 .flatMap(resultTuple -> trustedIssuersListAdapter.allowIssuer(resultTuple.getT1(),
                         productOrderVO.getId(), resultTuple.getT2()))
@@ -68,11 +66,5 @@ public class TilProductOrderHandler implements ProductOrderHandler {
                         return HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY);
                     }
                 });
-    }
-
-    private Mono<String> getDID(String organizationId) {
-        return organizationResolver.getDID(organizationId)
-                .switchIfEmpty(Mono.error(() -> new TMForumException(FailureReason.ORGANIZATION_DID_MISSING,
-                        "No DID could be resolved for the customer organization %s.".formatted(organizationId))));
     }
 }
