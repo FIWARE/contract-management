@@ -36,7 +36,7 @@ public class LoggingHttpClientFilter implements HttpClientFilter {
                 .doOnError(e -> {
                     Throwable cause = logException ? e : null;
                     log.warn("Downstream call {} {} failed after {} ms: {}", request.getMethod(), request.getUri(),
-                            System.currentTimeMillis() - start, DownstreamError.describe(e), cause);
+                            System.currentTimeMillis() - start, DownstreamError.reason(e), cause);
                 });
     }
 }

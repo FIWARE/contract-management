@@ -2,63 +2,46 @@ package org.fiware.iam.logging;
 
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 
 /**
- * Renders a failure as one line that tells what went wrong - including the status and body a downstream service
- * answered with - so it can be logged without a stack trace.
+ * Adds what a stacktrace does not show to a log line: the status and body a downstream service answered with. That
+ * body usually holds the actual reason of a failure (e.g. a validation message of the PAP or the TIL), while the
+ * trace of a {@link HttpClientResponseException} only carries the status.
+ * <p>
+ * Log the throwable itself next to it, so the standard stacktrace is printed as well.
  */
 public final class DownstreamError {
 
 	static final int MAX_BODY_LENGTH = 1000;
-	private static final int MAX_CAUSE_DEPTH = 5;
+	private static final int MAX_CAUSE_DEPTH = 10;
 
 	private DownstreamError() {
 	}
 
 	/**
-	 * Describe the given throwable and its causes, e.g.
-	 * {@code [pap_rejected_policy] PAP rejected policy x <- status=400 body={"detail":"..."}}
+	 * The message of the throwable, followed by status and body of the downstream answer it was caused by - if any.
+	 * E.g. {@code [pap_rejected_policy] The PAP rejected policy x. - downstream answered with status=400 body={"detail":"..."}}
 	 */
-	public static String describe(Throwable throwable) {
-		List<String> parts = new ArrayList<>();
-		Throwable current = throwable;
-		while (current != null && parts.size() < MAX_CAUSE_DEPTH) {
-			String part = describeSingle(current);
-			if (parts.isEmpty() || !parts.getLast().contains(part)) {
-				parts.add(part);
-			}
-			if (current.getCause() == current) {
-				break;
-			}
-			current = current.getCause();
-		}
-		return String.join(" <- ", parts);
+	public static String reason(Throwable throwable) {
+		String message = Optional.ofNullable(throwable.getMessage()).orElseGet(() -> throwable.getClass().getSimpleName());
+		return httpError(throwable)
+				.map(httpError -> "%s - downstream answered with %s".formatted(message, httpError))
+				.orElse(message);
 	}
 
 	/**
-	 * Status and body of an http error, empty for all other throwables.
+	 * Status and body of the first downstream http error in the causes of the throwable, empty if it was not caused by one.
 	 */
-	public static Optional<String> describeHttpError(Throwable throwable) {
-		if (throwable instanceof HttpClientResponseException hcre) {
-			return Optional.of("status=%s body=%s".formatted(hcre.getStatus().getCode(), body(hcre)));
+	public static Optional<String> httpError(Throwable throwable) {
+		Throwable current = throwable;
+		for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++) {
+			if (current instanceof HttpClientResponseException hcre) {
+				return Optional.of("status=%s body=%s".formatted(hcre.getStatus().getCode(), body(hcre)));
+			}
+			current = current.getCause();
 		}
 		return Optional.empty();
-	}
-
-	private static String describeSingle(Throwable throwable) {
-		return describeHttpError(throwable)
-				.orElseGet(() -> Optional.ofNullable(throwable.getMessage())
-						.map(message -> throwable instanceof RuntimeException && isOwnException(throwable)
-								? message
-								: "%s: %s".formatted(throwable.getClass().getSimpleName(), message))
-						.orElse(throwable.getClass().getSimpleName()));
-	}
-
-	private static boolean isOwnException(Throwable throwable) {
-		return throwable.getClass().getPackageName().startsWith("org.fiware.iam");
 	}
 
 	private static String body(HttpClientResponseException hcre) {

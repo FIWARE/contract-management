@@ -110,7 +110,7 @@ public class RainbowAdapter {
                     }
                 })
                 .onErrorResume(t -> {
-                    log.warn("Rainbow did not delete agreement {}: {}", agreementId, DownstreamError.describe(t));
+                    log.warn("Rainbow did not delete agreement {}: {}", agreementId, DownstreamError.reason(t), t);
                     return Mono.just(false);
                 });
     }

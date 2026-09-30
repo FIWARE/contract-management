@@ -183,7 +183,7 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                             .onErrorResume(t -> {
                                 failedHandlers.add(handler.getName());
                                 log.warn("Order {}: {} failed in handler {}: {}", orderId, action, handler.getName(),
-                                        DownstreamError.describe(t));
+                                        DownstreamError.reason(t), t);
                                 return Mono.just(HttpResponse.status(HttpStatus.BAD_GATEWAY));
                             }))
                     .toList();

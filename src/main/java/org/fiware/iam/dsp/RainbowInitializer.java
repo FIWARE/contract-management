@@ -30,6 +30,6 @@ public class RainbowInitializer {
 				.subscribe(
 						participant -> log.info("Registered {} as provider participant at Rainbow.", participant),
 						e -> log.error("Could not register {} as provider participant at Rainbow, DSP negotiations will fail: {}",
-								generalProperties.getDid(), DownstreamError.describe(e)));
+								generalProperties.getDid(), DownstreamError.reason(e), e));
 	}
 }

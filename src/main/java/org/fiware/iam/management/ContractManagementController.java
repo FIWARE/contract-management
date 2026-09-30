@@ -15,7 +15,6 @@ import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
 import org.fiware.iam.handlers.OrderAction;
 import org.fiware.iam.http.HttpResponses;
-import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
@@ -93,7 +92,6 @@ public class ContractManagementController implements OrderApi {
                     }
                     log.info("Order {}: {} succeeded.", orderId, action);
                     return HttpResponseFactory.INSTANCE.<Object>status(HttpStatus.OK);
-                })
-                .doOnError(e -> log.warn("Order {}: {} failed: {}", orderId, action, DownstreamError.describe(e)));
+                });
     }
 }

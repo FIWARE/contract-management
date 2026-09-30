@@ -85,7 +85,8 @@ mvn test -Dtest=TMForumAdapterTest
 - Unit tests use Mockito mocks; integration tests use Testcontainers with k3s
 - Logging: failures are raised as `ContractManagementException` subclasses with a `FailureReason` code and the ids involved,
   keeping the cause; they are logged once (per failing order handler in `ProductOrderEventHandler`, or in `CatchAllExceptionHandler`),
-  never log-and-rethrow. Use `DownstreamError.describe(e)` instead of attaching stack traces. Lines about an order start with
+  never log-and-rethrow. At that single point log `DownstreamError.reason(e)` (adds the downstream status/body, which the
+  stacktrace lacks) and attach the exception. Lines about an order start with
   `Order <id>:`. Whole policies/orders only at DEBUG. Output format via `LOG_FORMAT=TEXT|JSON` (see README)
 
 ## Important Files

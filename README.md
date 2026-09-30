@@ -66,7 +66,9 @@ Levels are used as follows:
 Every line concerning an order starts with `Order <id>:`. A failing order handler is logged once, with its name and the reason, and each handled order ends with one line, e.g.
 
 ```
-WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed in handler pap: [pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org. <- status=400 body={"detail":"..."}
+WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed in handler pap: [pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org. - downstream answered with status=400 body={"detail":"..."}
+org.fiware.iam.exception.PapException: [pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org.
+	at ...
 WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed for customer urn:ngsi-ld:organization:2 in the handlers [pap].
 ```
 

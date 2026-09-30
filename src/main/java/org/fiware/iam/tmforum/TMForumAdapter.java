@@ -132,7 +132,7 @@ public class TMForumAdapter {
                         productOrderId, existingId))
                 .onErrorResume(t -> {
                     log.warn("Could not read order {} to check for an existing agreement, creating one: {}",
-                            productOrderId, DownstreamError.describe(t));
+                            productOrderId, DownstreamError.reason(t), t);
                     return Mono.empty();
                 });
     }
@@ -197,7 +197,7 @@ public class TMForumAdapter {
                 // failing here would block the order over a consent concern.
                 .onErrorResume(t -> {
                     log.warn("Could not resolve the specification of offering {}; agreement is written unenriched: {}",
-                            productOfferingId, DownstreamError.describe(t));
+                            productOfferingId, DownstreamError.reason(t), t);
                     return Mono.just(List.<CharacteristicTmfVO>of());
                 })
                 .defaultIfEmpty(List.of());
@@ -347,7 +347,7 @@ public class TMForumAdapter {
                 })
                 .map(response -> true)
                 .onErrorResume(t -> {
-                    log.warn("Was not able to terminate agreement {}: {}", agreementId, DownstreamError.describe(t));
+                    log.warn("Was not able to terminate agreement {}: {}", agreementId, DownstreamError.reason(t), t);
                     return Mono.just(false);
                 })
                 .defaultIfEmpty(false);
@@ -361,7 +361,7 @@ public class TMForumAdapter {
         return productOrderApiClient.retrieveProductOrder(productOrderId, null)
                 .map(HttpResponse::body)
                 .onErrorResume(t -> {
-                    log.warn("Could not read the order {}; writing only the new agreements: {}", productOrderId, DownstreamError.describe(t));
+                    log.warn("Could not read the order {}; writing only the new agreements: {}", productOrderId, DownstreamError.reason(t), t);
                     return Mono.empty();
                 });
     }

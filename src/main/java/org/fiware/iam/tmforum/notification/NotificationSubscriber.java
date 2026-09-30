@@ -97,7 +97,7 @@ public class NotificationSubscriber {
                         return Mono.empty();
                     }
                     log.warn("Could not create subscription for {} {} events at {} - retrying in {}s: {}", entityType, eventType,
-                            request.getUri(), notificationProperties.getSubscriptionRetryInterval(), DownstreamError.describe(t));
+                            request.getUri(), notificationProperties.getSubscriptionRetryInterval(), DownstreamError.reason(t));
                     scheduleSubscription(notificationProperties.getSubscriptionRetryInterval(), entityType, eventType, apiAddress);
                     return Mono.empty();
                 }).subscribe();
