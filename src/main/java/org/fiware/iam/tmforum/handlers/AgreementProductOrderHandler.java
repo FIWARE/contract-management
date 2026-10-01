@@ -157,13 +157,8 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
         }
         return Mono.zipDelayError(
                         agreementIds.stream().map(tmForumAdapter::terminateAgreement).toList(),
-                        terminations -> {
-                            if (Arrays.asList(terminations).contains(false)) {
-                                // the stop itself is not blocked by it - the order is gone anyway - but it has to be visible
-                                log.warn("Order {}: not all of the agreements {} could be terminated.", productOrderVO.getId(), agreementIds);
-                            }
-                            return (HttpResponse<?>) HttpResponse.noContent();
-                        });
+                        // a failed termination is logged by the adapter, it does not block the stop - the order is gone anyway
+                        terminations -> (HttpResponse<?>) HttpResponse.noContent());
     }
 
     @Override

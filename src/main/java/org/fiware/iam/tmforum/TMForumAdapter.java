@@ -278,7 +278,7 @@ public class TMForumAdapter {
                 .map(AgreementTmfVO::getId)
                 .onErrorMap(t -> new TMForumException(FailureReason.AGREEMENT_FAILED,
                         "The TM Forum agreement API did not create the agreement for order %s and offering %s.".formatted(productOrderId, productOfferingId), t))
-                .doOnNext(id -> log.info("Order {}: created agreement {} for offering {}.", productOrderId, id, productOfferingId));
+                .doOnNext(id -> log.debug("Order {}: created agreement {} for offering {}.", productOrderId, id, productOfferingId));
     }
 
 

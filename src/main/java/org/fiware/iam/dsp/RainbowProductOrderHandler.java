@@ -104,8 +104,8 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
                 .map(rainbowAdapter::deleteAgreement)
                 .toList();
         return Mono.zipDelayError(deletionMonos, deletions -> {
+            // the adapter logs which agreement could not be deleted
             if (Arrays.asList(deletions).contains(false)) {
-                log.warn("Order {}: not all of the DSP agreements {} could be deleted.", productOrderVO.getId(), agreementIds);
                 return HttpResponse.status(HttpStatus.BAD_GATEWAY);
             }
             return HttpResponse.status(HttpStatus.ACCEPTED);

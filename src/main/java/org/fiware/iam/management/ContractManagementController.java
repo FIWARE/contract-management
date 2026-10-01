@@ -80,14 +80,9 @@ public class ContractManagementController implements OrderApi {
     private Mono<HttpResponse<Object>> toResponse(String orderId, OrderAction action, List<Mono<Boolean>> successList) {
         // delay errors, so that one failing call does not cancel the others and leave an unlogged partial state
         return Mono.<HttpResponse<Object>>zipDelayError(successList, results -> {
-                    long failed = Arrays.stream(results)
-                            .filter(Boolean.class::isInstance)
-                            .map(Boolean.class::cast)
-                            .filter(isSuccessfull -> !isSuccessfull)
-                            .count();
-                    if (failed > 0) {
-                        log.warn("Order {}: {} failed, {} of {} calls to the pap and trusted-issuers-list did not succeed.",
-                                orderId, action, failed, results.length);
+                    // the pap and trusted-issuers-list adapters log what failed
+                    if (Arrays.asList(results).contains(false)) {
+                        log.warn("Order {}: {} failed.", orderId, action);
                         return HttpResponseFactory.INSTANCE.<Object>status(HttpStatus.BAD_GATEWAY);
                     }
                     log.info("Order {}: {} succeeded.", orderId, action);
