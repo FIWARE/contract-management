@@ -58,12 +58,8 @@ public class PAPAdapter {
 					.onErrorMap(HttpClientResponseException.class, e -> new PapException(FailureReason.PAP_REJECTED_POLICY,
 							"The PAP rejected policy %s for assignee %s.".formatted(uid, customer), e))
 					.map(response -> {
-						if (!HttpResponses.isSuccess(response)) {
-							log.warn("The PAP answered the creation of policy {} for assignee {} with status {}.", uid, customer, response.code());
-							return false;
-						}
-						log.debug("Created policy {} for assignee {} at the PAP.", uid, customer);
-						return true;
+						log.debug("The PAP answered the creation of policy {} for assignee {} with {}.", uid, customer, response.code());
+						return HttpResponses.isSuccess(response);
 					});
 		});
 	}
@@ -76,12 +72,8 @@ public class PAPAdapter {
 					.onErrorMap(HttpClientResponseException.class, e -> new PapException(FailureReason.PAP_REJECTED_POLICY,
 							"The PAP could not delete policy %s.".formatted(fullId), e))
 					.map(response -> {
-						if (!HttpResponses.isSuccess(response)) {
-							log.warn("The PAP answered the deletion of policy {} with status {}.", fullId, response.code());
-							return false;
-						}
-						log.debug("Deleted policy {} from the PAP.", fullId);
-						return true;
+						log.debug("The PAP answered the deletion of policy {} with {}.", fullId, response.code());
+						return HttpResponses.isSuccess(response);
 					});
 		});
 	}

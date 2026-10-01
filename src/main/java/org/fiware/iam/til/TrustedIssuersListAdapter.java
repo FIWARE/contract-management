@@ -63,14 +63,9 @@ public class TrustedIssuersListAdapter {
                         "The trusted-issuers-list did not allow issuer %s the credentials %s for order %s.".formatted(
                                 issuerDid, credentialTypes, orderId), e))
                 .map(response -> {
-                    if (!HttpResponses.isSuccess(response)) {
-                        log.warn("Order {}: the trusted-issuers-list answered the grant of {} to issuer {} with status {}.",
-                                orderId, credentialTypes, issuerDid, response.getStatus().getCode());
-                        return false;
-                    }
-                    log.debug("Order {}: allowed issuer {} the credentials {} at the trusted-issuers-list.",
-                            orderId, issuerDid, credentialTypes);
-                    return true;
+                    log.debug("Order {}: the trusted-issuers-list answered the grant of {} to issuer {} with {}.",
+                            orderId, credentialTypes, issuerDid, response.getStatus().getCode());
+                    return HttpResponses.isSuccess(response);
                 });
     }
 

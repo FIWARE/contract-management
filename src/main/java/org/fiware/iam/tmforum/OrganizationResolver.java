@@ -3,7 +3,6 @@ package org.fiware.iam.tmforum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.annotation.Value;
-import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -67,10 +66,9 @@ public class OrganizationResolver {
                 .onErrorMap(HttpClientResponseException.class, e -> new TMForumException(FailureReason.ORGANIZATION_NOT_FOUND,
                         "Organization %s could not be retrieved from the TM Forum party API.".formatted(organizationId), e))
                 .map(response -> {
-                    if (!response.getStatus().equals(HttpStatus.OK) || response.body() == null) {
+                    if (response.body() == null) {
                         throw new TMForumException(FailureReason.ORGANIZATION_NOT_FOUND,
-                                "Organization %s could not be retrieved from the TM Forum party API, it answered with status %s and %s.".formatted(
-                                        organizationId, response.getStatus().getCode(), response.body() == null ? "no body" : "a body"));
+                                "Organization %s could not be retrieved from the TM Forum party API, the answer has no body.".formatted(organizationId));
                     }
                     return response.body();
                 })
