@@ -11,6 +11,7 @@ import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.productorder.model.ErrorVO;
+import reactor.core.Exceptions;
 
 import java.time.format.DateTimeParseException;
 
@@ -28,38 +29,41 @@ public class CatchAllExceptionHandler implements ExceptionHandler<Exception, Htt
 
 	@Override
 	public HttpResponse<ErrorVO> handle(HttpRequest request, Exception exception) {
-		if (exception instanceof DateTimeParseException dateTimeParseException) {
+		// several failures collected by a zipDelayError arrive as one composite - it is answered like its first failure,
+		// while message and log contain all of them
+		Throwable primary = Exceptions.unwrapMultipleExcludingTracebacks(exception).stream().findFirst().orElse(exception);
+		if (primary instanceof DateTimeParseException dateTimeParseException) {
 			return respond(request, HttpStatus.BAD_REQUEST,
 					"Request could not be answered due to an invalid date: %s.".formatted(dateTimeParseException.getParsedString()),
 					exception);
 		}
-		if (exception instanceof TMForumException) {
+		if (primary instanceof TMForumException) {
 			return respond(request, HttpStatus.BAD_GATEWAY,
 					"Request could not be answered due to error in downstream tmforum service: %s".formatted(DownstreamError.reason(exception)),
 					exception);
 		}
-		if (exception instanceof TrustedIssuersException) {
+		if (primary instanceof TrustedIssuersException) {
 			return respond(request, HttpStatus.BAD_GATEWAY,
 					"Request could not be answered due to error in downstream trusted issuers list service: %s".formatted(DownstreamError.reason(exception)),
 					exception);
 		}
-		if (exception instanceof RainbowException) {
+		if (primary instanceof RainbowException) {
 			return respond(request, HttpStatus.BAD_GATEWAY,
 					"Request could not be answered due to error in downstream rainbow service: %s".formatted(DownstreamError.reason(exception)),
 					exception);
 		}
-		if (exception instanceof PapException) {
+		if (primary instanceof PapException) {
 			return respond(request, HttpStatus.BAD_GATEWAY,
 					"Request could not be answered due to error in downstream odrl-pap service: %s".formatted(DownstreamError.reason(exception)),
 					exception);
 		}
-		if (exception instanceof HttpClientResponseException) {
+		if (primary instanceof HttpClientResponseException) {
 			return respond(request, HttpStatus.BAD_GATEWAY,
 					"Request could not be answered due to error in a downstream service: %s".formatted(DownstreamError.reason(exception)),
 					exception);
 		}
-		if (exception instanceof IllegalArgumentException) {
-			return respond(request, HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+		if (primary instanceof IllegalArgumentException) {
+			return respond(request, HttpStatus.BAD_REQUEST, DownstreamError.reason(exception), exception);
 		}
 		log.error("Unexpected error while handling {} {}: {}", request.getMethod(), request.getUri(), DownstreamError.reason(exception), exception);
 		return HttpResponse.status(HttpStatus.INTERNAL_SERVER_ERROR)

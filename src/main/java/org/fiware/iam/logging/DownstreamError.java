@@ -2,7 +2,10 @@ package org.fiware.iam.logging;
 
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
 
+import reactor.core.Exceptions;
+
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Adds what a stacktrace does not show to a log line: the status and body a downstream service answered with. That
@@ -22,8 +25,16 @@ public final class DownstreamError {
 	/**
 	 * The message of the throwable, followed by status and body of the downstream answer it was caused by - if any.
 	 * E.g. {@code [pap_rejected_policy] The PAP rejected policy x. - downstream answered with status=400 body={"detail":"..."}}
+	 * <p>
+	 * The reasons of a composite of several failures are joined with {@code "; "}.
 	 */
 	public static String reason(Throwable throwable) {
+		if (Exceptions.isMultiple(throwable)) {
+			// several failures collected by a zipDelayError - each of them is a reason
+			return Exceptions.unwrapMultipleExcludingTracebacks(throwable).stream()
+					.map(DownstreamError::reason)
+					.collect(Collectors.joining("; "));
+		}
 		String message = Optional.ofNullable(throwable.getMessage()).orElseGet(() -> throwable.getClass().getSimpleName());
 		return httpError(throwable)
 				.map(httpError -> "%s - downstream answered with %s".formatted(message, httpError))
