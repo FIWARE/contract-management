@@ -37,7 +37,8 @@ src/main/java/org/fiware/iam/
   pap/                              # Policy administration point
   til/                              # Trusted issuers list adapter
   tmforum/                          # TM Forum API integration (orders, catalog, agreements, quotes)
-  exception/                        # Custom exception types
+  exception/                        # Custom exception types (ContractManagementException base, FailureReason codes)
+  logging/DownstreamError.java      # One-line description of a failure incl. downstream status/body
   handlers/                         # Event/notification handlers
 
 src/main/resources/
@@ -82,6 +83,11 @@ mvn test -Dtest=TMForumAdapterTest
 - Conditional beans via `@Requires(bean = ...)` and custom `Condition` implementations
 - Lombok `@Data` for mutable configuration classes, Java records for immutable config
 - Unit tests use Mockito mocks; integration tests use Testcontainers with k3s
+- Logging: failures are raised as `ContractManagementException` subclasses with a `FailureReason` code and the ids involved,
+  keeping the cause; they are logged once (per failing order handler in `ProductOrderEventHandler`, or in `CatchAllExceptionHandler`),
+  never log-and-rethrow. At that single point log `DownstreamError.reason(e)` (adds the downstream status/body, which the
+  stacktrace lacks) and attach the exception. Lines about an order start with
+  `Order <id>:`. Whole policies/orders only at DEBUG. Output format via `LOG_FORMAT=TEXT|JSON` (see README)
 
 ## Important Files
 - `pom.xml` — Maven build config, all dependencies

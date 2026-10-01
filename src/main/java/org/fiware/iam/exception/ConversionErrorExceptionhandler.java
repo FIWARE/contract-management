@@ -21,7 +21,7 @@ public class ConversionErrorExceptionhandler implements ExceptionHandler<Convers
 
     @Override
     public HttpResponse<ErrorVO> handle(HttpRequest request, ConversionErrorException exception) {
-        log.warn("Received unexpected exception {} for request {}.", exception.getMessage(), request, exception);
+        log.warn("Rejected {} {} with 400, the request could not be converted: {}", request.getMethod(), request.getUri(), exception.getMessage());
         return HttpResponse.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorVO().status(HttpStatus.BAD_REQUEST.toString())
                         .reason(HttpStatus.BAD_REQUEST.getReason())

@@ -5,7 +5,11 @@ import io.micronaut.http.HttpResponse;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.exception.FailureReason;
+import org.fiware.iam.exception.PapException;
+import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.odrl.pap.api.PolicyApiClient;
 import reactor.core.publisher.Mono;
 
@@ -46,12 +50,32 @@ public class PAPAdapter {
 	 * its ID will be updated to include the product-order it originates from
 	 */
 	public Mono<Boolean> createPolicy(String customer, String orderId, Map<String, Object> policy) {
-		return papClient.createPolicy(addAssignee(customer, updatePolicyId(orderId, policy))).map(HttpResponse::code).map(code -> code >= 200 && code < 300);
+		// deferred, so that an invalid policy (thrown while preparing it) is signalled through the returned Mono like any other error
+		return Mono.defer(() -> {
+			Map<String, Object> finalPolicy = addAssignee(customer, updatePolicyId(orderId, policy));
+			String uid = (String) finalPolicy.get(UID_KEY);
+			return papClient.createPolicy(finalPolicy)
+					.onErrorMap(HttpClientResponseException.class, e -> new PapException(FailureReason.PAP_REJECTED_POLICY,
+							"The PAP rejected policy %s for assignee %s.".formatted(uid, customer), e))
+					.map(response -> {
+						log.debug("The PAP answered the creation of policy {} for assignee {} with {}.", uid, customer, response.code());
+						return HttpResponses.isSuccess(response);
+					});
+		});
 	}
 
 	public Mono<Boolean> deletePolicy(String orderId, Map<String, Object> policy) {
-		String fullId = buildFullId(orderId, policy);
-		return papClient.deletePolicyByUid(fullId).map(HttpResponse::code).map(code -> code >= 200 && code < 300);
+		// deferred, so that an invalid policy (thrown while building its id) is signalled through the returned Mono like any other error
+		return Mono.defer(() -> {
+			String fullId = buildFullId(orderId, policy);
+			return papClient.deletePolicyByUid(fullId)
+					.onErrorMap(HttpClientResponseException.class, e -> new PapException(FailureReason.PAP_REJECTED_POLICY,
+							"The PAP could not delete policy %s.".formatted(fullId), e))
+					.map(response -> {
+						log.debug("The PAP answered the deletion of policy {} with {}.", fullId, response.code());
+						return HttpResponses.isSuccess(response);
+					});
+		});
 	}
 
 	private String buildFullId(String orderId, Map<String, Object> policy) {
@@ -60,7 +84,7 @@ public class PAPAdapter {
 
 	private Map<String, Object> updatePolicyId(String orderId, Map<String, Object> policy) {
 		policy.put(UID_KEY, buildFullId(orderId, policy));
-		log.info("Added the uid: {}", policy);
+		log.debug("Policy uid is now {}", policy.get(UID_KEY));
 		return policy;
 	}
 
@@ -68,7 +92,8 @@ public class PAPAdapter {
 		if (policy.containsKey(UID_KEY) && policy.get(UID_KEY) instanceof String idString) {
 			return idString;
 		} else {
-			throw new IllegalArgumentException("The provided policy does not contain an odrl:uid.");
+			throw invalidPolicy(FailureReason.POLICY_MISSING_UID,
+					"The policy has no string %s, it only contains %s.".formatted(UID_KEY, policy.keySet()));
 		}
 	}
 
@@ -84,7 +109,7 @@ public class PAPAdapter {
 			permission.put(ASSIGNEE_KEY, addToAssignees(customer, optionalAssignee.get()));
 		}
 		policy.put(PERMISSION_KEY, permission);
-		log.info("The final policy: {}", policy);
+		log.debug("Policy to be created at the PAP: {}", policy);
 		return policy;
 	}
 
@@ -93,7 +118,8 @@ public class PAPAdapter {
 		if (permissionObject instanceof Map permissionMap) {
 			return permissionMap;
 		}
-		throw new IllegalArgumentException("The policy needs to contain a permission.");
+		throw invalidPolicy(FailureReason.POLICY_MISSING_PERMISSION,
+				"Policy %s has no %s object, but %s.".formatted(policy.get(UID_KEY), PERMISSION_KEY, permissionObject));
 	}
 
 	private Map<String, Object> addToAssignees(String customer, Map.Entry<String, Object> assignee) {
@@ -118,7 +144,16 @@ public class PAPAdapter {
 		} else if (originalMap.containsKey(REFINEMENT_KEY) && originalMap.get(REFINEMENT_KEY) instanceof Map refinementMap) {
 			return refinementMap;
 		}
-		throw new IllegalArgumentException("The policy does not contain a valid assignee.");
+		throw invalidPolicy(FailureReason.POLICY_INVALID_ASSIGNEE,
+				"The %s of the policy is neither an id, an object with @id nor a refinement: %s.".formatted(ASSIGNEE_KEY, originalMap));
+	}
+
+	/**
+	 * An invalid policy is a fault of whoever provided it (a product specification or a remote contract management),
+	 * not of the PAP - it is answered with 400, like any other invalid argument.
+	 */
+	private static IllegalArgumentException invalidPolicy(FailureReason reason, String message) {
+		return new IllegalArgumentException(reason.format(message));
 	}
 
 	private Map<String, Object> getIdConstraint(String id) {

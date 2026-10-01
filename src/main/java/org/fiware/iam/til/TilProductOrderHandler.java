@@ -58,7 +58,6 @@ public class TilProductOrderHandler implements ProductOrderHandler {
                     if (success) {
                         return HttpResponseFactory.INSTANCE.status(HttpStatus.CREATED);
                     } else {
-                        log.warn("Was not able to allow issuer {} for product order {}.", organizationId, productOrderVO);
                         return HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY);
                     }
                 });

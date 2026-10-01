@@ -10,6 +10,13 @@ import reactor.core.publisher.Mono;
 public interface ProductOrderHandler {
 
     /**
+     * Short name of the handler, used to attribute results and failures in the logs.
+     */
+    default String getName() {
+        return getClass().getSimpleName();
+    }
+
+    /**
      * Handle the completion of a product order
      *
      * @param customerId     - TMForum ID of the customer related to the order

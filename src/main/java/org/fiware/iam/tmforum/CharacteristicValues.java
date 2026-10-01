@@ -156,7 +156,9 @@ public final class CharacteristicValues {
 		try {
 			return objectMapper.convertValue(value, elementType);
 		} catch (IllegalArgumentException iae) {
-			log.warn("The characteristic value {} is invalid and will be skipped.", value, iae);
+			log.warn("A characteristic value is not a valid {} and is skipped, the configuration it carries is NOT applied: {}",
+					elementType.getType().getTypeName(), iae.getMessage());
+			log.debug("The skipped characteristic value: {}", value);
 			return null;
 		}
 	}

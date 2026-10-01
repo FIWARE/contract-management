@@ -85,10 +85,6 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
                                             .toList())
                             .flatMap(agreementIds -> tmForumAdapter.addAgreementToOrder(productOrderVO.getId(), agreementIds))
                             .<HttpResponse<?>>map(order -> HttpResponse.noContent());
-                })
-                .onErrorResume(t -> {
-                    log.warn("Was not able to create the agreement for order {}.", productOrderVO.getId(), t);
-                    return Mono.just(HttpResponse.serverError());
                 });
     }
 
@@ -156,6 +152,7 @@ public class AgreementProductOrderHandler implements ProductOrderHandler {
         }
         return Mono.zipDelayError(
                         agreementIds.stream().map(tmForumAdapter::terminateAgreement).toList(),
+                        // a failed termination is logged by the adapter, it does not block the stop - the order is gone anyway
                         terminations -> (HttpResponse<?>) HttpResponse.noContent());
     }
 

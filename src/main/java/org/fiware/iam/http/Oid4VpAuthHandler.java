@@ -57,7 +57,7 @@ public class Oid4VpAuthHandler implements AuthHandler {
                     if (t instanceof HttpClientResponseException hcre) {
                         return Mono.just(hcre.getResponse());
                     } else {
-                        throw new BadGatewayException("Was not able to call downstream service.", t);
+                        throw new BadGatewayException("Was not able to call downstream service %s.".formatted(request.getUri()), t);
                     }
                 })
                 .flatMap(response -> {
@@ -70,7 +70,11 @@ public class Oid4VpAuthHandler implements AuthHandler {
                                 getClientId(request),
                                 getScope(request)
                         );
-                        return Mono.fromFuture(oid4VPClient.getAccessToken(params))
+                        log.debug("{} requires authentication, requesting an OID4VP token for client {} and scope {}.",
+                                request.getUri(), getClientId(request), getScope(request));
+                        return Mono.fromFuture(() -> oid4VPClient.getAccessToken(params))
+                                .onErrorMap(e -> new BadGatewayException("Could not get an OID4VP access token for %s (client %s, scope %s).".formatted(
+                                        request.getUri(), getClientId(request), getScope(request)), e))
                                 .map(TokenResponse::getAccessToken)
                                 .flatMap(token -> {
                                     request.bearerAuth(token);

@@ -8,6 +8,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.domain.ContractManagement;
+import io.micronaut.core.annotation.Nullable;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.productcatalog.api.ProductOfferingApiClient;
 import org.fiware.iam.tmforum.productcatalog.api.ProductSpecificationApiClient;
@@ -94,7 +97,7 @@ public class PolicyResolver {
         if (productOrder.getQuote() != null && !productOrder.getQuote().isEmpty()) {
             return getAuthorizationPolicyFromQuote(productOrder.getQuote());
         }
-        log.debug("No quote found, take the original offer from the order item.");
+        log.debug("Order {} references no quote, the policies are taken from the ordered offerings.", productOrder.getId());
         List<Mono<PolicyConfig>> policyConfigMonoList = Optional
                 .ofNullable(productOrder.getProductOrderItem())
                 .orElseGet(List::of)
@@ -143,35 +146,40 @@ public class PolicyResolver {
     private Mono<PolicyConfig> getAuthorizationPolicyFromOffer(String offerId) {
         return productOfferingApiClient
                 .retrieveProductOffering(offerId, null)
+                .onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(FailureReason.OFFERING_NOT_RESOLVABLE,
+                        OFFERING_NOT_RESOLVABLE.formatted(offerId), e))
                 .flatMap(response -> getAuthorizationPolicyFromSpecificationOf(response.body(), offerId))
-                .switchIfEmpty(Mono.error(() -> unresolvableReference(OFFERING_NOT_RESOLVABLE.formatted(offerId))));
+                .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.OFFERING_NOT_RESOLVABLE,
+                        OFFERING_NOT_RESOLVABLE.formatted(offerId), null)));
     }
 
     private Mono<PolicyConfig> getAuthorizationPolicyFromSpecificationOf(ProductOfferingVO productOffering,
             String offerId) {
         if (productOffering == null) {
-            return Mono.error(unresolvableReference(OFFERING_NOT_RESOLVABLE.formatted(offerId)));
+            return Mono.error(unresolvableReference(FailureReason.OFFERING_NOT_RESOLVABLE, OFFERING_NOT_RESOLVABLE.formatted(offerId), null));
         }
         String specificationId = Optional.ofNullable(productOffering.getProductSpecification())
                 .map(ProductSpecificationRefVO::getId)
                 .orElse(null);
         if (specificationId == null) {
             // bundled offerings do not reference a specification of their own - nothing to configure here
-            log.info("The offering {} does not reference a product specification, no policy will be resolved.",
+            log.debug("The offering {} does not reference a product specification, no policy will be resolved.",
                     productOffering.getId());
             return Mono.just(emptyConfig());
         }
         return productSpecificationApiClient.retrieveProductSpecification(specificationId, null)
+                .onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId), e))
                 .flatMap(response -> toPolicyConfig(response.body(), specificationId, offerId))
-                .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId))));
+                .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+                        SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId), null)));
     }
 
     private Mono<PolicyConfig> toPolicyConfig(ProductSpecificationVO productSpecification, String specificationId,
             String offerId) {
         if (productSpecification == null) {
-            return Mono.error(unresolvableReference(
-                    SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId)));
+            return Mono.error(unresolvableReference(FailureReason.SPECIFICATION_NOT_RESOLVABLE,
+                    SPECIFICATION_NOT_RESOLVABLE.formatted(specificationId, offerId), null));
         }
         return specificationGraphResolver.resolve(productSpecification)
                 .flatMap(graph -> toPolicyConfig(graph, productSpecification.getId()));
@@ -180,12 +188,14 @@ public class PolicyResolver {
     private Mono<PolicyConfig> toPolicyConfig(SpecificationGraphResolver.SpecificationGraph graph,
             String specificationId) {
         List<Map<String, Object>> policies = aggregatePolicies(graph, specificationId);
+        log.debug("Specification {} configures the policies {}.", specificationId,
+                policies.stream().map(policy -> policy.getOrDefault(ODRL_UID_KEY, "<no uid>")).toList());
         return governingProvider(graph, specificationId)
                 .map(id -> organizationResolver.getContractManagement(id)
                         .map(cm -> new PolicyConfig(cm, policies))
                         // a referenced provider that cannot be resolved is a broken reference, not an empty config
-                        .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                                PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId)))))
+                        .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.PROVIDER_NOT_RESOLVABLE,
+                                PROVIDER_NOT_RESOLVABLE.formatted(id, specificationId), null))))
                 .orElseGet(() -> Mono.just(new PolicyConfig(new ContractManagement(true), policies)));
     }
 
@@ -218,9 +228,7 @@ public class PolicyResolver {
             Object uid = policy.getOrDefault(ODRL_UID_KEY, policy);
             Map<String, Object> known = byUid.putIfAbsent(uid, policy);
             if (known != null && !known.equals(policy)) {
-                String message = CONFLICTING_POLICIES.formatted(specificationId, uid);
-                log.error(message);
-                throw new TMForumException(message);
+                throw new TMForumException(FailureReason.CONFLICTING_POLICIES, CONFLICTING_POLICIES.formatted(specificationId, uid));
             }
         });
         return List.copyOf(byUid.values());
@@ -251,9 +259,7 @@ public class PolicyResolver {
                 .distinct()
                 .toList();
         if (providers.size() > 1) {
-            String message = CONFLICTING_PROVIDERS.formatted(specificationId, providers);
-            log.error(message);
-            throw new TMForumException(message);
+            throw new TMForumException(FailureReason.CONFLICTING_PROVIDERS, CONFLICTING_PROVIDERS.formatted(specificationId, providers));
         }
         return providers.stream().findFirst();
     }
@@ -264,15 +270,17 @@ public class PolicyResolver {
                 .map(QuoteRefVO::getId)
                 .filter(Objects::nonNull)
                 .map(quoteId -> quoteApiClient.retrieveQuote(quoteId, null)
+                        .onErrorMap(HttpClientResponseException.class, e -> unresolvableReference(FailureReason.QUOTE_NOT_RESOLVABLE,
+                                QUOTE_NOT_RESOLVABLE.formatted(quoteId), e))
                         .flatMap(response -> getAuthorizationPolicyFrom(response.body(), quoteId))
-                        .switchIfEmpty(Mono.error(() -> unresolvableReference(
-                                QUOTE_NOT_RESOLVABLE.formatted(quoteId)))))
+                        .switchIfEmpty(Mono.error(() -> unresolvableReference(FailureReason.QUOTE_NOT_RESOLVABLE,
+                                QUOTE_NOT_RESOLVABLE.formatted(quoteId), null))))
                 .toList());
     }
 
     private Mono<List<PolicyConfig>> getAuthorizationPolicyFrom(QuoteVO quote, String quoteId) {
         if (quote == null) {
-            return Mono.error(unresolvableReference(QUOTE_NOT_RESOLVABLE.formatted(quoteId)));
+            return Mono.error(unresolvableReference(FailureReason.QUOTE_NOT_RESOLVABLE, QUOTE_NOT_RESOLVABLE.formatted(quoteId), null));
         }
         if (quote.getState() != QuoteStateTypeVO.ACCEPTED) {
             // a quote that is not accepted (anymore) configures nothing
@@ -322,18 +330,16 @@ public class PolicyResolver {
     }
 
     /**
-     * Log and build the exception for a configuration that is referenced but cannot be read.
-     * <p>
-     * Only ever called on the failing path, so it is safe to log here - but it must be invoked
-     * lazily (via {@link Mono#error(java.util.function.Supplier)}), since the arguments of
-     * {@code switchIfEmpty} are evaluated when the pipeline is assembled, not when it fails.
+     * Build the exception for a configuration that is referenced but cannot be read. It is not logged
+     * here: the order handler logs it once, together with the order it belongs to.
      *
+     * @param reason  the failure reason
      * @param message what could not be resolved
+     * @param cause   the failed call, if any
      * @return the exception to raise
      */
-    private static TMForumException unresolvableReference(String message) {
-        log.error(message);
-        return new TMForumException(message);
+    private static TMForumException unresolvableReference(FailureReason reason, String message, @Nullable Throwable cause) {
+        return new TMForumException(reason, message, cause);
     }
 
     /**

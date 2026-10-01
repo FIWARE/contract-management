@@ -9,7 +9,9 @@ import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.RainbowException;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.rainbow.api.AgreementApiClient;
 import org.fiware.rainbow.api.ContractApiClient;
 import org.fiware.rainbow.api.ParticipantApiClient;
@@ -47,15 +49,14 @@ public class RainbowAdapter {
                 .createAgreement(agreementCreateVO)
                 .map(HttpResponse::body)
                 .map(body -> objectMapper.convertValue(body, AgreementVO.class))
-                .onErrorMap(t -> {
-                    throw new RainbowException("Was not able to create agreement");
-                });
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR,
+                        "Rainbow did not create the agreement for organization %s and offering %s.".formatted(organizationId, offeringId), t));
     }
 
     private Mono<LastOfferVO> getTheLastOffer(String processId) {
         return contractApiClient.getLastOfferForProcess(processId)
                 .map(HttpResponse::body)
-                .onErrorMap(t -> new RainbowException(String.format("Was not able to find the last offer for %s.", processId)));
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR, String.format("Was not able to find the last offer for %s.", processId), t));
     }
 
     public Mono<AgreementVO> createAgreementAfterNegotiation(String providerId, String consumerOrganization, String providerOrganization) {
@@ -80,13 +81,15 @@ public class RainbowAdapter {
                                 }))
                 .map(HttpResponse::body)
                 .map(r -> new AgreementVO())
-                .onErrorMap(t -> new RainbowException("Was not able to create agreement"));
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR,
+                        "Rainbow did not create the agreement after negotiation %s.".formatted(providerId), t));
 
     }
 
     public Mono<AgreementVO> getAgreement(String processId) {
         return contractApiClient.getAgreement(processId)
-                .onErrorMap(t -> new RainbowException("Was not able to create agreement"))
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR,
+                        "Rainbow did not return the agreement of process %s.".formatted(processId), t))
                 .map(HttpResponse::body);
     }
 
@@ -101,7 +104,15 @@ public class RainbowAdapter {
                     }
                     return false;
                 })
-                .onErrorResume(t -> Mono.just(false));
+                .doOnNext(deleted -> {
+                    if (!deleted) {
+                        log.warn("Rainbow did not delete agreement {}: expected status 202.", agreementId);
+                    }
+                })
+                .onErrorResume(t -> {
+                    log.warn("Rainbow did not delete agreement {}: {}", agreementId, DownstreamError.reason(t), t);
+                    return Mono.just(false);
+                });
     }
 
     /**
@@ -111,9 +122,7 @@ public class RainbowAdapter {
         return contractApiClient.createRequest(negotiationRequestVO)
                 .map(HttpResponse::body)
                 .map(NegotiationVO::getDspaceColonProviderPid)
-                .onErrorMap(t -> {
-                    throw new RainbowException("Was not able to create negotiation request.", t);
-                });
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR, "Was not able to create negotiation request.", t));
     }
 
     public Mono<String> getNegotiationProcessState(String providerId) {
@@ -124,7 +133,7 @@ public class RainbowAdapter {
     public Mono<ProviderNegotiationVO> getNegotiationProcess(String providerId) {
         return contractApiClient.getProcessById(providerId)
                 .map(HttpResponse::body)
-                .onErrorMap(t -> new RainbowException(String.format("Was not able to find negotiation process %s.", providerId), t));
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR, String.format("Was not able to find negotiation process %s.", providerId), t));
     }
 
     public Mono<Object> updateNegotiationProcessByProviderId(String providerId, String state) {
@@ -139,7 +148,7 @@ public class RainbowAdapter {
                     return contractApiClient.updateProcessById(pn.getCnProcessId(), negotiationProcessVO);
                 })
                 .map(HttpResponse::body)
-                .onErrorMap(t -> new RainbowException(String.format("Was not able to update negotiation process %s to %s.", providerId, state), t));
+                .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR, String.format("Was not able to update negotiation process %s to %s.", providerId, state), t));
     }
 
 
@@ -150,7 +159,7 @@ public class RainbowAdapter {
                     if (t instanceof HttpClientResponseException re && re.getStatus().equals(HttpStatus.NOT_FOUND)) {
                         return Mono.just(false);
                     }
-                    throw new RainbowException(String.format("Was not able to check participant %s.", id), t);
+                    return Mono.error(new RainbowException(FailureReason.RAINBOW_ERROR, String.format("Was not able to check participant %s.", id), t));
                 });
     }
 
@@ -163,9 +172,8 @@ public class RainbowAdapter {
                                 // set empty, rainbow does not support null
                                 .dspaceColonParticipantBaseUrl("")
                                 .dspaceColonExtraFields(Map.of()))
-                        .onErrorMap(t -> {
-                            throw new RainbowException(String.format("Was not able to create the participant %s with type %s.", participantId, participantType), t);
-                        })
+                        .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR,
+                                String.format("Was not able to create the participant %s with type %s.", participantId, participantType), t))
                         .map(HttpResponse::body)
                         .map(ParticipantVO::getDspaceColonParticipantId))
                 .defaultIfEmpty(prefixDid(participantId));

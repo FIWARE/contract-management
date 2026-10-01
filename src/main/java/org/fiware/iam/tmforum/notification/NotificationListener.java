@@ -24,6 +24,7 @@ import java.util.Map;
 public class NotificationListener {
 
     public static final String EVENT_TYPE_KEY = "eventType";
+    private static final String EVENT_ID_KEY = "eventId";
 
     private final List<TMForumEventHandler> eventHandlers;
 
@@ -31,17 +32,18 @@ public class NotificationListener {
     public Mono<HttpResponse<?>> listenToEvent(@Body Map<String, Object> event) {
         log.debug("Received an Event: {}", event);
         if (!event.containsKey(EVENT_TYPE_KEY)) {
-            throw new IllegalArgumentException("Data did not contain the eventType.");
+            throw new IllegalArgumentException("The notification does not contain an eventType, it contains only %s.".formatted(event.keySet()));
         }
 
         if (event.get(EVENT_TYPE_KEY) instanceof String eventType) {
+            log.info("Received {} notification {}.", eventType, event.getOrDefault(EVENT_ID_KEY, "without eventId"));
             return eventHandlers.stream()
                     .filter(handler -> handler.isEventTypeSupported(eventType))
                     .findAny()
                     .orElseThrow(() -> new IllegalArgumentException("Event type %s is not supported.".formatted(eventType)))
                     .handleEvent(eventType, event)
-                    .doOnNext(r -> log.debug("Returned {} for {}", r, eventType));
+                    .doOnNext(r -> log.debug("Answered {} with {}.", eventType, r.getStatus().getCode()));
         }
-        throw new IllegalArgumentException("Event type is invalid.");
+        throw new IllegalArgumentException("The eventType of the notification is not a string, but %s.".formatted(event.get(EVENT_TYPE_KEY)));
     }
 }
