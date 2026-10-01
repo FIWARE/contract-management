@@ -50,7 +50,7 @@ The following table concentrates on the most important configuration parameters:
 
 | Env-Var                        | Description                                                                          | Default |
 |--------------------------------|--------------------------------------------------------------------------------------|---------|
-| `LOG_FORMAT`                   | `TEXT` for human readable lines, `JSON` for one JSON object per line                 | `TEXT`  |
+| `LOG_FORMAT`                   | `TEXT` for human readable lines, `JSON` for one JSON object per line (case-sensitive; an unknown value makes logback print why there is no output) | `TEXT`  |
 | `LOG_LEVEL`                    | Root log level                                                                       | `INFO`  |
 | `LOGGER_LEVELS_ORG_FIWARE_IAM` | Level of the contract-management itself, e.g. `DEBUG` to trace how an order is resolved | `INFO`  |
 | `HTTP_CLIENT_LOG_EXCEPTION`    | Add the stack trace to failed outgoing calls                                         | `false` |
