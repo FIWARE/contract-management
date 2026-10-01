@@ -38,11 +38,6 @@ import java.util.*;
 @Slf4j
 public class RainbowProductOrderHandler implements ProductOrderHandler {
 
-    @Override
-    public String getName() {
-        return "rainbow";
-    }
-
     private static final String STATE_VERIFIED = "dspace:VERIFIED";
     private static final String STATE_FINALIZED = "dspace:FINALIZED";
 

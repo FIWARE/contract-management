@@ -20,11 +20,6 @@ import reactor.core.publisher.Mono;
 @Slf4j
 public class TilProductOrderHandler implements ProductOrderHandler {
 
-    @Override
-    public String getName() {
-        return "til";
-    }
-
     private final OrganizationResolver organizationResolver;
     private final CredentialsConfigResolver credentialsConfigResolver;
     private final TrustedIssuersListAdapter trustedIssuersListAdapter;

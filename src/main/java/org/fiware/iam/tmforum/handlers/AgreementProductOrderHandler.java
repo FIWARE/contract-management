@@ -45,11 +45,6 @@ import java.util.Optional;
 @Slf4j
 public class AgreementProductOrderHandler implements ProductOrderHandler {
 
-    @Override
-    public String getName() {
-        return "agreement";
-    }
-
     /** State marking a quote item the parties agreed on. */
     private static final String QUOTE_ITEM_STATE_ACCEPTED = "accepted";
 

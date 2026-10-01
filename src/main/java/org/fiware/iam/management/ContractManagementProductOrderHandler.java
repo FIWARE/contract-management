@@ -30,11 +30,6 @@ import java.util.function.BiFunction;
 @Slf4j
 public class ContractManagementProductOrderHandler implements ProductOrderHandler {
 
-    @Override
-    public String getName() {
-        return "contract-management";
-    }
-
     private final ContractManagementAdapter contractManagementAdapter;
     private final OrganizationResolver organizationResolver;
     private final CredentialsConfigResolver credentialsConfigResolver;

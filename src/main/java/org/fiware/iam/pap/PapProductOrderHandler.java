@@ -26,11 +26,6 @@ import java.util.stream.Stream;
 @Slf4j
 public class PapProductOrderHandler implements ProductOrderHandler {
 
-    @Override
-    public String getName() {
-        return "pap";
-    }
-
     private final PolicyResolver policyResolver;
     private final OrganizationResolver organizationResolver;
     private final PAPAdapter papAdapter;
