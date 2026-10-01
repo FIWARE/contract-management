@@ -5,14 +5,6 @@ package org.fiware.iam.exception;
  */
 public class PapException extends ContractManagementException {
 
-	public PapException(String message) {
-		super(message);
-	}
-
-	public PapException(String message, Throwable cause) {
-		super(message, cause);
-	}
-
 	public PapException(FailureReason reason, String message) {
 		super(reason, message, null);
 	}

@@ -173,6 +173,7 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
         return Mono.defer(() -> {
             List<String> failedHandlers = new CopyOnWriteArrayList<>();
             List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
+                    // deferred, so that a handler throwing while assembling its Mono fails alone instead of all handlers
                     .map(handler -> Mono.defer(() -> handlerCall.apply(handler))
                             .doOnNext(response -> {
                                 if (!HttpResponses.isSuccess(response)) {

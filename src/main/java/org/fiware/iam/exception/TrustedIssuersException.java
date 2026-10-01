@@ -5,14 +5,6 @@ package org.fiware.iam.exception;
  */
 public class TrustedIssuersException extends ContractManagementException {
 
-	public TrustedIssuersException(String message) {
-		super(message);
-	}
-
-	public TrustedIssuersException(String message, Throwable cause) {
-		super(message, cause);
-	}
-
 	public TrustedIssuersException(FailureReason reason, String message) {
 		super(reason, message, null);
 	}
