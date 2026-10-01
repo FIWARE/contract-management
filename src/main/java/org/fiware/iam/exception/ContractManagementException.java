@@ -4,8 +4,8 @@ import io.micronaut.core.annotation.Nullable;
 import lombok.Getter;
 
 /**
- * Base of all expected failures of the contract management. Its message already explains the problem, so it is
- * logged as a single line without a stack trace.
+ * Base of all expected failures of the contract management. Its message carries a {@link FailureReason} code and the
+ * ids involved; it is logged once, with its stack trace, at the place that handles it.
  */
 @Getter
 public abstract class ContractManagementException extends RuntimeException {
