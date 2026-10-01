@@ -100,8 +100,8 @@ public class PAPAdapter {
 		if (policy.containsKey(UID_KEY) && policy.get(UID_KEY) instanceof String idString) {
 			return idString;
 		} else {
-			throw new PapException(FailureReason.POLICY_MISSING_UID,
-					"The policy configured at the product specification has no string %s, it only contains %s.".formatted(UID_KEY, policy.keySet()));
+			throw invalidPolicy(FailureReason.POLICY_MISSING_UID,
+					"The policy has no string %s, it only contains %s.".formatted(UID_KEY, policy.keySet()));
 		}
 	}
 
@@ -126,7 +126,7 @@ public class PAPAdapter {
 		if (permissionObject instanceof Map permissionMap) {
 			return permissionMap;
 		}
-		throw new PapException(FailureReason.POLICY_MISSING_PERMISSION,
+		throw invalidPolicy(FailureReason.POLICY_MISSING_PERMISSION,
 				"Policy %s has no %s object, but %s.".formatted(policy.get(UID_KEY), PERMISSION_KEY, permissionObject));
 	}
 
@@ -152,8 +152,16 @@ public class PAPAdapter {
 		} else if (originalMap.containsKey(REFINEMENT_KEY) && originalMap.get(REFINEMENT_KEY) instanceof Map refinementMap) {
 			return refinementMap;
 		}
-		throw new PapException(FailureReason.POLICY_INVALID_ASSIGNEE,
+		throw invalidPolicy(FailureReason.POLICY_INVALID_ASSIGNEE,
 				"The %s of the policy is neither an id, an object with @id nor a refinement: %s.".formatted(ASSIGNEE_KEY, originalMap));
+	}
+
+	/**
+	 * An invalid policy is a fault of whoever provided it (a product specification or a remote contract management),
+	 * not of the PAP - it is answered with 400, like any other invalid argument.
+	 */
+	private static IllegalArgumentException invalidPolicy(FailureReason reason, String message) {
+		return new IllegalArgumentException(reason.format(message));
 	}
 
 	private Map<String, Object> getIdConstraint(String id) {
