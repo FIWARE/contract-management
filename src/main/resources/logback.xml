@@ -1,12 +1,22 @@
 <configuration>
 
-    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%cyan(%d{HH:mm:ss.SSS}) %gray([%thread]) %highlight(%-5level) %magenta(%logger{36}) - %msg%n</pattern>
-        </encoder>
-    </appender>
+    <!--
+        LOG_FORMAT: TEXT (default) or JSON, case-sensitive - it selects logback-<LOG_FORMAT>.xml. Only that appender
+                    is defined, so a regular start is silent, while an unknown format makes logback print its errors.
+        LOG_LEVEL:  root level, INFO by default. Single packages can be tuned through micronaut,
+                    e.g. LOGGER_LEVELS_ORG_FIWARE_IAM=DEBUG
+    -->
+    <include resource="logback-${LOG_FORMAT:-TEXT}.xml" />
 
-    <root level="info">
-        <appender-ref ref="STDOUT" />
+    <!--
+        Micronaut logs every failed connection at ERROR with a full stack trace (~125 lines). The same
+        failure reaches the caller and is logged there in one line with its reason
+        (LoggingHttpClientFilter), so it is switched off by default. LOG_LEVEL_MICRONAUT_HTTP_CLIENT=DEBUG
+        brings it back, including the micronaut request tracing.
+    -->
+    <logger name="io.micronaut.http.client.netty.DefaultHttpClient" level="${LOG_LEVEL_MICRONAUT_HTTP_CLIENT:-OFF}" />
+
+    <root level="${LOG_LEVEL:-INFO}">
+        <appender-ref ref="OUTPUT" />
     </root>
 </configuration>

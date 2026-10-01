@@ -11,6 +11,7 @@ import org.fiware.iam.cm.model.CredentialVO;
 import org.fiware.iam.cm.model.OdrlPolicyJsonVO;
 import org.fiware.iam.cm.model.OrderEventVO;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.domain.ContractManagement;
 import org.fiware.iam.handlers.ProductOrderHandler;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
@@ -68,15 +69,12 @@ public class ContractManagementProductOrderHandler implements ProductOrderHandle
                                         .map(orderMapEntry -> handler.apply(orderMapEntry.getKey(), orderMapEntry.getValue()))
                                         .toList();
                                 if (orderResponses.isEmpty()) {
+                                    log.debug("Order {} has no configuration managed by a remote contract management.", productOrderVO.getId());
                                     return Mono.just(HttpResponseFactory.INSTANCE.status(HttpStatus.NO_CONTENT));
                                 }
-                                return Mono.zip(orderResponses, responses -> Arrays.stream(responses)
-                                        .filter(HttpResponse.class::isInstance)
+                                return Mono.zipDelayError(orderResponses, responses -> Arrays.stream(responses)
                                         .map(HttpResponse.class::cast)
-                                        .map(HttpResponse::getStatus)
-                                        .map(HttpStatus::getCode)
-                                        .map(res -> res >= 200 && res < 300)
-                                        .filter(isSuccess -> !isSuccess)
+                                        .filter(response -> !HttpResponses.isSuccess(response))
                                         .map(s -> HttpResponseFactory.INSTANCE.status(HttpStatus.BAD_GATEWAY))
                                         .findAny()
                                         .orElse(HttpResponseFactory.INSTANCE.status(HttpStatus.NO_CONTENT))

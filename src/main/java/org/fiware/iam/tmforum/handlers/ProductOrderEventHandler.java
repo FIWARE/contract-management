@@ -5,16 +5,20 @@ import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
-import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.handlers.OrderAction;
 import org.fiware.iam.handlers.ProductOrderHandler;
+import org.fiware.iam.http.HttpResponses;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.productorder.model.*;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 
@@ -55,13 +59,13 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .map(ProductOrderCreateEventPayloadVO::getProductOrder)
                 .map(ProductOrderVO::getRelatedParty)
                 .filter(Objects::nonNull)
-                .map(rpl -> getCustomer(rpl).orElseThrow(() -> {
-                    log.debug("Expected related party with role {} but could not find one. Related parties: {}", CUSTOMER_ROLE, rpl.stream().map(RelatedPartyVO::getRole).toList());
-                    return new IllegalArgumentException("Exactly one ordering related party is expected.");
-                }))
+                .map(rpl -> getCustomer(rpl).orElseThrow(() -> new IllegalArgumentException(
+                        "Order %s: expected exactly one related party with role '%s', but the order has the roles %s.".formatted(
+                                getOrderId(event), CUSTOMER_ROLE, rpl.stream().map(RelatedPartyVO::getRole).toList()))))
                 .map(RelatedPartyVO::getId)
                 .findAny()
-                .orElseThrow(() -> new IllegalArgumentException("The ProductOrder-Event does not include a valid organization id."));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Order %s: the event does not include a related party with the customer organization.".formatted(getOrderId(event))));
 
         return switch (eventType) {
             case CREATE_EVENT -> handelCreateEvent(orgId, event);
@@ -70,6 +74,15 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
             default -> throw new IllegalArgumentException("Invalid event type received.");
         };
 
+    }
+
+    private String getOrderId(Map<String, Object> event) {
+        return Optional.ofNullable(event)
+                .map(rawEvent -> objectMapper.convertValue(rawEvent, ProductOrderCreateEventVO.class))
+                .map(ProductOrderCreateEventVO::getEvent)
+                .map(ProductOrderCreateEventPayloadVO::getProductOrder)
+                .map(ProductOrderVO::getId)
+                .orElse("<unknown>");
     }
 
     private Optional<RelatedPartyVO> getCustomer(List<RelatedPartyVO> relatedPartyVOS) {
@@ -96,24 +109,18 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
         if (isNotRejected(productOrderVO) && containsQuote(productOrderVO)) {
-            List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
-                    .map(handler -> handler.handleProductOrderNegotiation(organizationId, productOrderVO))
-                    .toList();
-
-            return zipToResponse(responses);
+            return runHandlers(OrderAction.NEGOTIATION, organizationId, productOrderVO,
+                    handler -> handler.handleProductOrderNegotiation(organizationId, productOrderVO));
         }
 
-        boolean isCompleted = isCompleted(productOrderVO);
-        if (!isCompleted) {
-            log.debug("The received event is not in state completed.");
+        if (!isCompleted(productOrderVO)) {
+            log.debug("Order {} was created in state {}; nothing to do before it is completed.",
+                    productOrderVO.getId(), productOrderVO.getState());
             return Mono.just(HttpResponse.noContent());
         }
 
-        List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
-                .map(handler -> handler.handleProductOrderComplete(organizationId, productOrderVO))
-                .toList();
-
-        return zipToResponse(responses);
+        return runHandlers(OrderAction.COMPLETION, organizationId, productOrderVO,
+                handler -> handler.handleProductOrderComplete(organizationId, productOrderVO));
     }
 
     private static boolean isCompleted(ProductOrderVO productOrderVO) {
@@ -135,32 +142,11 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
         if (isCompleted(productOrderVO)) {
-            log.debug("Product order is completed.");
-
-            List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
-                    .map(handler -> handler.handleProductOrderComplete(organizationId, productOrderVO)
-                            .doOnNext(r -> log.debug("Handler {} responded {}", handler.getClass().getName(), r)))
-                    .toList();
-
-            return zipToResponse(responses);
-        } else {
-            return handleStopEvent(organizationId, event);
+            return runHandlers(OrderAction.COMPLETION, organizationId, productOrderVO,
+                    handler -> handler.handleProductOrderComplete(organizationId, productOrderVO));
         }
-    }
-
-
-    private Mono<HttpResponse<?>> handleStopEvent(String organizationId, Map<String, Object> event) {
-        ProductOrderStateChangeEventVO productOrderStateChangeEventVO = objectMapper.convertValue(event, ProductOrderStateChangeEventVO.class);
-        ProductOrderVO productOrderVO = Optional.ofNullable(productOrderStateChangeEventVO.getEvent())
-                .map(ProductOrderStateChangeEventPayloadVO::getProductOrder)
-                .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
-
-
-        List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
-                .map(handler -> handler.handleProductOrderStop(organizationId, productOrderVO))
-                .toList();
-
-        return zipToResponse(responses);
+        return runHandlers(OrderAction.STOP, organizationId, productOrderVO,
+                handler -> handler.handleProductOrderStop(organizationId, productOrderVO));
     }
 
     private Mono<HttpResponse<?>> handelDeleteEvent(String organizationId, Map<String, Object> event) {
@@ -169,13 +155,49 @@ public class ProductOrderEventHandler implements TMForumEventHandler {
                 .map(ProductOrderDeleteEventPayloadVO::getProductOrder)
                 .orElseThrow(() -> new IllegalArgumentException("The event does not contain a product order."));
 
-        List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
-                .map(handler -> handler.handleProductOrderStop(organizationId, productOrderVO))
-                .toList();
-
-        return zipToResponse(responses);
+        return runHandlers(OrderAction.DELETION, organizationId, productOrderVO,
+                handler -> handler.handleProductOrderStop(organizationId, productOrderVO));
     }
 
+    /**
+     * Run all handlers for the order. A failing handler is logged once, with its name and the reason, and
+     * answers with a bad gateway - no matter whether it failed with an error or with a non-2xx response.
+     * One final line tells whether the order was handled completely.
+     */
+    private Mono<HttpResponse<?>> runHandlers(OrderAction action, String organizationId, ProductOrderVO productOrderVO,
+                                              Function<ProductOrderHandler, Mono<HttpResponse<?>>> handlerCall) {
+        String orderId = productOrderVO.getId();
+        log.debug("Order {}: handling {} (state {}) for customer {} with handlers {}.", orderId, action,
+                productOrderVO.getState(), organizationId, productOrderHandlers.stream().map(ProductOrderHandler::getName).toList());
+
+        return Mono.defer(() -> {
+            List<String> failedHandlers = new CopyOnWriteArrayList<>();
+            List<Mono<HttpResponse<?>>> responses = productOrderHandlers.stream()
+                    // deferred, so that a handler throwing while assembling its Mono fails alone instead of all handlers
+                    .map(handler -> Mono.defer(() -> handlerCall.apply(handler))
+                            .doOnNext(response -> {
+                                if (!HttpResponses.isSuccess(response)) {
+                                    // the handler logged the reason itself
+                                    failedHandlers.add(handler.getName());
+                                }
+                            })
+                            .onErrorResume(t -> {
+                                failedHandlers.add(handler.getName());
+                                log.warn("Order {}: {} failed in handler {}: {}", orderId, action, handler.getName(),
+                                        DownstreamError.reason(t), t);
+                                return Mono.just(HttpResponse.status(HttpStatus.BAD_GATEWAY));
+                            }))
+                    .toList();
+            return zipToResponse(responses)
+                    .doOnNext(response -> {
+                        if (failedHandlers.isEmpty()) {
+                            log.info("Order {}: {} succeeded for customer {}.", orderId, action, organizationId);
+                        } else {
+                            log.warn("Order {}: {} failed for customer {} in the handlers {}.", orderId, action, organizationId, failedHandlers);
+                        }
+                    });
+        });
+    }
 
     private boolean containsQuote(ProductOrderVO productOrderVO) {
         return productOrderVO.getQuote() != null && !productOrderVO.getQuote().isEmpty();

@@ -43,17 +43,12 @@ public class PapProductOrderHandler implements ProductOrderHandler {
                 .map(this::filterLocalPolicies)
                 .flatMap(policies -> {
                     if (policies.isEmpty()) {
+                        log.debug("Order {} carries no local policy; nothing to delete at the pap.", productOrderVO.getId());
                         return Mono.just(HttpResponse.noContent());
                     }
                     return Mono.zipDelayError(policies.stream()
                                     .map(p -> papAdapter.deletePolicy(productOrderVO.getId(), p)).toList(),
-                            results -> {
-                                if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
-                                    return HttpResponse.status(HttpStatus.BAD_GATEWAY);
-                                }
-                                return HttpResponse.ok();
-                            }
-                    );
+                            PapProductOrderHandler::toResponse);
                 });
     }
 
@@ -80,14 +75,15 @@ public class PapProductOrderHandler implements ProductOrderHandler {
                             }
                             return Mono.zipDelayError(policies.stream()
                                             .map(p -> papAdapter.createPolicy(did, productOrderVO.getId(), p)).toList(),
-                                    results -> {
-                                        if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
-                                            return HttpResponse.status(HttpStatus.BAD_GATEWAY);
-                                        }
-                                        return HttpResponse.ok();
-                                    }
-                            );
+                                    PapProductOrderHandler::toResponse);
                         }));
+    }
+
+    private static HttpResponse<?> toResponse(Object[] results) {
+        if (Stream.of(results).map(r -> (Boolean) r).toList().contains(false)) {
+            return HttpResponse.status(HttpStatus.BAD_GATEWAY);
+        }
+        return HttpResponse.ok();
     }
 
     // only return policies intended for local

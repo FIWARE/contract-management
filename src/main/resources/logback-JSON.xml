@@ -1,0 +1,12 @@
+<included>
+    <appender name="OUTPUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.JsonEncoder">
+            <withSequenceNumber>false</withSequenceNumber>
+            <withNanoseconds>false</withNanoseconds>
+            <withContext>false</withContext>
+            <withArguments>false</withArguments>
+            <withMessage>false</withMessage>
+            <withFormattedMessage>true</withFormattedMessage>
+        </encoder>
+    </appender>
+</included>

@@ -46,6 +46,34 @@ The following table concentrates on the most important configuration parameters:
 | `general.name`                         | `GENERAL_NAME`                         | Name of the service, used for the callback/listener subscription   | contract-management              |
 | `general.basepath`                     | `GENERAL_BASEPATH`                     | Basepath used for the provided listener endpoint                   | ""                               |
 
+### Logging
+
+| Env-Var                        | Description                                                                          | Default |
+|--------------------------------|--------------------------------------------------------------------------------------|---------|
+| `LOG_FORMAT`                   | `TEXT` for human readable lines, `JSON` for one JSON object per line (case-sensitive; an unknown value makes logback print why there is no output) | `TEXT`  |
+| `LOG_LEVEL`                    | Root log level                                                                       | `INFO`  |
+| `LOGGER_LEVELS_ORG_FIWARE_IAM` | Level of the contract-management itself, e.g. `DEBUG` to trace how an order is resolved | `INFO`  |
+| `HTTP_CLIENT_LOG_EXCEPTION`    | Add the stack trace to failed outgoing calls                                         | `false` |
+| `LOG_LEVEL_MICRONAUT_HTTP_CLIENT` | Level of micronaut's own http client logging (its connection errors duplicate the one-line WARN of the failed call) | `OFF` |
+
+Levels are used as follows:
+
+* `ERROR` - the service itself is broken (e.g. an unexpected exception, a failed startup registration)
+* `WARN` - something was not applied, always with the reason: a downstream service rejected a call (with its status and body), a configuration is invalid, an order handler failed
+* `INFO` - business results: a notification was received, and one line per handled order
+* `DEBUG` - how the result was reached: every outgoing call, the resolved specifications, policies and credentials, each policy created at the PAP and each issuer allowed at the TIL
+
+Every line concerning an order starts with `Order <id>:`. A failing order handler is logged once, with its name and the reason, and each handled order ends with one line, e.g.
+
+```
+WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed in handler PapProductOrderHandler: [pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org. - downstream answered with status=400 body={"detail":"..."}
+org.fiware.iam.exception.PapException: [pap_rejected_policy] The PAP rejected policy p-1-urn:ngsi-ld:product-order:1 for assignee did:web:consumer.org.
+	at ...
+WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion failed for customer urn:ngsi-ld:organization:2 in the handlers [PapProductOrderHandler].
+```
+
+Failures carry a machine-readable code in brackets (`[organization_did_missing]`, `[specification_not_resolvable]`, `[til_rejected_issuer]`, ...), see `org.fiware.iam.exception.FailureReason`.
+
 ### Development
 
 In order to support the development, a local environment can be started via ```mvn clean install -Pdev```. 

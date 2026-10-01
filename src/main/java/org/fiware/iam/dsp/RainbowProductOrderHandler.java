@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.handlers.ProductOrderHandler;
+import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.RainbowException;
 import org.fiware.iam.exception.TMForumException;
 import org.fiware.iam.tmforum.TMForumAdapter;
@@ -74,10 +75,8 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
                                 }
                                 return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), STATE_FINALIZED);
                             }))
-                    .onErrorMap(t -> {
-                        log.warn("Was not able to update negotiation.", t);
-                        throw new RainbowException("Was not able to update the negotiation.");
-                    })
+                    .onErrorMap(t -> new RainbowException(FailureReason.RAINBOW_ERROR,
+                            "Order %s: the DSP negotiation could not be finalized.".formatted(productOrderVO.getId()), t))
                     .map(t -> (HttpResponse<?>) HttpResponse.noContent());
         }
     }
@@ -86,15 +85,23 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
     public Mono<HttpResponse<?>> handleProductOrderStop(String organizationId, ProductOrderVO productOrderVO) {
         // only the DSP agreement is removed here; ending the TM Forum agreement is done by the
         // TM Forum handler.
-        List<Mono<Boolean>> deletionMonos = productOrderVO.getAgreement()
+        List<String> agreementIds = Optional.ofNullable(productOrderVO.getAgreement())
+                .orElse(List.of())
                 .stream()
                 .map(AgreementRefVO::getId)
+                .filter(Objects::nonNull)
+                .toList();
+        if (agreementIds.isEmpty()) {
+            log.debug("Order {} references no agreement; no DSP agreement to delete.", productOrderVO.getId());
+            return Mono.just(HttpResponse.noContent());
+        }
+        List<Mono<Boolean>> deletionMonos = agreementIds.stream()
                 .map(rainbowAdapter::deleteAgreement)
                 .toList();
         return Mono.zipDelayError(deletionMonos, deletions -> {
-            if (Set.of(deletions).contains(false)) {
-                log.warn("Was not able to delete the agreement for order {}.", productOrderVO);
-                HttpResponse.status(HttpStatus.BAD_GATEWAY);
+            // the adapter logs which agreement could not be deleted
+            if (Arrays.asList(deletions).contains(false)) {
+                return HttpResponse.status(HttpStatus.BAD_GATEWAY);
             }
             return HttpResponse.status(HttpStatus.ACCEPTED);
         });
@@ -106,7 +113,7 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
                 .getQuoteById(getQuoteRef(productOrderVO).getId())
                 .flatMap(quoteVO -> {
                     if (quoteVO.getState() != QuoteStateTypeVO.ACCEPTED) {
-                        throw new TMForumException(String.format("The quote is not in state accepted, cannot be used for product ordering. %s:%s.", quoteVO.getId(), quoteVO.getState()));
+                        throw new TMForumException(FailureReason.QUOTE_NOT_RESOLVABLE, String.format("Order %s: quote %s is in state %s, but only an accepted quote can be used for product ordering.", productOrderVO.getId(), quoteVO.getId(), quoteVO.getState()));
                     }
                     return rainbowAdapter.updateNegotiationProcessByProviderId(quoteVO.getExternalId(), STATE_VERIFIED);
                 })
@@ -116,7 +123,7 @@ public class RainbowProductOrderHandler implements ProductOrderHandler {
     private QuoteRefVO getQuoteRef(ProductOrderVO productOrderVO) {
         // integration with IDSA Contract Negotiation is only supported for productOrders with a single quote.
         if (productOrderVO.getQuote().size() != 1) {
-            throw new RainbowException("IDSA Contract Negotiation does not support the inclusion of multiple processes into one product.");
+            throw new RainbowException(FailureReason.RAINBOW_ERROR, String.format("Order %s references %s quotes, but IDSA Contract Negotiation supports exactly one quote per order.", productOrderVO.getId(), productOrderVO.getQuote().size()));
         }
         return productOrderVO.getQuote().get(0);
     }

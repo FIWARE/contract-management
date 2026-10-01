@@ -4,13 +4,17 @@ import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.MutableHttpRequest;
 import io.micronaut.http.annotation.Filter;
-import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.http.filter.ClientFilterChain;
 import io.micronaut.http.filter.HttpClientFilter;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.logging.DownstreamError;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
+/**
+ * Logs every outgoing request. Successful calls are only of interest when tracing (DEBUG), failed calls are logged
+ * with the status and body the downstream service answered, since that usually is the actual reason of a failure.
+ */
 @Slf4j
 @Filter("/**")
 public class LoggingHttpClientFilter implements HttpClientFilter {
@@ -23,16 +27,16 @@ public class LoggingHttpClientFilter implements HttpClientFilter {
         long start = System.currentTimeMillis();
 
         return Flux.from(chain.proceed(request))
-                .doOnNext(res -> log.info(
+                .doOnNext(res -> log.debug(
                         "{} {} {} - {} ms",
                         request.getMethod(),
                         request.getUri(),
                         res.getStatus().getCode(),
                         System.currentTimeMillis() - start))
                 .doOnError(e -> {
-                    String status = e instanceof HttpClientResponseException hce ? Integer.toString(hce.getStatus().getCode()) : "ERROR";
                     Throwable cause = logException ? e : null;
-                    log.warn("{} {} {} - {} ms", request.getMethod(), request.getUri(), status, System.currentTimeMillis() - start, cause);
+                    log.warn("Downstream call {} {} failed after {} ms: {}", request.getMethod(), request.getUri(),
+                            System.currentTimeMillis() - start, DownstreamError.reason(e), cause);
                 });
     }
 }

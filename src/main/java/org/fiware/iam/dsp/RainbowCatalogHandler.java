@@ -1,6 +1,7 @@
 package org.fiware.iam.dsp;
 
 import io.micronaut.context.annotation.Requires;
+import org.fiware.iam.http.HttpResponses;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import jakarta.inject.Singleton;
@@ -36,7 +37,7 @@ public class RainbowCatalogHandler implements CatalogHandler {
     @Override
     public Mono<HttpResponse<?>> handleCatalogStateChange(CatalogVO catalogVO) {
         return catalogApiClient.updateCatalogById(catalogVO.getId(), rainbowMapper.map(catalogVO)).map(res -> {
-            if (res.getStatus().getCode() >= 200 && res.getStatus().getCode() < 300) {
+            if (HttpResponses.isSuccess(res)) {
                 return HttpResponse.noContent();
             }
             return HttpResponse.status(HttpStatus.BAD_GATEWAY);
@@ -46,7 +47,7 @@ public class RainbowCatalogHandler implements CatalogHandler {
     @Override
     public Mono<HttpResponse<?>> handleCatalogDeletion(CatalogVO catalogVO) {
         return catalogApiClient.deleteCatalogById(catalogVO.getId()).map(res -> {
-            if (res.getStatus().getCode() >= 200 && res.getStatus().getCode() < 300) {
+            if (HttpResponses.isSuccess(res)) {
                 return HttpResponse.noContent();
             }
             return HttpResponse.status(HttpStatus.BAD_GATEWAY);

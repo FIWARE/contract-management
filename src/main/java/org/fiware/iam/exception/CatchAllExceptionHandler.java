@@ -5,15 +5,21 @@ import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.Produces;
+import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.http.server.exceptions.ExceptionHandler;
 import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.tmforum.productorder.model.ErrorVO;
+import reactor.core.Exceptions;
 
 import java.time.format.DateTimeParseException;
 
 /**
- * Handler to catch and log all unexpected exceptions and translate them into a proper 500 response.
+ * Handler to catch and log all exceptions and translate them into a proper error response.
+ * <p>
+ * Faulty requests are logged as a single line, failed downstream calls with the downstream answer and their stack
+ * trace, unexpected exceptions as errors.
  */
 @Produces
 @Singleton
@@ -23,49 +29,59 @@ public class CatchAllExceptionHandler implements ExceptionHandler<Exception, Htt
 
 	@Override
 	public HttpResponse<ErrorVO> handle(HttpRequest request, Exception exception) {
-		log.warn("Received unexpected exception {} for request {}.", exception.getMessage(), request.getUri(), exception);
-		if (exception instanceof DateTimeParseException dateTimeParseException) {
-			return HttpResponse.status(HttpStatus.BAD_REQUEST)
-					.body(
-							new ErrorVO().status(HttpStatus.BAD_REQUEST.toString())
-									.reason(HttpStatus.BAD_REQUEST.getReason())
-									.message(String.format("Request could not be answered due to an invalid date: %s.",
-											dateTimeParseException.getParsedString())));
+		// several failures collected by a zipDelayError arrive as one composite - it is answered like its first failure,
+		// while message and log contain all of them
+		Throwable primary = Exceptions.unwrapMultipleExcludingTracebacks(exception).stream().findFirst().orElse(exception);
+		if (primary instanceof DateTimeParseException dateTimeParseException) {
+			return respond(request, HttpStatus.BAD_REQUEST,
+					"Request could not be answered due to an invalid date: %s.".formatted(dateTimeParseException.getParsedString()),
+					exception);
 		}
-		if (exception instanceof TMForumException tmForumException) {
-			return HttpResponse.status(HttpStatus.BAD_GATEWAY)
-					.body(
-							new ErrorVO().status(HttpStatus.BAD_GATEWAY.toString())
-									.reason(HttpStatus.BAD_GATEWAY.getReason())
-									.message(String.format("Request could not be answered due to error in downstream tmforum service: %s.",
-											tmForumException.getMessage())));
+		if (primary instanceof TMForumException) {
+			return respond(request, HttpStatus.BAD_GATEWAY,
+					"Request could not be answered due to error in downstream tmforum service: %s".formatted(DownstreamError.reason(exception)),
+					exception);
 		}
-		if (exception instanceof TrustedIssuersException trustedIssuersException) {
-			return HttpResponse.status(HttpStatus.BAD_GATEWAY)
-					.body(
-							new ErrorVO().status(HttpStatus.BAD_GATEWAY.toString())
-									.reason(HttpStatus.BAD_GATEWAY.getReason())
-									.message(String.format("Request could not be answered due to error in downstream trusted issuers list service: %s.",
-											trustedIssuersException.getMessage())));
+		if (primary instanceof TrustedIssuersException) {
+			return respond(request, HttpStatus.BAD_GATEWAY,
+					"Request could not be answered due to error in downstream trusted issuers list service: %s".formatted(DownstreamError.reason(exception)),
+					exception);
 		}
-		if (exception instanceof RainbowException rainbowException) {
-			return HttpResponse.status(HttpStatus.BAD_GATEWAY)
-					.body(
-							new ErrorVO().status(HttpStatus.BAD_GATEWAY.toString())
-									.reason(HttpStatus.BAD_GATEWAY.getReason())
-									.message(String.format("Request could not be answered due to error in downstream rainbow service: %s.",
-											rainbowException.getMessage())));
+		if (primary instanceof RainbowException) {
+			return respond(request, HttpStatus.BAD_GATEWAY,
+					"Request could not be answered due to error in downstream rainbow service: %s".formatted(DownstreamError.reason(exception)),
+					exception);
 		}
-		if (exception instanceof IllegalArgumentException illegalArgumentException) {
-			return HttpResponse.status(HttpStatus.BAD_REQUEST)
-					.body(
-							new ErrorVO().status(HttpStatus.BAD_REQUEST.toString())
-									.reason(HttpStatus.BAD_REQUEST.getReason())
-									.message(String.format(illegalArgumentException.getMessage())));
+		if (primary instanceof PapException) {
+			return respond(request, HttpStatus.BAD_GATEWAY,
+					"Request could not be answered due to error in downstream odrl-pap service: %s".formatted(DownstreamError.reason(exception)),
+					exception);
 		}
+		if (primary instanceof HttpClientResponseException) {
+			return respond(request, HttpStatus.BAD_GATEWAY,
+					"Request could not be answered due to error in a downstream service: %s".formatted(DownstreamError.reason(exception)),
+					exception);
+		}
+		if (primary instanceof IllegalArgumentException) {
+			return respond(request, HttpStatus.BAD_REQUEST, DownstreamError.reason(exception), exception);
+		}
+		log.error("Unexpected error while handling {} {}: {}", request.getMethod(), request.getUri(), DownstreamError.reason(exception), exception);
 		return HttpResponse.status(HttpStatus.INTERNAL_SERVER_ERROR)
 				.body(new ErrorVO().status(HttpStatus.INTERNAL_SERVER_ERROR.toString())
 						.reason(HttpStatus.INTERNAL_SERVER_ERROR.getReason())
 						.message("Request could not be answered due to an unexpected internal error."));
+	}
+
+	private HttpResponse<ErrorVO> respond(HttpRequest<?> request, HttpStatus status, String message, Exception exception) {
+		if (status.getCode() < 500) {
+			// a faulty request of the client, the message tells everything
+			log.warn("Answered {} {} with {}: {}", request.getMethod(), request.getUri(), status.getCode(), DownstreamError.reason(exception));
+		} else {
+			log.warn("Answered {} {} with {}: {}", request.getMethod(), request.getUri(), status.getCode(), DownstreamError.reason(exception), exception);
+		}
+		return HttpResponse.status(status)
+				.body(new ErrorVO().status(status.toString())
+						.reason(status.getReason())
+						.message(message));
 	}
 }
