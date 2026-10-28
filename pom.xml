@@ -109,7 +109,7 @@
         <!-- OID4VP -->
         <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
         <version.org.bouncycastle>1.81</version.org.bouncycastle>
-        <version.io.github.wistefan.oid4vp-client-lib>0.0.5</version.io.github.wistefan.oid4vp-client-lib>
+        <version.io.github.wistefan.oid4vp-client-lib>0.0.7</version.io.github.wistefan.oid4vp-client-lib>
 
         <!-- configure your local ip address here, in order to enable containers calling back the (local)test-instance -->
         <local.ip>192.168.2.224</local.ip>
@@ -700,15 +700,6 @@
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-failsafe-plugin</artifactId>
-                <configuration>
-                    <argLine>@{argLine} --add-opens java.base/java.lang=ALL-UNNAMED --add-opens
-                        java.base/java.time=ALL-UNNAMED
-                    </argLine>
-                </configuration>
-            </plugin>
-            <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <version>${version.org.jacoco.maven-plugin}</version>
@@ -882,6 +873,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <configuration>
+                    <argLine>@{argLine} --add-opens java.base/java.lang=ALL-UNNAMED --add-opens
+                        java.base/java.time=ALL-UNNAMED
+                    </argLine>
                     <skip>true</skip>
                     <failIfNoTests>true</failIfNoTests>
                     <includes>
