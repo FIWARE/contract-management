@@ -14,33 +14,15 @@ env:
 
 jobs:
 
+  # The version from the semver label of the pull request: X.Y.Z-PRE-<number> on a pull request,
+  # X.Y.Z on the push of its merge. See https://github.com/FIWARE/github-workflows
   generate-version:
-    runs-on: ubuntu-latest
-
-    outputs:
-      version: ${{ steps.out.outputs.version }}
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - id: bump
-        uses: zwaldowski/match-label-action@v1
-        with:
-          allowed: major,minor,patch
-
-      - uses: zwaldowski/semver-release-action@v2
-        with:
-          dry_run: true
-          bump: ${{ steps.bump.outputs.match }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get PR Number
-        id: pr_number
-        run: echo "::set-output name=nr::$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')"
-
-      - name: Set version output
-        id: out
-        run: echo "::set-output name=version::$(echo ${VERSION}-PRE-${{ steps.pr_number.outputs.nr }})"
+    uses: FIWARE/github-workflows/.github/workflows/semver-version.yml@v1
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      tag-prefix: ""
 
   # image build&push
   build-and-push:
