@@ -26,6 +26,13 @@ public class DataSpaceEventsProperties {
     public static final String DEFAULT_PARTICIPANT_CLAIM = "participantId";
     public static final int DEFAULT_DEDUP_MAX_ENTRIES = 10_000;
     public static final Duration DEFAULT_DEDUP_TTL = Duration.ofHours(1);
+    public static final Duration DEFAULT_LEASE_TTL = Duration.ofHours(24);
+    public static final int DEFAULT_MAX_SUBSCRIPTIONS_PER_SUBSCRIBER = 10;
+    public static final int DEFAULT_MAX_SUBSCRIPTIONS = 1000;
+    public static final int DEFAULT_DELIVERY_MAX_ATTEMPTS = 5;
+    public static final Duration DEFAULT_DELIVERY_INITIAL_BACKOFF = Duration.ofSeconds(1);
+    public static final Duration DEFAULT_DELIVERY_MAX_BACKOFF = Duration.ofMinutes(1);
+    public static final int DEFAULT_DELIVERY_QUEUE_SIZE = 1000;
 
     /**
      * Id of the data space this instance belongs to. Events carrying a different dataspaceid are rejected.
@@ -43,6 +50,11 @@ public class DataSpaceEventsProperties {
      * The receiving endpoint.
      */
     private Listener listener = new Listener();
+
+    /**
+     * The sending side: subscriptions and webhook delivery.
+     */
+    private PublisherSettings publisher = new PublisherSettings();
 
     /**
      * Participants allowed to publish events, with the event types each of them may publish.
@@ -120,7 +132,7 @@ public class DataSpaceEventsProperties {
         public static class Verifier {
 
             /**
-             * URL of the verifier's JWKS. Required when the listener is enabled.
+             * URL of the verifier's JWKS. Required when the listener or the publisher is enabled.
              */
             @Nullable
             private String jwksUrl;
@@ -132,7 +144,7 @@ public class DataSpaceEventsProperties {
             private String issuer;
 
             /**
-             * Audience the tokens have to be issued for. Required when the listener is enabled.
+             * Audience the tokens have to be issued for. Required when the listener or the publisher is enabled.
              */
             @Nullable
             private String audience;
@@ -181,6 +193,75 @@ public class DataSpaceEventsProperties {
     }
 
     /**
+     * The sending side. Named PublisherSettings since Publisher is an entry of the publishers list.
+     */
+    @Data
+    @ConfigurationProperties("publisher")
+    public static class PublisherSettings {
+
+        /**
+         * Enables subscriptions and delivery. Evaluated at startup only.
+         */
+        private boolean enabled = false;
+
+        /**
+         * Own DNS name, sent as WebHook-Request-Origin in the handshake. Required when the publisher is enabled.
+         */
+        @Nullable
+        private String origin;
+
+        /**
+         * Lease of a subscription; it expires unless renewed within this time.
+         */
+        private Duration leaseTtl = DEFAULT_LEASE_TTL;
+
+        /**
+         * Maximum number of subscriptions a single subscriber may hold.
+         */
+        private int maxSubscriptionsPerSubscriber = DEFAULT_MAX_SUBSCRIPTIONS_PER_SUBSCRIBER;
+
+        /**
+         * Maximum number of subscriptions in total.
+         */
+        private int maxSubscriptions = DEFAULT_MAX_SUBSCRIPTIONS;
+
+        /**
+         * Accepts http sinks as well. When false, only https sinks are accepted.
+         */
+        private boolean allowInsecureSinks = false;
+
+        /**
+         * Retries and queueing of deliveries.
+         */
+        private Delivery delivery = new Delivery();
+
+        @Data
+        @ConfigurationProperties("delivery")
+        public static class Delivery {
+
+            /**
+             * Attempts per event, including the first one.
+             */
+            private int maxAttempts = DEFAULT_DELIVERY_MAX_ATTEMPTS;
+
+            /**
+             * Wait before the first retry, doubled on each further one.
+             */
+            private Duration initialBackoff = DEFAULT_DELIVERY_INITIAL_BACKOFF;
+
+            /**
+             * Upper bound of the wait between retries.
+             */
+            private Duration maxBackoff = DEFAULT_DELIVERY_MAX_BACKOFF;
+
+            /**
+             * Pending events per subscription. Further events are dropped while the queue is full.
+             */
+            private int queueSize = DEFAULT_DELIVERY_QUEUE_SIZE;
+        }
+    }
+
+    /**
      * A participant allowed to publish events. The id is matched against the token, the origin against the webhook handshake.
      */
     @Data
@@ -200,6 +281,31 @@ public class DataSpaceEventsProperties {
             return context.getBean(DataSpaceEventsProperties.class)
                     .getListener()
                     .isEnabled();
+        }
+    }
+
+    /**
+     * Enables beans of the sending side.
+     */
+    public static class PublisherCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context) {
+            return context.getBean(DataSpaceEventsProperties.class)
+                    .getPublisher()
+                    .isEnabled();
+        }
+    }
+
+    /**
+     * Enables the bearer token verification, shared by the receiving endpoint and the subscriptions API.
+     */
+    public static class VerifierCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context) {
+            DataSpaceEventsProperties properties = context.getBean(DataSpaceEventsProperties.class);
+            return properties.getListener().isEnabled() || properties.getPublisher().isEnabled();
         }
     }
 

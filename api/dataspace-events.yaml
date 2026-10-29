@@ -2,10 +2,12 @@ openapi: 3.0.3
 info:
   title: Data Space Events API
   description: Receiving endpoint for data space events, delivered as CloudEvents 1.0 (structured mode) via the CloudEvents
-    HTTP webhook binding.
+    HTTP webhook binding, and the CloudEvents-Subscriptions-shaped API through which participants subscribe to the events
+    of this instance.
   version: 0.0.1
 tags:
   - name: events
+  - name: subscriptions
 paths:
   /events:
     post:
@@ -68,6 +70,74 @@ paths:
               description: The origin that is allowed to deliver events.
               schema:
                 type: string
+  /subscriptions:
+    post:
+      tags:
+        - subscriptions
+      operationId: createSubscription
+      summary: Subscribe to data space events
+      description: Creates or renews a subscription of the authenticated participant. The sink has to pass the CloudEvents
+        webhook handshake before the subscription is activated. A request by the same subscriber for the same sink renews
+        the existing subscription in place.
+      security:
+        - bearerAuth: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionRequest'
+      responses:
+        '201':
+          description: The subscription was created or renewed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          description: The request is invalid or the sink did not pass the webhook handshake.
+        '401':
+          description: No valid bearer token was presented.
+        '403':
+          description: The subscriberId does not match the participant identified by the bearer token.
+        '409':
+          description: The maximum number of subscriptions is reached.
+        '503':
+          description: The verifier is unavailable. The subscriber should retry later.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+  /subscriptions/{subscriptionId}:
+    delete:
+      tags:
+        - subscriptions
+      operationId: deleteSubscription
+      summary: Unsubscribe
+      description: Removes a subscription of the authenticated participant.
+      security:
+        - bearerAuth: [ ]
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: The subscription was removed.
+        '401':
+          description: No valid bearer token was presented.
+        '404':
+          description: No subscription with this id is owned by the participant.
+        '503':
+          description: The verifier is unavailable. The subscriber should retry later.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
 components:
   securitySchemes:
     bearerAuth:
@@ -117,3 +187,83 @@ components:
         - id
         - source
         - type
+    SubscriptionRequest:
+      type: object
+      description: Subscription to data space events, shaped after CloudEvents Subscriptions.
+      properties:
+        subscriberId:
+          type: string
+          description: Participant id of the subscriber. Has to match the bearer token.
+          example: did:web:consumer.org
+        sink:
+          type: string
+          format: uri
+          description: Webhook the events are delivered to.
+          example: https://events.consumer.org/events
+        types:
+          type: array
+          minItems: 1
+          description: Event types to deliver.
+          items:
+            type: string
+            example: org.fiware.dataspace.example
+        protocol:
+          type: string
+          description: Delivery protocol. Only HTTP is supported.
+          enum:
+            - HTTP
+        protocolsettings:
+          $ref: '#/components/schemas/HttpProtocolSettings'
+      required:
+        - subscriberId
+        - sink
+        - types
+    HttpProtocolSettings:
+      type: object
+      description: Authentication towards the sink. If the sink answers 401, an OID4VP token is fetched for this client and these scopes.
+      properties:
+        clientId:
+          type: string
+          example: contract-management
+        scopes:
+          type: array
+          items:
+            type: string
+            example: default
+    Subscription:
+      type: object
+      description: An active subscription.
+      properties:
+        id:
+          type: string
+          example: 9b2e1f6a-0c41-4d55-8a3e-7d2f5c1b0e88
+        subscriberId:
+          type: string
+          example: did:web:consumer.org
+        sink:
+          type: string
+          format: uri
+          example: https://events.consumer.org/events
+        types:
+          type: array
+          items:
+            type: string
+            example: org.fiware.dataspace.example
+        protocol:
+          type: string
+          description: Delivery protocol. Only HTTP is supported.
+          enum:
+            - HTTP
+        protocolsettings:
+          $ref: '#/components/schemas/HttpProtocolSettings'
+        expiresAt:
+          type: string
+          format: date-time
+          description: End of the lease. Renew before to keep the subscription.
+          example: '2026-07-22T17:32:28Z'
+      required:
+        - id
+        - subscriberId
+        - sink
+        - types
+        - expiresAt

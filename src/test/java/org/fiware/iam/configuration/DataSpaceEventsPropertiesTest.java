@@ -1,6 +1,7 @@
 package org.fiware.iam.configuration;
 
 import io.micronaut.context.ApplicationContext;
+import io.micronaut.context.condition.ConditionContext;
 import io.micronaut.context.env.PropertySource;
 import io.micronaut.runtime.context.scope.refresh.RefreshEvent;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class DataSpaceEventsPropertiesTest {
 
@@ -38,6 +41,14 @@ class DataSpaceEventsPropertiesTest {
     private static final String JWKS_URL = "http://verifier/.well-known/jwks";
     private static final int MAX_ENTRIES = 42;
     private static final Duration TTL = Duration.ofMinutes(5);
+    private static final String OWN_ORIGIN = "cm.own.org";
+    private static final Duration LEASE_TTL = Duration.ofHours(2);
+    private static final int MAX_PER_SUBSCRIBER = 3;
+    private static final int MAX_SUBSCRIPTIONS = 30;
+    private static final int MAX_ATTEMPTS = 7;
+    private static final Duration INITIAL_BACKOFF = Duration.ofMillis(200);
+    private static final Duration MAX_BACKOFF = Duration.ofSeconds(20);
+    private static final int QUEUE_SIZE = 50;
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -99,6 +110,81 @@ class DataSpaceEventsPropertiesTest {
             assertEquals(DataSpaceEventsProperties.DEFAULT_DEDUP_MAX_ENTRIES, properties.getListener().getDedup().getMaxEntries());
             assertEquals(DataSpaceEventsProperties.DEFAULT_DEDUP_TTL, properties.getListener().getDedup().getTtl());
         }
+    }
+
+    @ParameterizedTest(name = "publisher settings {0}")
+    @MethodSource("publisherSettings")
+    void bindsPublisherSettings(String name, Map<String, Object> publisherConfig, boolean enabled, String origin,
+                                Duration leaseTtl, int maxPerSubscriber, int maxSubscriptions, boolean allowInsecureSinks,
+                                int maxAttempts, Duration initialBackoff, Duration maxBackoff, int queueSize) {
+        try (ApplicationContext ctx = ApplicationContext.builder()
+                .properties(ISOLATED)
+                // an enabled publisher starts the bearer verifier, which needs its configuration
+                .properties(Map.of(PREFIX + "listener.verifier.audience", AUDIENCE, PREFIX + "listener.verifier.jwks-url", JWKS_URL))
+                .propertySources(PropertySource.of("test", publisherConfig))
+                .start()) {
+            DataSpaceEventsProperties.PublisherSettings publisher = ctx.getBean(DataSpaceEventsProperties.class).getPublisher();
+            DataSpaceEventsProperties.PublisherSettings.Delivery delivery = publisher.getDelivery();
+
+            assertEquals(enabled, publisher.isEnabled());
+            assertEquals(origin, publisher.getOrigin());
+            assertEquals(leaseTtl, publisher.getLeaseTtl());
+            assertEquals(maxPerSubscriber, publisher.getMaxSubscriptionsPerSubscriber());
+            assertEquals(maxSubscriptions, publisher.getMaxSubscriptions());
+            assertEquals(allowInsecureSinks, publisher.isAllowInsecureSinks());
+            assertEquals(maxAttempts, delivery.getMaxAttempts());
+            assertEquals(initialBackoff, delivery.getInitialBackoff());
+            assertEquals(maxBackoff, delivery.getMaxBackoff());
+            assertEquals(queueSize, delivery.getQueueSize());
+        }
+    }
+
+    static Stream<Arguments> publisherSettings() {
+        String publisher = PREFIX + "publisher.";
+        return Stream.of(
+                Arguments.of("defaults", Map.of(), false, null,
+                        DataSpaceEventsProperties.DEFAULT_LEASE_TTL,
+                        DataSpaceEventsProperties.DEFAULT_MAX_SUBSCRIPTIONS_PER_SUBSCRIBER,
+                        DataSpaceEventsProperties.DEFAULT_MAX_SUBSCRIPTIONS, false,
+                        DataSpaceEventsProperties.DEFAULT_DELIVERY_MAX_ATTEMPTS,
+                        DataSpaceEventsProperties.DEFAULT_DELIVERY_INITIAL_BACKOFF,
+                        DataSpaceEventsProperties.DEFAULT_DELIVERY_MAX_BACKOFF,
+                        DataSpaceEventsProperties.DEFAULT_DELIVERY_QUEUE_SIZE),
+                Arguments.of("configured", Map.of(
+                                publisher + "enabled", true,
+                                publisher + "origin", OWN_ORIGIN,
+                                publisher + "lease-ttl", LEASE_TTL.toString(),
+                                publisher + "max-subscriptions-per-subscriber", MAX_PER_SUBSCRIBER,
+                                publisher + "max-subscriptions", MAX_SUBSCRIPTIONS,
+                                publisher + "allow-insecure-sinks", true,
+                                publisher + "delivery.max-attempts", MAX_ATTEMPTS,
+                                publisher + "delivery.initial-backoff", INITIAL_BACKOFF.toString(),
+                                publisher + "delivery.max-backoff", MAX_BACKOFF.toString(),
+                                publisher + "delivery.queue-size", QUEUE_SIZE),
+                        true, OWN_ORIGIN, LEASE_TTL, MAX_PER_SUBSCRIBER, MAX_SUBSCRIPTIONS, true,
+                        MAX_ATTEMPTS, INITIAL_BACKOFF, MAX_BACKOFF, QUEUE_SIZE));
+    }
+
+    @ParameterizedTest(name = "listener {0}, publisher {1} -> verifier {2}, publisher beans {3}")
+    @MethodSource("conditions")
+    void conditions(boolean listenerEnabled, boolean publisherEnabled, boolean verifierExpected, boolean publisherExpected) {
+        DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
+        properties.getListener().setEnabled(listenerEnabled);
+        properties.getPublisher().setEnabled(publisherEnabled);
+        ConditionContext conditionContext = mock(ConditionContext.class);
+        when(conditionContext.getBean(DataSpaceEventsProperties.class)).thenReturn(properties);
+
+        assertEquals(verifierExpected, new DataSpaceEventsProperties.VerifierCondition().matches(conditionContext));
+        assertEquals(publisherExpected, new DataSpaceEventsProperties.PublisherCondition().matches(conditionContext));
+        assertEquals(listenerEnabled, new DataSpaceEventsProperties.ListenerCondition().matches(conditionContext));
+    }
+
+    static Stream<Arguments> conditions() {
+        return Stream.of(
+                Arguments.of(false, false, false, false),
+                Arguments.of(true, false, true, false),
+                Arguments.of(false, true, true, true),
+                Arguments.of(true, true, true, true));
     }
 
     @ParameterizedTest(name = "{0} may publish {1}: {2}")
