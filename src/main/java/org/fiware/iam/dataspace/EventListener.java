@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpHeaders;
+import io.micronaut.http.HttpMethod;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MutableHttpResponse;
@@ -44,16 +45,20 @@ public class EventListener implements EventsApi {
     static final String HANDLER_FAILED = "handler_failed";
     static final String VERIFIER_UNAVAILABLE = "verifier_unavailable";
     static final Duration RETRY_AFTER = Duration.ofSeconds(5);
+    static final String WEBHOOK_ALLOWED_ORIGIN = "WebHook-Allowed-Origin";
 
     private final List<DataSpaceEventHandler> handlers;
     private final BearerVerifier bearerVerifier;
     private final EventAuthorizer authorizer;
     private final EventDeduplicator deduplicator;
     private final MeterRegistry meterRegistry;
+    private final DataSpaceEventsProperties properties;
 
     public EventListener(List<DataSpaceEventHandler> handlers, BearerVerifier bearerVerifier, EventAuthorizer authorizer,
-                         EventDeduplicator deduplicator, Optional<MeterRegistry> meterRegistry) {
+                         EventDeduplicator deduplicator, Optional<MeterRegistry> meterRegistry,
+                         DataSpaceEventsProperties properties) {
         this.handlers = handlers;
+        this.properties = properties;
         this.bearerVerifier = bearerVerifier;
         this.authorizer = authorizer;
         this.deduplicator = deduplicator;
@@ -71,8 +76,11 @@ public class EventListener implements EventsApi {
 
     @Override
     public Mono<HttpResponse<Object>> validateWebhook(@Nullable String webHookRequestOrigin) {
-        // the CloudEvents webhook validation handshake is not offered yet
-        return Mono.just(HttpResponse.status(HttpStatus.NOT_IMPLEMENTED));
+        // unauthenticated by the CloudEvents webhook spec; it only tells the sender whether to deliver at all
+        MutableHttpResponse<Object> response = HttpResponse.ok().header(HttpHeaders.ALLOW, HttpMethod.POST.name());
+        properties.allowedOrigin(webHookRequestOrigin)
+                .ifPresent(origin -> response.header(WEBHOOK_ALLOWED_ORIGIN, origin));
+        return Mono.just(response);
     }
 
     Mono<HttpResponse<Object>> receive(@Nullable String authorization, DataSpaceEventVO event) {
