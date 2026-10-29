@@ -79,7 +79,7 @@
         <rainbow.api>${project.basedir}/api/rainbow.yaml</rainbow.api>
 
         <!-- Trusted Issuers List API -->
-        <til.api.url>https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/main/api/trusted-issuers-list.yaml
+        <til.api.url>https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/0.10.0/api/trusted-issuers-list.yaml
         </til.api.url>
 
         <!-- Contract Management API -->

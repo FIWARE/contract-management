@@ -18,6 +18,12 @@ micronaut:
       additional-types:
         - application/cloudevents+json
 
+  io:
+    # file watch behind dataspace.events.listener.watch, see ConfigFileRefresher
+    watch:
+      enabled: ${dataspace.events.listener.watch.enabled:false}
+      paths: ${dataspace.events.listener.watch.path:}
+
   executors:
     notification-subscriber:
       type: scheduled
@@ -123,6 +129,10 @@ oid4vp:
 endpoints:
   all:
     port: 9090
+  # POST :9090/refresh reloads the configuration. Not authenticated, keep the management port cluster-internal.
+  refresh:
+    enabled: true
+    sensitive: false
 notification:
   host: contract-management
   subscriptionInitialDelay: 5
