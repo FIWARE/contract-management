@@ -15,10 +15,13 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.jwk.source.JWKSourceBuilder;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.PlainJWT;
 import com.nimbusds.jwt.SignedJWT;
+import com.nimbusds.jose.util.Resource;
+import com.nimbusds.jose.util.ResourceRetriever;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.exceptions.ConfigurationException;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
@@ -31,6 +34,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.URL;
 import java.time.Duration;
 import java.time.Instant;
@@ -41,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
@@ -48,6 +54,10 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.withSettings;
 
 class BearerVerifierTest {
 
@@ -69,6 +79,9 @@ class BearerVerifierTest {
     private static final int NON_STRING_PARTICIPANT = 42;
     private static final String MALFORMED_URL = "not a url";
     private static final String LOWERCASE_ES256 = "es256";
+    private static final String JWKS_CONTENT_TYPE = "application/json";
+    // enough attempts to run into the default JWKS refetch rate limit of JWKSourceBuilder
+    private static final int REPEATED_ATTEMPTS = 5;
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -234,6 +247,68 @@ class BearerVerifierTest {
                 assertThrows(VerifierUnavailableException.class, () -> withoutJwks.participantIdOf(token));
 
         assertTrue(thrown.getCause() instanceof KeySourceException, "The JWKS failure must be kept as cause.");
+    }
+
+    @Test
+    void rejectsUnknownKidsInsteadOfReportingTheRateLimitedRefetchAsOutage() {
+        AtomicInteger fetches = new AtomicInteger();
+        BearerVerifier withDefaultSource = defaultJwkSourceVerifier(url -> {
+            fetches.incrementAndGet();
+            return new Resource(JWKS.toString(), JWKS_CONTENT_TYPE);
+        });
+        String unknownKid = bearer(signed(UNKNOWN_KEY, JWSAlgorithm.ES256, validClaims().build()));
+
+        for (int attempt = 0; attempt < REPEATED_ATTEMPTS; attempt++) {
+            assertEquals(Optional.empty(), withDefaultSource.participantIdOf(unknownKid));
+        }
+
+        assertTrue(fetches.get() < REPEATED_ATTEMPTS, "The refetches must have hit the rate limit.");
+        assertEquals(Optional.of(PARTICIPANT_ID),
+                withDefaultSource.participantIdOf(bearer(signed(SIGNING_KEY, JWSAlgorithm.ES256, validClaims().build()))));
+        withDefaultSource.close();
+    }
+
+    @Test
+    void keepsReportingAnOutageWhileRefetchesAreRateLimited() {
+        BearerVerifier withDefaultSource = defaultJwkSourceVerifier(url -> {
+            throw new IOException("connect timed out");
+        });
+        String token = bearer(signed(SIGNING_KEY, JWSAlgorithm.ES256, validClaims().build()));
+
+        for (int attempt = 0; attempt < REPEATED_ATTEMPTS; attempt++) {
+            assertThrows(VerifierUnavailableException.class, () -> withDefaultSource.participantIdOf(token));
+        }
+        withDefaultSource.close();
+    }
+
+    @Test
+    void closesReplacedAndRemainingJwkSources() throws Exception {
+        List<JWKSource<SecurityContext>> created = new ArrayList<>();
+        BearerVerifier closing = new BearerVerifier(properties, url -> {
+            JWKSource<SecurityContext> source = closeableJwkSource();
+            created.add(source);
+            return source;
+        });
+        String token = bearer(signed(SIGNING_KEY, JWSAlgorithm.ES256, validClaims().build()));
+
+        closing.participantIdOf(token);
+        properties.getListener().getVerifier().setJwksUrl(OTHER_JWKS_URL);
+        closing.participantIdOf(token);
+
+        verify((Closeable) created.get(0)).close();
+        verify((Closeable) created.get(1), never()).close();
+        closing.close();
+        verify((Closeable) created.get(1)).close();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static JWKSource<SecurityContext> closeableJwkSource() {
+        return mock(JWKSource.class, withSettings().extraInterfaces(Closeable.class));
+    }
+
+    // same builder defaults as production (caching, refresh-ahead, rate limit), only the HTTP fetch is replaced
+    private BearerVerifier defaultJwkSourceVerifier(ResourceRetriever retriever) {
+        return new BearerVerifier(properties, url -> JWKSourceBuilder.<SecurityContext>create(url, retriever).build());
     }
 
     private static Consumer<DataSpaceEventsProperties.Listener.Verifier> blanking(

@@ -3,8 +3,11 @@ package org.fiware.iam.dataspace;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.KeySourceException;
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSelector;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.jwk.source.JWKSourceBuilder;
+import com.nimbusds.jose.jwk.source.RateLimitReachedException;
 import com.nimbusds.jose.proc.BadJOSEException;
 import com.nimbusds.jose.proc.JWSVerificationKeySelector;
 import com.nimbusds.jose.proc.SecurityContext;
@@ -17,19 +20,24 @@ import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.exceptions.ConfigurationException;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.exception.VerifierUnavailableException;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.text.ParseException;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -49,7 +57,7 @@ public class BearerVerifier {
 
     private final DataSpaceEventsProperties properties;
     private final Function<URL, JWKSource<SecurityContext>> jwkSourceFactory;
-    private final AtomicReference<CachedJwkSource> jwkSource = new AtomicReference<>();
+    private final AtomicReference<TrackedJwkSource> jwkSource = new AtomicReference<>();
     private final AtomicReference<String> reportedMisconfiguration = new AtomicReference<>();
 
     @Inject
@@ -88,21 +96,42 @@ public class BearerVerifier {
         if (misconfiguration.isPresent()) {
             return Optional.empty();
         }
-        JWTClaimsSet claims;
+        TrackedJwkSource keys;
         try {
-            claims = processor(verifier, jwkSource(verifier.getJwksUrl())).process(token, null);
-        } catch (KeySourceException e) {
-            throw new VerifierUnavailableException(
-                    "Cannot verify event bearer token, JWKS " + verifier.getJwksUrl() + " is unavailable.", e);
-        } catch (ParseException | BadJOSEException | JOSEException e) {
-            log.debug("Rejecting event bearer token: {}", e.getMessage());
-            return Optional.empty();
+            keys = jwkSource(verifier.getJwksUrl());
         } catch (MalformedURLException | IllegalArgumentException e) {
             // only reachable if a refresh broke the URL after the configuration check above
             log.debug("Rejecting event bearer token: {}jwks-url {} is not a valid URL.", CONFIG_PREFIX, verifier.getJwksUrl());
             return Optional.empty();
         }
+        JWTClaimsSet claims;
+        try {
+            claims = processor(verifier, keys).process(token, null);
+        } catch (RateLimitReachedException e) {
+            // any caller can provoke this with an unknown kid; it only means "unavailable" while the last fetch failed
+            if (keys.unreachable()) {
+                throw unavailable(verifier, e);
+            }
+            log.debug("Rejecting event bearer token: no matching key, JWKS refetch is rate limited.");
+            return Optional.empty();
+        } catch (KeySourceException e) {
+            throw unavailable(verifier, e);
+        } catch (ParseException | BadJOSEException | JOSEException e) {
+            log.debug("Rejecting event bearer token: {}", e.getMessage());
+            return Optional.empty();
+        }
         return participantClaim(claims, verifier.getParticipantClaim());
+    }
+
+    @PreDestroy
+    void close() {
+        closeQuietly(jwkSource.getAndSet(null));
+    }
+
+    private static VerifierUnavailableException unavailable(DataSpaceEventsProperties.Listener.Verifier verifier,
+                                                            KeySourceException cause) {
+        return new VerifierUnavailableException(
+                "Cannot verify event bearer token, JWKS " + verifier.getJwksUrl() + " is unavailable.", cause);
     }
 
     /**
@@ -167,15 +196,32 @@ public class BearerVerifier {
         return processor;
     }
 
-    private JWKSource<SecurityContext> jwkSource(String jwksUrl) throws MalformedURLException {
-        CachedJwkSource cached = jwkSource.get();
-        if (cached != null && cached.url().equals(jwksUrl)) {
-            return cached.source();
+    private TrackedJwkSource jwkSource(String jwksUrl) throws MalformedURLException {
+        while (true) {
+            TrackedJwkSource current = jwkSource.get();
+            if (current != null && current.url().equals(jwksUrl)) {
+                return current;
+            }
+            // replaced, not mutated: a refresh pointing to another verifier must not keep the old keys
+            TrackedJwkSource created = new TrackedJwkSource(jwksUrl, jwkSourceFactory.apply(toUrl(jwksUrl)));
+            if (jwkSource.compareAndSet(current, created)) {
+                closeQuietly(current);
+                return created;
+            }
+            // a concurrent request swapped first; drop ours so its refresh thread does not leak
+            closeQuietly(created);
         }
-        // replaced, not mutated: a refresh pointing to another verifier must not keep the old keys
-        CachedJwkSource created = new CachedJwkSource(jwksUrl, jwkSourceFactory.apply(toUrl(jwksUrl)));
-        jwkSource.set(created);
-        return created.source();
+    }
+
+    private static void closeQuietly(@Nullable TrackedJwkSource source) {
+        if (source == null) {
+            return;
+        }
+        try {
+            source.close();
+        } catch (IOException | RuntimeException e) {
+            log.debug("Could not close the JWK source for {}.", source.url(), e);
+        }
     }
 
     private static Optional<String> participantClaim(JWTClaimsSet claims, String claimName) {
@@ -207,6 +253,49 @@ public class BearerVerifier {
         return value == null || value.isBlank();
     }
 
-    private record CachedJwkSource(String url, JWKSource<SecurityContext> source) {
+    /**
+     * JWK source for one JWKS URL that remembers whether its last fetch failed.
+     * Tells a rate-limited refetch during an outage apart from one provoked by an unknown kid.
+     */
+    private static final class TrackedJwkSource implements JWKSource<SecurityContext>, Closeable {
+
+        private final String url;
+        private final JWKSource<SecurityContext> delegate;
+        private final AtomicBoolean unreachable = new AtomicBoolean();
+
+        private TrackedJwkSource(String url, JWKSource<SecurityContext> delegate) {
+            this.url = url;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public List<JWK> get(JWKSelector selector, SecurityContext context) throws KeySourceException {
+            try {
+                List<JWK> keys = delegate.get(selector, context);
+                unreachable.set(false);
+                return keys;
+            } catch (RateLimitReachedException e) {
+                // no fetch happened, so it says nothing about reachability
+                throw e;
+            } catch (KeySourceException e) {
+                unreachable.set(true);
+                throw e;
+            }
+        }
+
+        String url() {
+            return url;
+        }
+
+        boolean unreachable() {
+            return unreachable.get();
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (delegate instanceof Closeable closeable) {
+                closeable.close();
+            }
+        }
     }
 }
