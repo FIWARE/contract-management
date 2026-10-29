@@ -240,12 +240,16 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
      period) until C → `202`, exercising the real `..data` symlink swap.
 
   This IT is the acceptance evidence that a publisher added to the ConfigMap is accepted without a restart.
+  _Plan change (implementation):_ the deployed image has no `DataSpaceEventHandler`, so every authenticated event with a matching
+  source ends in `202 unknown_type` and "B → 403" cannot be observed in the container. The IT therefore observes the publisher list
+  through the `OPTIONS /events` origin grant (B's/C's origin not granted → granted), checks the bearer path separately
+  (no token → `401`, token from the configured publisher A → `202`), and restores the ConfigMap afterwards.
 - README: add a "Data space events" section with the config keys, the endpoint, the authorization order, the metric, the refresh
   options, that `/refresh` on 9090 is unauthenticated, that `listener.enabled`/`listener.watch.enabled` need a restart (startup-time
   conditions) while the rest is refreshable, the verifier settings it needs (`participantId` claim, CM audience), and the
   warning that the ConfigMap must be mounted as a directory, **not** with `subPath`, because kubelet never updates
   `subPath` mounts. The Helm side is DSC-1 (#102).
-- `AGENTS.md`: change the `k3s/*.yaml` line from "CM config is a ConfigMap mounted via subPath" to "mounted as a directory at
+- _Plan change:_ agents may not edit `AGENTS.md`; the following edit is left to a plan-mode agent. `AGENTS.md`: change the `k3s/*.yaml` line from "CM config is a ConfigMap mounted via subPath" to "mounted as a directory at
   `/config` (no subPath, so refresh/watch see updates)", and list `InContainerDataSpaceEventsIT`, the `k3s.kubeconfig` property and
   the 9090 port binding.
 - **Acceptance:** the embedded test and the in-container IT pass for both paths. `mvn test` and `mvn clean package` are green. README and `AGENTS.md`

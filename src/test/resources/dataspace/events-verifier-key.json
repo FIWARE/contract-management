@@ -1,0 +1,10 @@
+{
+  "kty": "EC",
+  "crv": "P-256",
+  "kid": "events-verifier-key",
+  "alg": "ES256",
+  "use": "sig",
+  "x": "-OJrTaI62dqS_7eEHoF8D-gGo5ORdwW9O-oTwEOojRw",
+  "y": "O-wTU7N8SGCrmC_63YgCRbQ_5NChH9YBZNXo01xKZcc",
+  "d": "cM6q1NoxaZBGIDzI7of6vm_AHxxFEifAPtyIEnejq1g"
+}
