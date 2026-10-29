@@ -114,7 +114,7 @@ oid4vp:
 #        ttl: PT1H
 #      watch:
 #        enabled: true
-#        path: "/config/application.yaml"
+#        path: "/config"
 #    publishers:
 #      - id: "did:web:consumer.org"
 #        origin: "events.consumer.org"

@@ -111,8 +111,7 @@ components:
           type: string
           description: Extension attribute identifying the data space the event belongs to.
         data:
-          type: object
-          additionalProperties: true
+          description: Event payload, any JSON value. Interpreted by the handler of the event type.
       required:
         - specversion
         - id

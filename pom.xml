@@ -422,6 +422,8 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <!-- CloudEvents data is untyped; keep it a plain Object instead of JsonNullable -->
+                                <openApiNullable>false</openApiNullable>
                                 <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
                             </configOptions>

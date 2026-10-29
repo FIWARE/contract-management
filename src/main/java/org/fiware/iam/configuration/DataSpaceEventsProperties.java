@@ -9,7 +9,6 @@ import lombok.Data;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -17,6 +16,7 @@ import java.util.Set;
  * Configuration of the data space event channel. Micronaut's refresh scope rebinds this singleton in place on a refresh.
  * Readers must go through the injected bean on every use and never copy its values into fields, or a refresh has no effect.
  * A key removed from the configuration keeps its previous value; set it to an empty value instead.
+ * The nested classes are separate beans for binding only; inject this class, never them, or the copy read is not the rebound one.
  */
 @Data
 @ConfigurationProperties("dataspace.events")
@@ -52,9 +52,12 @@ public class DataSpaceEventsProperties {
     /**
      * True if the participant is a configured publisher of the given event type.
      */
-    public boolean isAuthorized(String publisherId, String type) {
+    public boolean isAuthorized(@Nullable String publisherId, String type) {
+        if (isBlank(publisherId)) {
+            return false;
+        }
         return publishers.stream()
-                .filter(publisher -> Objects.equals(publisher.getId(), publisherId))
+                .filter(publisher -> !isBlank(publisher.getId()) && publisher.getId().equals(publisherId))
                 .anyMatch(publisher -> publisher.getTypes() != null && publisher.getTypes().contains(type));
     }
 
@@ -75,10 +78,14 @@ public class DataSpaceEventsProperties {
      * The participant id of this instance: own-participant-id if set, otherwise general.did.
      */
     public String ownId(GeneralProperties generalProperties) {
-        if (ownParticipantId != null && !ownParticipantId.isBlank()) {
+        if (!isBlank(ownParticipantId)) {
             return ownParticipantId;
         }
         return generalProperties.getDid();
+    }
+
+    private static boolean isBlank(@Nullable String value) {
+        return value == null || value.isBlank();
     }
 
     /**
@@ -104,7 +111,7 @@ public class DataSpaceEventsProperties {
         private Dedup dedup = new Dedup();
 
         /**
-         * Watch on the configuration file, triggering a refresh when it changes.
+         * Watch on the configuration directory, triggering a refresh when it changes.
          */
         private Watch watch = new Watch();
 
@@ -166,7 +173,7 @@ public class DataSpaceEventsProperties {
             private boolean enabled = false;
 
             /**
-             * Path of the watched configuration file.
+             * Watched configuration directory, e.g. a ConfigMap mounted without subPath. Must be a directory, not a file.
              */
             @Nullable
             private String path;

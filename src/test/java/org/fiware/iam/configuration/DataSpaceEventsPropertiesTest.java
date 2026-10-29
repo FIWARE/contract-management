@@ -116,7 +116,28 @@ class DataSpaceEventsPropertiesTest {
                 Arguments.of("did:web:unknown.org", TYPE_A, false),
                 Arguments.of(PROVIDER_ID.toUpperCase(), TYPE_A, false),
                 Arguments.of(PROVIDER_ID, TYPE_A.toUpperCase(), false),
-                Arguments.of(null, TYPE_A, false));
+                Arguments.of(null, TYPE_A, false),
+                Arguments.of("", TYPE_A, false),
+                Arguments.of(" ", TYPE_A, false));
+    }
+
+    @ParameterizedTest(name = "publisher id {0} grants nothing")
+    @MethodSource("blankIds")
+    void publisherWithoutIdAuthorizesNobody(String configuredId) {
+        Map<String, Object> publisher = new HashMap<>(Map.of("origin", CONSUMER_ORIGIN, "types", List.of(TYPE_A)));
+        if (configuredId != null) {
+            publisher.put("id", configuredId);
+        }
+        config.put(PREFIX + "publishers", List.of(publisher));
+        refresh();
+
+        assertFalse(properties().isAuthorized(null, TYPE_A));
+        assertFalse(properties().isAuthorized("", TYPE_A));
+        assertFalse(properties().isAuthorized(" ", TYPE_A));
+    }
+
+    static Stream<String> blankIds() {
+        return Stream.of(null, "", " ");
     }
 
     @ParameterizedTest(name = "origin {0} -> {1}")
