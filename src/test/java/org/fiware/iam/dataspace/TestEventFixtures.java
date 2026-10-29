@@ -2,19 +2,27 @@ package org.fiware.iam.dataspace;
 
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.ECDSASigner;
 import com.nimbusds.jose.jwk.Curve;
 import com.nimbusds.jose.jwk.ECKey;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Produces;
 import jakarta.inject.Singleton;
+import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.DataSpaceEventVO;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,8 +38,29 @@ final class TestEventFixtures {
     static final String KNOWN_TYPE = "org.fiware.dataspace.test";
     static final String KID = "test-verifier-key";
     static final ECKey SIGNING_KEY = generateKey();
+    private static final Duration TOKEN_LIFETIME = Duration.ofMinutes(5);
 
     private TestEventFixtures() {
+    }
+
+    /**
+     * A verifier token for the participant, signed with {@link #SIGNING_KEY}.
+     */
+    static String token(String participant, String audience) {
+        Instant now = Instant.now();
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .audience(audience)
+                .issueTime(Date.from(now))
+                .expirationTime(Date.from(now.plus(TOKEN_LIFETIME)))
+                .claim(DataSpaceEventsProperties.DEFAULT_PARTICIPANT_CLAIM, participant)
+                .build();
+        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.ES256).keyID(KID).build(), claims);
+        try {
+            jwt.sign(new ECDSASigner(SIGNING_KEY));
+        } catch (JOSEException e) {
+            throw new IllegalStateException(e);
+        }
+        return jwt.serialize();
     }
 
     private static ECKey generateKey() {

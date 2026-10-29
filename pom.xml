@@ -107,6 +107,7 @@
         <!-- test -->
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
         <version.io.kokuwa.maven.k3s-plugin>2.0.1</version.io.kokuwa.maven.k3s-plugin>
+        <version.io.fabric8.kubernetes-client>6.13.4</version.io.fabric8.kubernetes-client>
         <version.org.awaitility>4.2.0</version.org.awaitility>
 
         <!-- OID4VP -->
@@ -287,6 +288,25 @@
             <groupId>org.awaitility</groupId>
             <artifactId>awaitility</artifactId>
             <version>${version.org.awaitility}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- InContainerDataSpaceEventsIT patches the CM ConfigMap; the JDK http client avoids a second netty on the classpath -->
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>kubernetes-client</artifactId>
+            <version>${version.io.fabric8.kubernetes-client}</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.fabric8</groupId>
+                    <artifactId>kubernetes-httpclient-vertx</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>kubernetes-httpclient-jdk</artifactId>
+            <version>${version.io.fabric8.kubernetes-client}</version>
             <scope>test</scope>
         </dependency>
         <!-- https://mvnrepository.com/artifact/org.hamcrest/hamcrest -->
@@ -990,6 +1010,8 @@
                                 <portBinding>8087:8087</portBinding>
                                 <!-- contract management provider -->
                                 <portBinding>8089:8089</portBinding>
+                                <!-- contract management provider, management (/refresh) -->
+                                <portBinding>9090:9090</portBinding>
                                 <!-- odrl-pap -->
                                 <portBinding>8088:8088</portBinding>
                                 <!-- orion -->
@@ -1227,6 +1249,8 @@
                             <skip>false</skip>
                             <systemPropertyVariables>
                                 <inContainer>true</inContainer>
+                                <!-- written by the k3s plugin, used by InContainerDataSpaceEventsIT to patch ConfigMaps -->
+                                <k3s.kubeconfig>${project.build.directory}/k3s.yaml</k3s.kubeconfig>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>

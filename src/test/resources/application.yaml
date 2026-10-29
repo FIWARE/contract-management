@@ -11,6 +11,10 @@ micronaut:
     json:
       additional-types:
         - application/cloudevents+json
+  io:
+    watch:
+      enabled: ${dataspace.events.listener.watch.enabled:false}
+      paths: ${dataspace.events.listener.watch.path:}
   executors:
     notification-subscriber:
       type: scheduled
@@ -59,6 +63,9 @@ endpoints:
     port: 9090
   health:
     enabled: true
+  refresh:
+    enabled: true
+    sensitive: false
 
 ---
 loggers:

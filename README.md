@@ -90,6 +90,46 @@ WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion f
 
 Failures carry a machine-readable code in brackets (`[organization_did_missing]`, `[specification_not_resolvable]`, `[til_rejected_issuer]`, ...), see `org.fiware.iam.exception.FailureReason`.
 
+### Data space events
+
+With `dataspace.events.listener.enabled`, CM receives [CloudEvents](https://cloudevents.io/) (structured mode,
+`application/cloudevents+json`) from other participants of the data space on `POST /events` (below `general.basepath`).
+`OPTIONS /events` answers the CloudEvents webhook validation and grants a `WebHook-Request-Origin` only if it is the `origin` of a
+configured publisher. Event types are dispatched to `DataSpaceEventHandler` beans; this release ships none.
+
+A `POST` is checked in this order:
+
+1. The bearer token must be a valid JWT of the verifier (`jwks-url`, `audience`, optional `issuer`), else `401`.
+2. The token must carry the participant id claim (`participant-claim`), else `401`.
+3. The event `source` must equal that participant id, else `403`.
+4. If both the event and `dataspace-id` name a data space, they must match, else `403`.
+5. A type no handler supports is answered with `202` and ignored.
+6. The `(source, type)` pair must be configured in `dataspace.events.publishers`, else `403`.
+7. A `(source, id)` seen before is answered with `202` and not dispatched again; while the first delivery is still being processed,
+   the retry gets `503` with `Retry-After`.
+8. An event whose `subject` is this participant (`own-participant-id`) is answered with `202` and not dispatched.
+9. Otherwise the event is dispatched and answered with `202`.
+
+The counter `dataspace.events.received` (tags `type`, `outcome`) counts every request; `type` is `other` for types without a handler.
+
+The verifier has to issue tokens with the CM audience and the participant id as a top-level `participantId` claim (or the claim
+configured in `participant-claim`).
+
+#### Changing the configuration without a restart
+
+All `dataspace.events.*` values except `listener.enabled` and `listener.watch.enabled` (startup-time conditions, they need a
+restart) are refreshable:
+
+* `POST :9090/refresh` reloads the configuration. The management port is not authenticated, keep port 9090 cluster-internal.
+* With `listener.watch.enabled` and `listener.watch.path`, CM watches the configuration directory and refreshes on any change in it.
+
+A `/refresh` call and a watch-triggered refresh never run at the same time; the later one waits for the running one.
+
+When the configuration comes from a Kubernetes ConfigMap, mount it as a directory (e.g. `mountPath: /config` with
+`MICRONAUT_CONFIG_FILES=/config/application.yaml` and `watch.path: /config`), **not** with `subPath`: kubelet never updates
+`subPath` mounts, so neither `/refresh` nor the watch would ever see a change. Kubelet propagates an update with a delay of up to
+about a minute.
+
 ### Development
 
 In order to support the development, a local environment can be started via ```mvn clean install -Pdev```. 

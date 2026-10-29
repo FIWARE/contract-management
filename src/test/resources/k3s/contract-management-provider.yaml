@@ -35,6 +35,23 @@ data:
     ---
     notification:
       enabled: false
+    ---
+    # InContainerDataSpaceEventsIT edits the publishers and relies on /refresh and the watch on /config
+    dataspace:
+      events:
+        listener:
+          enabled: true
+          verifier:
+            jwks-url: http://events-jwks/jwks.json
+            audience: contract-management
+          watch:
+            enabled: true
+            path: /config
+        publishers:
+          - id: did:web:publisher-a.io
+            origin: events.publisher-a.io
+            types:
+              - org.fiware.dataspace.test
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -88,11 +105,11 @@ spec:
             timeoutSeconds: 30
           env:
             - name: MICRONAUT_CONFIG_FILES
-              value: "/application.yaml"
+              value: "/config/application.yaml"
+          # mounted as a directory: kubelet never updates subPath mounts, so /refresh and the watch would not see changes
           volumeMounts:
             - name: application-yaml
-              mountPath: /application.yaml
-              subPath: application.yaml
+              mountPath: /config
       volumes:
         - name: application-yaml
           configMap:

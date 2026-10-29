@@ -1,11 +1,5 @@
 package org.fiware.iam.dataspace;
 
-import com.nimbusds.jose.JOSEException;
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.JWSHeader;
-import com.nimbusds.jose.crypto.ECDSASigner;
-import com.nimbusds.jwt.JWTClaimsSet;
-import com.nimbusds.jwt.SignedJWT;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micronaut.core.annotation.Nullable;
@@ -22,7 +16,6 @@ import io.micronaut.json.JsonMapper;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import io.micronaut.test.support.TestPropertyProvider;
 import jakarta.inject.Inject;
-import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.DataSpaceEventVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,8 +29,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.ServerSocket;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -67,7 +58,6 @@ class EventListenerTest implements TestPropertyProvider {
     private static final String UNCONFIGURED_ORIGIN = "events.stranger.org";
     private static final String REQUEST_ORIGIN_HEADER = "WebHook-Request-Origin";
     private static final String UNKNOWN_TYPE = "org.fiware.dataspace.unknown";
-    private static final Duration TOKEN_LIFETIME = Duration.ofMinutes(5);
     private static final Duration AWAIT = Duration.ofSeconds(10);
     private static final int RANDOM_TYPES = 5;
 
@@ -278,20 +268,7 @@ class EventListenerTest implements TestPropertyProvider {
     }
 
     private static String token(String participant) {
-        Instant now = Instant.now();
-        JWTClaimsSet claims = new JWTClaimsSet.Builder()
-                .audience(AUDIENCE)
-                .issueTime(Date.from(now))
-                .expirationTime(Date.from(now.plus(TOKEN_LIFETIME)))
-                .claim(DataSpaceEventsProperties.DEFAULT_PARTICIPANT_CLAIM, participant)
-                .build();
-        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.ES256).keyID(TestEventFixtures.KID).build(), claims);
-        try {
-            jwt.sign(new ECDSASigner(TestEventFixtures.SIGNING_KEY));
-        } catch (JOSEException e) {
-            throw new IllegalStateException(e);
-        }
-        return jwt.serialize();
+        return TestEventFixtures.token(participant, AUDIENCE);
     }
 
     private static int freePort() {
