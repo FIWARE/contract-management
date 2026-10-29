@@ -2,6 +2,7 @@ package org.fiware.iam.dataspace;
 
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.KeySourceException;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.jwk.source.JWKSourceBuilder;
 import com.nimbusds.jose.proc.BadJOSEException;
@@ -19,6 +20,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
+import org.fiware.iam.exception.VerifierUnavailableException;
 
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -27,13 +29,14 @@ import java.text.ParseException;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
  * Verifies the verifier-issued bearer token of an incoming event and extracts the caller's participant id.
- * Reads the refreshable verifier configuration on every call; a refresh that blanks jwks-url or audience fails closed.
+ * Reads the refreshable verifier configuration on every call; a refresh that makes it unusable fails closed.
  */
 @Slf4j
 @Context
@@ -47,6 +50,7 @@ public class BearerVerifier {
     private final DataSpaceEventsProperties properties;
     private final Function<URL, JWKSource<SecurityContext>> jwkSourceFactory;
     private final AtomicReference<CachedJwkSource> jwkSource = new AtomicReference<>();
+    private final AtomicReference<String> reportedMisconfiguration = new AtomicReference<>();
 
     @Inject
     public BearerVerifier(DataSpaceEventsProperties properties) {
@@ -60,26 +64,16 @@ public class BearerVerifier {
 
     @PostConstruct
     void validateConfiguration() {
-        DataSpaceEventsProperties.Listener.Verifier verifier = verifier();
-        if (isBlank(verifier.getAudience())) {
-            throw new ConfigurationException(CONFIG_PREFIX + "audience is required when the event listener is enabled.");
-        }
-        if (isBlank(verifier.getJwksUrl())) {
-            throw new ConfigurationException(CONFIG_PREFIX + "jwks-url is required when the event listener is enabled.");
-        }
-        if (isEmpty(verifier.getAlgorithms())) {
-            throw new ConfigurationException(CONFIG_PREFIX + "algorithms must not be empty.");
-        }
-        try {
-            toUrl(verifier.getJwksUrl());
-        } catch (MalformedURLException | IllegalArgumentException e) {
-            throw new ConfigurationException(CONFIG_PREFIX + "jwks-url is not a valid URL: " + verifier.getJwksUrl(), e);
-        }
+        misconfiguration(verifier()).ifPresent(problem -> {
+            throw new ConfigurationException(problem);
+        });
     }
 
     /**
      * The participant id claim of a valid bearer token, empty if the header is missing or the token is not acceptable.
      * Blocks on a JWKS fetch (cache miss or unknown kid), so it must not run on the event loop.
+     *
+     * @throws VerifierUnavailableException if the JWKS cannot be fetched, so the token can be neither accepted nor rejected
      */
     public Optional<String> participantIdOf(@Nullable String authorizationHeader) {
         if (authorizationHeader == null
@@ -89,25 +83,72 @@ public class BearerVerifier {
         }
         String token = authorizationHeader.substring(BEARER_SCHEME.length()).strip();
         DataSpaceEventsProperties.Listener.Verifier verifier = verifier();
-        if (isBlank(verifier.getAudience()) || isBlank(verifier.getJwksUrl()) || isEmpty(verifier.getAlgorithms())) {
-            log.error("Rejecting event bearer token: {}audience, jwks-url and algorithms must be configured.", CONFIG_PREFIX);
-            return Optional.empty();
-        }
-        JWKSource<SecurityContext> keys;
-        try {
-            keys = jwkSource(verifier.getJwksUrl());
-        } catch (MalformedURLException | IllegalArgumentException e) {
-            log.error("Rejecting event bearer token: {}jwks-url {} is not a valid URL.", CONFIG_PREFIX, verifier.getJwksUrl(), e);
+        Optional<String> misconfiguration = misconfiguration(verifier);
+        reportMisconfiguration(misconfiguration);
+        if (misconfiguration.isPresent()) {
             return Optional.empty();
         }
         JWTClaimsSet claims;
         try {
-            claims = processor(verifier, keys).process(token, null);
+            claims = processor(verifier, jwkSource(verifier.getJwksUrl())).process(token, null);
+        } catch (KeySourceException e) {
+            throw new VerifierUnavailableException(
+                    "Cannot verify event bearer token, JWKS " + verifier.getJwksUrl() + " is unavailable.", e);
         } catch (ParseException | BadJOSEException | JOSEException e) {
             log.debug("Rejecting event bearer token: {}", e.getMessage());
             return Optional.empty();
+        } catch (MalformedURLException | IllegalArgumentException e) {
+            // only reachable if a refresh broke the URL after the configuration check above
+            log.debug("Rejecting event bearer token: {}jwks-url {} is not a valid URL.", CONFIG_PREFIX, verifier.getJwksUrl());
+            return Optional.empty();
         }
         return participantClaim(claims, verifier.getParticipantClaim());
+    }
+
+    /**
+     * Why the verifier configuration cannot verify any token, empty if it is usable.
+     */
+    private static Optional<String> misconfiguration(DataSpaceEventsProperties.Listener.Verifier verifier) {
+        if (isBlank(verifier.getAudience())) {
+            return Optional.of(CONFIG_PREFIX + "audience is required when the event listener is enabled.");
+        }
+        if (isBlank(verifier.getJwksUrl())) {
+            return Optional.of(CONFIG_PREFIX + "jwks-url is required when the event listener is enabled.");
+        }
+        if (isEmpty(verifier.getAlgorithms())) {
+            return Optional.of(CONFIG_PREFIX + "algorithms must not be empty.");
+        }
+        // JWSAlgorithm.parse accepts anything, so a typo would silently match no token
+        Set<String> unsupported = verifier.getAlgorithms().stream()
+                .filter(algorithm -> !JWSAlgorithm.Family.SIGNATURE.contains(JWSAlgorithm.parse(algorithm)))
+                .collect(Collectors.toCollection(TreeSet::new));
+        if (!unsupported.isEmpty()) {
+            return Optional.of(CONFIG_PREFIX + "algorithms contains unsupported signature algorithms " + unsupported
+                    + ", allowed are " + JWSAlgorithm.Family.SIGNATURE + ".");
+        }
+        try {
+            toUrl(verifier.getJwksUrl());
+        } catch (MalformedURLException | IllegalArgumentException e) {
+            return Optional.of(CONFIG_PREFIX + "jwks-url is not a valid URL: " + verifier.getJwksUrl());
+        }
+        return Optional.empty();
+    }
+
+    // any caller can trigger verification, so a broken refresh is reported once per state instead of once per request
+    private void reportMisconfiguration(Optional<String> misconfiguration) {
+        String current = misconfiguration.orElse(null);
+        String previous = reportedMisconfiguration.getAndSet(current);
+        if (current == null) {
+            if (previous != null) {
+                log.info("Event bearer verification is configured again, accepting tokens.");
+            }
+            return;
+        }
+        if (current.equals(previous)) {
+            log.debug("Rejecting event bearer token: {}", current);
+        } else {
+            log.error("Rejecting all event bearer tokens until the configuration is fixed: {}", current);
+        }
     }
 
     private static DefaultJWTProcessor<SecurityContext> processor(DataSpaceEventsProperties.Listener.Verifier verifier,

@@ -1,8 +1,13 @@
 package org.fiware.iam.dataspace;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.KeySourceException;
 import com.nimbusds.jose.crypto.ECDSASigner;
 import com.nimbusds.jose.jwk.Curve;
 import com.nimbusds.jose.jwk.ECKey;
@@ -17,11 +22,14 @@ import com.nimbusds.jwt.SignedJWT;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.exceptions.ConfigurationException;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
+import org.fiware.iam.exception.VerifierUnavailableException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 
 import java.net.URL;
 import java.time.Duration;
@@ -59,6 +67,8 @@ class BearerVerifierTest {
     // beyond the default clock skew tolerated by Nimbus
     private static final Duration EXPIRED = Duration.ofMinutes(10);
     private static final int NON_STRING_PARTICIPANT = 42;
+    private static final String MALFORMED_URL = "not a url";
+    private static final String LOWERCASE_ES256 = "es256";
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -67,6 +77,9 @@ class BearerVerifierTest {
     private static final ECKey WRONG_KEY = generate(Curve.P_256, KID);
     private static final ECKey UNKNOWN_KEY = generate(Curve.P_256, UNKNOWN_KID);
     private static final JWKSet JWKS = new JWKSet(List.of(SIGNING_KEY.toPublicJWK(), ES384_KEY.toPublicJWK()));
+
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    private final Logger logger = (Logger) LoggerFactory.getLogger(BearerVerifier.class);
 
     private DataSpaceEventsProperties properties;
     private List<URL> requestedJwksUrls;
@@ -85,6 +98,13 @@ class BearerVerifierTest {
             return new ImmutableJWKSet<>(JWKS);
         };
         verifier = new BearerVerifier(properties, factory);
+        logs.start();
+        logger.addAppender(logs);
+    }
+
+    @AfterEach
+    void tearDown() {
+        logger.detachAppender(logs);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -177,7 +197,43 @@ class BearerVerifierTest {
         return Stream.of(
                 Arguments.of("audience", blanking(config -> config.setAudience(""))),
                 Arguments.of("jwks-url", blanking(config -> config.setJwksUrl(""))),
-                Arguments.of("algorithms", blanking(config -> config.setAlgorithms(Set.of()))));
+                Arguments.of("algorithms", blanking(config -> config.setAlgorithms(Set.of()))),
+                Arguments.of("unsupported algorithm", blanking(config -> config.setAlgorithms(Set.of(LOWERCASE_ES256)))),
+                Arguments.of("malformed jwks-url", blanking(config -> config.setJwksUrl(MALFORMED_URL))));
+    }
+
+    @Test
+    void logsAMisconfigurationOncePerState() {
+        String token = bearer(signed(SIGNING_KEY, JWSAlgorithm.ES256, validClaims().build()));
+        DataSpaceEventsProperties.Listener.Verifier config = properties.getListener().getVerifier();
+
+        config.setAudience("");
+        verifier.participantIdOf(token);
+        verifier.participantIdOf(token);
+        config.setAudience(AUDIENCE);
+        config.setJwksUrl("");
+        verifier.participantIdOf(token);
+        config.setJwksUrl(JWKS_URL);
+        verifier.participantIdOf(token);
+        config.setAudience("");
+        verifier.participantIdOf(token);
+
+        // first breakage, a different breakage, the same breakage again after a recovery
+        assertEquals(3, logs.list.stream().filter(event -> event.getLevel() == Level.ERROR).count());
+    }
+
+    @Test
+    void reportsAnUnavailableJwksInsteadOfRejectingTheToken() {
+        JWKSource<SecurityContext> unavailable = (selector, context) -> {
+            throw new KeySourceException("Couldn't retrieve JWK set from URL: connect timed out");
+        };
+        BearerVerifier withoutJwks = new BearerVerifier(properties, url -> unavailable);
+        String token = bearer(signed(SIGNING_KEY, JWSAlgorithm.ES256, validClaims().build()));
+
+        VerifierUnavailableException thrown =
+                assertThrows(VerifierUnavailableException.class, () -> withoutJwks.participantIdOf(token));
+
+        assertTrue(thrown.getCause() instanceof KeySourceException, "The JWKS failure must be kept as cause.");
     }
 
     private static Consumer<DataSpaceEventsProperties.Listener.Verifier> blanking(
@@ -200,14 +256,35 @@ class BearerVerifierTest {
         return Stream.of(Arguments.of("verifier.audience"), Arguments.of("verifier.jwks-url"));
     }
 
-    @Test
-    void failsStartupWithAMalformedJwksUrl() {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidSettings")
+    void failsStartupWithAnInvalidSetting(String description, String setting, Object value) {
         Map<String, Object> config = new HashMap<>(completeListenerConfig());
-        config.put(PREFIX + "verifier.jwks-url", "not a url");
+        config.put(PREFIX + setting, value);
 
         Exception thrown = assertThrows(Exception.class, () -> ApplicationContext.run(config).close());
 
         assertTrue(hasCause(thrown, ConfigurationException.class), "Startup must fail with a configuration error.");
+    }
+
+    static Stream<Arguments> invalidSettings() {
+        return Stream.of(
+                Arguments.of("malformed jwks-url", "verifier.jwks-url", MALFORMED_URL),
+                Arguments.of("lower-case algorithm", "verifier.algorithms", List.of(LOWERCASE_ES256)),
+                Arguments.of("misspelled algorithm", "verifier.algorithms", List.of("ES-256")),
+                Arguments.of("MAC algorithm", "verifier.algorithms", List.of(JWSAlgorithm.HS256.getName())),
+                Arguments.of("one invalid among valid algorithms", "verifier.algorithms",
+                        List.of(JWSAlgorithm.ES256.getName(), LOWERCASE_ES256)));
+    }
+
+    @Test
+    void startsWithSupportedAlgorithms() {
+        Map<String, Object> config = new HashMap<>(completeListenerConfig());
+        config.put(PREFIX + "verifier.algorithms", List.of(JWSAlgorithm.ES384.getName(), JWSAlgorithm.PS256.getName()));
+
+        try (ApplicationContext context = ApplicationContext.run(config)) {
+            assertTrue(context.containsBean(BearerVerifier.class));
+        }
     }
 
     @ParameterizedTest(name = "listener enabled: {0}")

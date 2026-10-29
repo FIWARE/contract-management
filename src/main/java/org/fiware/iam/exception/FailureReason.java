@@ -26,7 +26,8 @@ public enum FailureReason {
 	TIL_REJECTED_ISSUER("til_rejected_issuer"),
 	AGREEMENT_FAILED("agreement_failed"),
 	RAINBOW_ERROR("rainbow_error"),
-	TMFORUM_ERROR("tmforum_error");
+	TMFORUM_ERROR("tmforum_error"),
+	VERIFIER_UNAVAILABLE("verifier_unavailable");
 
 	private final String code;
 
