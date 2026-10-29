@@ -34,13 +34,15 @@ public class ConfigFileRefresher implements ApplicationEventListener<FileChanged
     private final Environment environment;
     private final ApplicationEventPublisher<RefreshEvent> refreshPublisher;
     private final TaskScheduler scheduler;
+    private final ConfigurationRefreshLock refreshLock;
     private ScheduledFuture<?> pending;
 
     public ConfigFileRefresher(Environment environment, ApplicationEventPublisher<RefreshEvent> refreshPublisher,
-                               @Named(TaskExecutors.SCHEDULED) TaskScheduler scheduler) {
+                               @Named(TaskExecutors.SCHEDULED) TaskScheduler scheduler, ConfigurationRefreshLock refreshLock) {
         this.environment = environment;
         this.refreshPublisher = refreshPublisher;
         this.scheduler = scheduler;
+        this.refreshLock = refreshLock;
     }
 
     @Override
@@ -54,15 +56,19 @@ public class ConfigFileRefresher implements ApplicationEventListener<FileChanged
 
     void refresh() {
         try {
-            // refreshAndDiff re-reads the property sources; a bare RefreshEvent would rebind from the stale environment
-            Map<String, Object> diff = environment.refreshAndDiff();
-            if (diff.isEmpty()) {
-                return;
-            }
-            log.info("Configuration file changed, refreshing keys {}.", diff.keySet());
-            refreshPublisher.publishEvent(new RefreshEvent(diff));
+            refreshLock.exclusively(this::refreshAndPublish);
         } catch (RuntimeException e) {
             log.warn("Refreshing the configuration after a file change failed.", e);
         }
+    }
+
+    private Map<String, Object> refreshAndPublish() {
+        // refreshAndDiff re-reads the property sources; a bare RefreshEvent would rebind from the stale environment
+        Map<String, Object> diff = environment.refreshAndDiff();
+        if (!diff.isEmpty()) {
+            log.info("Configuration file changed, refreshing keys {}.", diff.keySet());
+            refreshPublisher.publishEvent(new RefreshEvent(diff));
+        }
+        return diff;
     }
 }

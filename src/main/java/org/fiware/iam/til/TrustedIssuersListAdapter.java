@@ -11,6 +11,7 @@ import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.http.HttpResponses;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.CredentialsVO;
+import org.fiware.iam.til.model.ScopeTypeVO;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
 import reactor.core.publisher.Mono;
 
@@ -30,6 +31,12 @@ import java.util.List;
 @RequiredArgsConstructor
 @Slf4j
 public class TrustedIssuersListAdapter {
+
+    /**
+     * Order grants are untyped: omitting the scope type addresses exactly the untyped grants of a scope,
+     * never e.g. a data-space membership granted under the same id, and is understood by older lists too.
+     */
+    private static final ScopeTypeVO ORDER_SCOPE_TYPE = null;
 
     private final IssuerApiClient apiClient;
 
@@ -58,7 +65,7 @@ public class TrustedIssuersListAdapter {
         // deferred, so the call is issued on subscription and a synchronous failure of the client is
         // signalled through the returned Mono like any other error
         List<String> credentialTypes = credentialsVOS.stream().map(CredentialsVO::getCredentialsType).toList();
-        return Mono.defer(() -> apiClient.replaceCredentialsByScope(issuerDid, orderId, credentialsVOS))
+        return Mono.defer(() -> apiClient.replaceCredentialsByScope(issuerDid, orderId, credentialsVOS, ORDER_SCOPE_TYPE))
                 .onErrorMap(e -> new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER,
                         "The trusted-issuers-list did not allow issuer %s the credentials %s for order %s.".formatted(
                                 issuerDid, credentialTypes, orderId), e))
@@ -83,7 +90,7 @@ public class TrustedIssuersListAdapter {
      * @return the response of the trusted-issuers-list
      */
     public Mono<HttpResponse<?>> denyIssuer(String issuerDid, String orderId) {
-        return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId))
+        return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId, ORDER_SCOPE_TYPE))
                 .<HttpResponse<?>>map(response -> {
                     log.debug("Order {}: revoked the credentials of issuer {} at the trusted-issuers-list.", orderId, issuerDid);
                     return response;

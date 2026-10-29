@@ -244,6 +244,10 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   source ends in `202 unknown_type` and "B → 403" cannot be observed in the container. The IT therefore observes the publisher list
   through the `OPTIONS /events` origin grant (B's/C's origin not granted → granted), checks the bearer path separately
   (no token → `401`, token from the configured publisher A → `202`), and restores the ConfigMap afterwards.
+  _Plan change (review):_ the watch is enabled in the container, so the IT cannot tell a `/refresh` from a watch refresh. It
+  only checks that `/refresh` answers `200`, and adds B and C through the watch alone; `DataSpaceEventsRefreshTest` is the
+  evidence for `/refresh`. `/refresh` and the watch refresh are serialized by `ConfigurationRefreshLock`
+  (`SerializedRefreshEndpoint` replaces Micronaut's `RefreshEndpoint`).
   _Plan change:_ the consumer `contract-management` LoadBalancer service also exposed 9090, so klipper could schedule only one of
   the two CM service load balancers; its 9090 port (unused from the host) is removed from `src/test/resources/contract-management.yaml`.
 - README: add a "Data space events" section with the config keys, the endpoint, the authorization order, the metric, the refresh

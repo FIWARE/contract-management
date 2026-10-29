@@ -34,6 +34,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -42,6 +45,7 @@ import static org.awaitility.Awaitility.await;
 import static org.fiware.iam.dataspace.TestEventFixtures.KNOWN_TYPE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Publishers added to the configuration file are accepted without a restart, through /refresh and through the file watch.
@@ -100,6 +104,8 @@ class DataSpaceEventsRefreshTest {
         managementClient = context.createBean(HttpClient.class,
                 new URL(server.getScheme(), server.getHost(), managementPort, "")).toBlocking();
         jsonMapper = context.getBean(JsonMapper.class);
+        // netty sets system properties after startup; absorb them so the first diff only holds the test's own edits
+        context.getEnvironment().refreshAndDiff();
     }
 
     @AfterEach
@@ -135,6 +141,35 @@ class DataSpaceEventsRefreshTest {
 
         writeConfig(List.of(PUBLISHER_A, PUBLISHER_B));
         await().atMost(WATCH_TIMEOUT).until(() -> refreshes.count() == 1);
+    }
+
+    @Test
+    void refreshEndpointWaitsForARunningRefresh() throws Exception {
+        CountDownLatch holding = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ConfigurationRefreshLock refreshLock = context.getBean(ConfigurationRefreshLock.class);
+        CompletableFuture<Void> running = CompletableFuture.runAsync(() -> refreshLock.exclusively(() -> {
+            holding.countDown();
+            return awaitQuietly(release);
+        }));
+        assertTrue(holding.await(WATCH_TIMEOUT.toSeconds(), TimeUnit.SECONDS));
+
+        CompletableFuture<HttpResponse<?>> refresh = CompletableFuture.supplyAsync(
+                () -> exchange(managementClient, HttpRequest.POST(REFRESH_PATH, Map.of())));
+        await().during(QUIET_PERIOD).atMost(QUIET_PERIOD.multipliedBy(2)).until(() -> !refresh.isDone());
+
+        release.countDown();
+        running.get(WATCH_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+        assertEquals(HttpStatus.OK, refresh.get(WATCH_TIMEOUT.toSeconds(), TimeUnit.SECONDS).getStatus());
+    }
+
+    private static boolean awaitQuietly(CountDownLatch latch) {
+        try {
+            return latch.await(WATCH_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     /**

@@ -12,6 +12,7 @@ import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.api.IssuerApiClient;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.til.model.CredentialsVOTestExample;
+import org.fiware.iam.til.model.ScopeTypeVO;
 import org.fiware.iam.tmforum.CredentialsConfigResolver;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import java.util.Set;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
+import static org.mockito.Matchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -53,13 +55,13 @@ class TrustedIssuersListAdapterTest {
     @Test
     void allowIssuer_grantsUnderTheOrdersScope() {
         CredentialsVO testCVO = CredentialsVOTestExample.build();
-        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any()))
+        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any(), isNull(ScopeTypeVO.class)))
                 .thenReturn(Mono.just(HttpResponse.ok()));
 
         Boolean success = classUnderTest.allowIssuer(ISSUER_DID, ORDER_ID, List.of(localConfig(testCVO))).block();
 
         Assertions.assertEquals(true, success, "The grant should have succeeded.");
-        verify(apiClient).replaceCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), eq(List.of(testCVO)));
+        verify(apiClient).replaceCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), eq(List.of(testCVO)), isNull(ScopeTypeVO.class));
     }
 
     @Test
@@ -69,24 +71,24 @@ class TrustedIssuersListAdapterTest {
                 .block();
 
         Assertions.assertEquals(true, success, "An order with nothing to grant locally is not a failure.");
-        verify(apiClient, never()).replaceCredentialsByScope(anyString(), anyString(), any());
+        verify(apiClient, never()).replaceCredentialsByScope(anyString(), anyString(), any(), isNull(ScopeTypeVO.class));
     }
 
     @Test
     void allowIssuer_deduplicatesIdenticalCredentials() {
         CredentialsVO testCVO = CredentialsVOTestExample.build();
-        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any()))
+        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any(), isNull(ScopeTypeVO.class)))
                 .thenReturn(Mono.just(HttpResponse.ok()));
 
         // the same credential configured by two parts of one composed product
         classUnderTest.allowIssuer(ISSUER_DID, ORDER_ID, List.of(localConfig(testCVO), localConfig(testCVO))).block();
 
-        verify(apiClient).replaceCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), eq(List.of(testCVO)));
+        verify(apiClient).replaceCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), eq(List.of(testCVO)), isNull(ScopeTypeVO.class));
     }
 
     @Test
     void allowIssuer_reportsAFailedGrant() {
-        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any()))
+        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any(), isNull(ScopeTypeVO.class)))
                 .thenReturn(Mono.just(HttpResponse.status(HttpStatus.BAD_GATEWAY)));
 
         Boolean success = classUnderTest
@@ -98,7 +100,7 @@ class TrustedIssuersListAdapterTest {
 
     @Test
     void allowIssuer_fault() {
-        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any()))
+        when(apiClient.replaceCredentialsByScope(anyString(), anyString(), any(), isNull(ScopeTypeVO.class)))
                 .thenThrow(new HttpClientException("test"));
 
         Assertions.assertThrows(TrustedIssuersException.class,
@@ -109,18 +111,18 @@ class TrustedIssuersListAdapterTest {
 
     @Test
     void denyIssuer_revokesTheOrdersScopeWithoutResolvingItsConfiguration() {
-        when(apiClient.deleteCredentialsByScope(anyString(), anyString()))
+        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class)))
                 .thenReturn(Mono.just(HttpResponse.noContent()));
 
         HttpResponse<?> response = classUnderTest.denyIssuer(ISSUER_DID, ORDER_ID).block();
 
         Assertions.assertEquals(HttpStatus.NO_CONTENT, response.getStatus(), "The revocation should succeed.");
-        verify(apiClient).deleteCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID));
+        verify(apiClient).deleteCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), isNull(ScopeTypeVO.class));
     }
 
     @Test
     void denyIssuer_unknownIssuerIsNotAFailure() {
-        when(apiClient.deleteCredentialsByScope(anyString(), anyString()))
+        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class)))
                 .thenReturn(Mono.error(new HttpClientResponseException("not found", HttpResponse.notFound())));
 
         HttpResponse<?> response = classUnderTest.denyIssuer(ISSUER_DID, ORDER_ID).block();
@@ -131,7 +133,7 @@ class TrustedIssuersListAdapterTest {
 
     @Test
     void denyIssuer_fault() {
-        when(apiClient.deleteCredentialsByScope(anyString(), anyString()))
+        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class)))
                 .thenReturn(Mono.error(new HttpClientException("test")));
 
         Assertions.assertThrows(TrustedIssuersException.class,

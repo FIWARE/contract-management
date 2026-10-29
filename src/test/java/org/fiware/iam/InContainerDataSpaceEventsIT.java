@@ -17,6 +17,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,7 +33,11 @@ import java.nio.file.Path;
 import java.text.ParseException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,8 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Publishers added to the contract-management-provider ConfigMap are accepted without a restart, through /refresh and the watch.
+ * Publishers added to the contract-management-provider ConfigMap are accepted without a restart, through the file watch.
  * The deployed CM has no event handler, so whether a publisher is configured is observed through the OPTIONS origin grant.
+ * The watch is enabled here, so /refresh is only checked for reachability; DataSpaceEventsRefreshTest proves it applies changes.
  */
 @EnabledIfSystemProperty(named = "inContainer", matches = "true")
 class InContainerDataSpaceEventsIT {
@@ -50,7 +57,7 @@ class InContainerDataSpaceEventsIT {
     private static final String NAMESPACE = "default";
     private static final String CONFIG_MAP = "contract-management-provider";
     private static final String CONFIG_KEY = "application.yaml";
-    private static final String PUBLISHERS_KEY = "publishers:";
+    private static final List<String> PUBLISHERS_PATH = List.of("dataspace", "events", "publishers");
     private static final String EVENTS_URL = "http://localhost:8089/events";
     private static final String REFRESH_URL = "http://localhost:9090/refresh";
     private static final String VERIFIER_KEY = "dataspace/events-verifier-key.json";
@@ -79,19 +86,31 @@ class InContainerDataSpaceEventsIT {
         String kubeconfig = Files.readString(Path.of(System.getProperty(KUBECONFIG_PROPERTY)));
         kubernetes = new KubernetesClientBuilder().withConfig(Config.fromKubeconfig(kubeconfig)).build();
         originalConfig = configMap().get().getData().get(CONFIG_KEY);
-        assertTrue(originalConfig.contains(PUBLISHERS_KEY), "The CM config must end with the publishers list.");
     }
 
+    /**
+     * Restores the ConfigMap and waits until the watch applied it, so later tests see the original publishers.
+     */
     @AfterEach
     void restore() {
         if (kubernetes == null) {
             return;
         }
-        if (originalConfig != null) {
-            setConfig(originalConfig);
-            refresh();
+        try {
+            if (originalConfig != null) {
+                setConfig(originalConfig);
+                await().atMost(KUBELET_PROPAGATION).pollInterval(POLL_INTERVAL)
+                        .until(() -> grantedOrigin(PUBLISHER_B.origin()).isEmpty()
+                                && grantedOrigin(PUBLISHER_C.origin()).isEmpty());
+            }
+        } finally {
+            kubernetes.close();
         }
-        kubernetes.close();
+    }
+
+    @Test
+    void refreshEndpointIsReachable() {
+        assertEquals(HTTP_OK, refresh());
     }
 
     @Test
@@ -104,16 +123,44 @@ class InContainerDataSpaceEventsIT {
     void addedPublishersAreAcceptedWithoutRestart() {
         assertTrue(grantedOrigin(PUBLISHER_B.origin()).isEmpty());
 
-        setConfig(originalConfig + PUBLISHER_B.yaml());
-        await().atMost(KUBELET_PROPAGATION).pollInterval(POLL_INTERVAL).untilAsserted(() -> {
-            assertEquals(HTTP_OK, refresh());
-            assertEquals(Optional.of(PUBLISHER_B.origin()), grantedOrigin(PUBLISHER_B.origin()));
-        });
+        // no /refresh: the watch has to pick up kubelet's ..data symlink swap on its own, also a second time
+        setConfig(withPublishers(originalConfig, PUBLISHER_B));
+        await().atMost(KUBELET_PROPAGATION).pollInterval(POLL_INTERVAL)
+                .until(() -> grantedOrigin(PUBLISHER_B.origin()).equals(Optional.of(PUBLISHER_B.origin())));
 
-        // no /refresh: the watch has to pick up kubelet's ..data symlink swap on its own
-        setConfig(originalConfig + PUBLISHER_B.yaml() + PUBLISHER_C.yaml());
+        setConfig(withPublishers(originalConfig, PUBLISHER_B, PUBLISHER_C));
         await().atMost(KUBELET_PROPAGATION).pollInterval(POLL_INTERVAL)
                 .until(() -> grantedOrigin(PUBLISHER_C.origin()).equals(Optional.of(PUBLISHER_C.origin())));
+    }
+
+    /**
+     * Appends the publishers to the dataspace.events.publishers list of the (multi-document) config, wherever it is.
+     */
+    private static String withPublishers(String config, Publisher... publishers) {
+        DumperOptions options = new DumperOptions();
+        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        Yaml yaml = new Yaml(options);
+        List<Object> documents = new ArrayList<>();
+        yaml.loadAll(config).forEach(documents::add);
+        List<Map<String, Object>> publisherList = documents.stream()
+                .map(document -> publisherList(document, PUBLISHERS_PATH))
+                .flatMap(Optional::stream)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "The CM config has no " + String.join(".", PUBLISHERS_PATH) + " list."));
+        Arrays.stream(publishers).map(Publisher::asConfig).forEach(publisherList::add);
+        return yaml.dumpAll(documents.iterator());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Optional<List<Map<String, Object>>> publisherList(Object node, List<String> path) {
+        if (path.isEmpty()) {
+            return node instanceof List<?> list ? Optional.of((List<Map<String, Object>>) list) : Optional.empty();
+        }
+        if (node instanceof Map<?, ?> map) {
+            return publisherList(map.get(path.get(0)), path.subList(1, path.size()));
+        }
+        return Optional.empty();
     }
 
     private Resource<ConfigMap> configMap() {
@@ -194,13 +241,8 @@ class InContainerDataSpaceEventsIT {
         /**
          * The publisher as an entry of the dataspace.events.publishers list in the CM ConfigMap.
          */
-        String yaml() {
-            return """
-                      - id: %s
-                        origin: %s
-                        types:
-                          - %s
-                """.formatted(id, origin, TYPE);
+        Map<String, Object> asConfig() {
+            return Map.of("id", id, "origin", origin, "types", List.of(TYPE));
         }
     }
 }

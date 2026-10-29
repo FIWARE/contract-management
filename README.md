@@ -123,6 +123,8 @@ restart) are refreshable:
 * `POST :9090/refresh` reloads the configuration. The management port is not authenticated, keep port 9090 cluster-internal.
 * With `listener.watch.enabled` and `listener.watch.path`, CM watches the configuration directory and refreshes on any change in it.
 
+A `/refresh` call and a watch-triggered refresh never run at the same time; the later one waits for the running one.
+
 When the configuration comes from a Kubernetes ConfigMap, mount it as a directory (e.g. `mountPath: /config` with
 `MICRONAUT_CONFIG_FILES=/config/application.yaml` and `watch.path: /config`), **not** with `subPath`: kubelet never updates
 `subPath` mounts, so neither `/refresh` nor the watch would ever see a change. Kubelet propagates an update with a delay of up to
