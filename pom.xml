@@ -187,6 +187,22 @@
             <artifactId>micronaut-reactor</artifactId>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>io.micronaut.micrometer</groupId>
+            <artifactId>micronaut-micrometer-core</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micronaut.micrometer</groupId>
+            <artifactId>micronaut-micrometer-registry-prometheus</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <!-- dedup cache of received data space events -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <scope>compile</scope>
+        </dependency>
         <!-- required for config micronaut > 4.x -->
         <dependency>
             <groupId>org.yaml</groupId>
