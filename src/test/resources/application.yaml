@@ -7,6 +7,10 @@ micronaut:
       prometheus:
         step: PT2s
         descriptions: false
+  codec:
+    json:
+      additional-types:
+        - application/cloudevents+json
   executors:
     notification-subscriber:
       type: scheduled
