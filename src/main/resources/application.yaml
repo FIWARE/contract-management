@@ -12,6 +12,12 @@ micronaut:
         step: PT2s
         descriptions: false
 
+  codec:
+    json:
+      # data space events arrive as structured CloudEvents
+      additional-types:
+        - application/cloudevents+json
+
   executors:
     notification-subscriber:
       type: scheduled
@@ -89,6 +95,30 @@ oid4vp:
 #    keyType: "EC"
 #    keyPath: "oid4vp/private-key.pem"
 #    signatureAlgorithm: "ECDH-ES"
+# -- receiving endpoint for data space events. Everything except the enabled flags is reloaded on refresh.
+#dataspace:
+#  events:
+#    dataspace-id: "my-dataspace"
+#    # falls back to general.did
+#    own-participant-id: "did:web:provider.org"
+#    listener:
+#      enabled: true
+#      verifier:
+#        jwks-url: "http://verifier:8080/.well-known/jwks"
+#        issuer: "http://verifier:8080"
+#        audience: "contract-management"
+#        participant-claim: "participantId"
+#        algorithms: [ "ES256", "RS256" ]
+#      dedup:
+#        max-entries: 10000
+#        ttl: PT1H
+#      watch:
+#        enabled: true
+#        path: "/config/application.yaml"
+#    publishers:
+#      - id: "did:web:consumer.org"
+#        origin: "events.consumer.org"
+#        types: [ "org.fiware.dataspace.example" ]
 
 endpoints:
   all:

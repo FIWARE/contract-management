@@ -45,6 +45,22 @@ The following table concentrates on the most important configuration parameters:
 | `micronaut.http.services.party.path`   | `MICRONAUT_HTTP_SERVICES_PARTY_PATH`   | Subpath of the TM Forum Party Endpoint                             | "party"                          |
 | `general.name`                         | `GENERAL_NAME`                         | Name of the service, used for the callback/listener subscription   | contract-management              |
 | `general.basepath`                     | `GENERAL_BASEPATH`                     | Basepath used for the provided listener endpoint                   | ""                               |
+| `dataspace.events.dataspace-id` | `DATASPACE_EVENTS_DATASPACEID` | Id of the data space; events carrying a different `dataspaceid` are rejected | - |
+| `dataspace.events.own-participant-id` | `DATASPACE_EVENTS_OWNPARTICIPANTID` | Participant id of this instance, events about it are not dispatched | `general.did` |
+| `dataspace.events.listener.enabled` | `DATASPACE_EVENTS_LISTENER_ENABLED` | Enable the data space event endpoint (startup only, needs a restart) | false |
+| `dataspace.events.listener.verifier.jwks-url` | `DATASPACE_EVENTS_LISTENER_VERIFIER_JWKSURL` | JWKS of the verifier issuing the bearer tokens, required with the listener | - |
+| `dataspace.events.listener.verifier.issuer` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ISSUER` | Expected token issuer, not checked if unset | - |
+| `dataspace.events.listener.verifier.audience` | `DATASPACE_EVENTS_LISTENER_VERIFIER_AUDIENCE` | Expected token audience, required with the listener | - |
+| `dataspace.events.listener.verifier.participant-claim` | `DATASPACE_EVENTS_LISTENER_VERIFIER_PARTICIPANTCLAIM` | Top-level token claim carrying the caller's participant id | participantId |
+| `dataspace.events.listener.verifier.algorithms` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ALGORITHMS` | Accepted JWS algorithms | ES256,RS256 |
+| `dataspace.events.listener.dedup.max-entries` | `DATASPACE_EVENTS_LISTENER_DEDUP_MAXENTRIES` | Number of remembered `(source, id)` pairs | 10000 |
+| `dataspace.events.listener.dedup.ttl` | `DATASPACE_EVENTS_LISTENER_DEDUP_TTL` | How long a `(source, id)` pair is remembered | PT1H |
+| `dataspace.events.listener.watch.enabled` | `DATASPACE_EVENTS_LISTENER_WATCH_ENABLED` | Refresh when the config file changes (startup only, needs a restart) | false |
+| `dataspace.events.listener.watch.path` | `DATASPACE_EVENTS_LISTENER_WATCH_PATH` | Watched configuration file | - |
+| `dataspace.events.publishers` | - | List of `id` (participant id), `origin` (webhook origin) and `types` (allowed event types) | [] |
+
+All `dataspace.events.*` values except the two `enabled` flags are reloaded on a refresh without a restart. A key removed from
+the configuration keeps its previous value until restart; set it to an empty value instead.
 
 ### Logging
 

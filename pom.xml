@@ -85,6 +85,9 @@
         <!-- Contract Management API -->
         <cm.api.url>${project.basedir}/api/contract-management.yaml</cm.api.url>
 
+        <!-- Data Space Events API -->
+        <events.api.url>${project.basedir}/api/dataspace-events.yaml</events.api.url>
+
         <!-- oci -->
         <exec.mainClass>org.fiware.iam.Application</exec.mainClass>
         <image.registry>quay.io</image.registry>
@@ -374,6 +377,39 @@
                             <modelPackage>org.fiware.iam.cm.model</modelPackage>
                             <generateAliasAsModel>true</generateAliasAsModel>
                             <generateApiTests>true</generateApiTests>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <configOptions>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>events</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${events.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.events.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.events.model</modelPackage>
+                            <generateAliasAsModel>true</generateAliasAsModel>
+                            <generateApiTests>false</generateApiTests>
                             <generatorName>micronaut</generatorName>
                             <modelNameSuffix>VO</modelNameSuffix>
                             <output>${project.build.directory}</output>
