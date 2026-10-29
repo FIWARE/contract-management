@@ -10,7 +10,9 @@ replica (architecture D-4). The CM-5 reconciliation sweep is the backstop.
 ### Decisions (resolving the analysis questions)
 1. **Internal publish endpoint:** a Micronaut management endpoint `@Endpoint(id = "events")` with a `@Write` operation, i.e.
    `POST :9090/events`. Port 9090 is already documented as cluster-internal and unauthenticated (`/refresh` lives there). So it
-   never collides with the listener's `POST /events` on 8080 and is never exposed through the ingress.
+   never collides with the listener's `POST /events` on 8080 and is never exposed through the ingress. That holds only while
+   `endpoints.all.port` is a separate port, so a startup guard fails a publisher-enabled CM when the management port is unset or
+   equal to `micronaut.server.port` (Step 5).
 2. **`clientId`/`scopes`** live in `protocolsettings` (HTTP protocol settings: `clientId`, `scopes`). Only `protocol: HTTP` is accepted.
 3. **Internal body:** `type` (required), `subject`, `data`, and an optional `id`. CM fills `specversion=1.0`, `id` (a random UUID
    when absent), `source` (= `DataSpaceEventsProperties.ownId(...)`), `time`, `dataspaceid` and `datacontenttype=application/json`.
@@ -18,8 +20,17 @@ replica (architecture D-4). The CM-5 reconciliation sweep is the backstop.
 5. **Subscriber authentication:** reuse CM-1's `BearerVerifier` and its `dataspace.events.listener.verifier.*` configuration (shared,
    no new keys). Its `@Requires` switches from `ListenerCondition` to a new `VerifierCondition` (listener **or** publisher enabled).
 6. **Renewal:** a `POST` by the same subscriber for the same `sink` replaces that subscription in place (same id, new lease, new types).
-   The handshake runs again. Leases are always the configured TTL. The response carries `expiresAt`.
+   The handshake runs again. Leases are always the configured TTL. The response carries `expiresAt`. If the repeated handshake
+   fails, the request gets `400` and the existing subscription is kept unchanged until its old lease expires (a transient sink
+   failure must not drop a working subscription). A renewal never resets the subscription's delivery channel (Step 4).
 7. **No host is derived from the subscriber id** (D-8). The handshake and deliveries go only to the `sink` URI given in the request.
+8. **Sink trust (accepted in review):** the subscriber chooses `sink`, `clientId` and `scopes`. On a 401 from the sink, CM runs
+   OID4VP against the sink host and presents the credentials that host's DCQL requests. The x509_san_dns resolver binds the token
+   audience to that host, which limits replay but not disclosure. Sinks are not restricted to `publishers[].origin`. This trust
+   assumption is documented in the README (Step 6).
+9. **No redirects to participant-chosen hosts:** handshake and delivery use a dedicated HTTP client (`dataspace-publisher`) with
+   redirect following disabled. A 3xx counts as a failure, so a sink cannot redirect CM to an internal address and bypass the
+   handshake. Responses to the subscriber never carry the downstream status or connection error.
 
 ## Steps
 
@@ -75,11 +86,14 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - `active(type)`: unexpired subscriptions matching the type.
   - `get(id)`.
   - `@Scheduled(fixedDelay = ...)` eviction of expired leases (named constant interval).
-- `WebhookHandshake` (`@Singleton`, `HttpClient`): `Mono<Optional<Integer>> validate(URI sink)` sends `OPTIONS <sink>` with
+- `WebhookHandshake` (`@Singleton`, the `@Client("dataspace-publisher")` `HttpClient`, see Decision 9; configure
+  `micronaut.http.services.dataspace-publisher.follow-redirects: false` in `application.yaml`, or build the client from an
+  `HttpClientConfiguration` with `setFollowRedirects(false)` if service config is not picked up for an id without `url`):
+  `Mono<Optional<Integer>> validate(URI sink)` sends `OPTIONS <sink>` with
   `WebHook-Request-Origin: <publisher.origin>`. It succeeds only on a 2xx whose `WebHook-Allowed-Origin` equals the origin
   (case-insensitive) or is `*`. It then parses `WebHook-Allowed-Rate`: a positive integer, or `*`/absent for unlimited.
-  Timeouts, errors, non-2xx or a missing/non-matching origin fail with a new `WebhookHandshakeException` that keeps the cause and
-  the sink.
+  Timeouts, errors, 3xx (not followed), other non-2xx or a missing/non-matching origin fail with a new `WebhookHandshakeException`
+  that keeps the cause and the sink.
 - Header names go in a small shared constants holder (e.g. `WebhookHeaders`). `EventListener.WEBHOOK_ALLOWED_ORIGIN` moves there
   too, so receiver and publisher share them.
 - New exceptions under `exception/`, extending `ContractManagementException` with new `FailureReason` codes, following the existing
@@ -87,8 +101,10 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
 - Tests (Mockito, `@ParameterizedTest` + `@MethodSource`):
   - `SubscriptionRegistryTest`: upsert, per-subscriber and total caps, expired entries not counted/returned/delivered (fixed and
     advanced `Clock`), and delete by a non-owner.
-  - `WebhookHandshakeTest`: matching, case-differing, `*`, missing, non-matching, non-2xx, connection error, and rate parsing
-    (`120`, `*`, absent, garbage).
+  - `SubscriptionRegistryTest` also covers renewal: same id, new lease/types/rate, and no change to the stored subscription when
+    the caller does not register (failed handshake, Decision 6).
+  - `WebhookHandshakeTest`: matching, case-differing, `*`, missing, non-matching, non-2xx, a 3xx with `Location` pointing elsewhere
+    (fails, the target is never called), connection error, and rate parsing (`120`, `*`, absent, garbage).
 
 ### Step 3: Authenticated subscription controller
 - `SubscriptionController implements SubscriptionsApi`:
@@ -101,33 +117,52 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   3. `sink` must be absolute with scheme `https`, or `http` when `allowInsecureSinks` is set. `types` must be non-empty. The
      protocol must be `HTTP`. Otherwise `400`.
   4. `publisher.origin` must be configured, else `503` with an error log.
-  5. The handshake runs. A failure gives `400` with a short reason, and nothing is stored.
+  5. The handshake runs. A failure gives `400` with the generic reason `handshake failed` (no downstream status, host or
+     connection error, so the endpoint cannot be used to probe internal hosts/ports). Nothing is stored; on a renewal the existing
+     subscription stays as it was (Decision 6). The details go only into the INFO log.
   6. Register; a cap gives `409`.
   7. Return `201` with the `Subscription`.
 
   `VerifierUnavailableException` gives `503` with `Retry-After`, mirroring `EventListener`. Log once at the decision point
-  (INFO on activation and refusal: subscriber, sink, reason).
+  (INFO on activation and refusal: subscriber, sink, reason incl. the handshake cause).
 - `deleteSubscription`: a missing or invalid token gives `401`. Not found or not owned gives `404`. Otherwise `204`.
 - Tests: `SubscriptionControllerTest` (`@MicronautTest` + `TestPropertyProvider` like `EventListenerTest`, with mocked
   `BearerVerifier`/`WebhookHandshake` via `@MockBean`, or plain Mockito). Parameterized over: subscriberId mismatch → 403
-  (**acceptance**), handshake failing or non-matching origin → 400 and nothing stored (**acceptance**), insecure sink, empty types,
-  wrong protocol, cap → 409, verifier down → 503, delete by owner/non-owner/unknown.
+  (**acceptance**), handshake failing or non-matching origin → 400 with the generic body and nothing stored (**acceptance**),
+  failed renewal handshake → 400 and the old subscription (lease, types) kept, insecure sink, empty types, wrong protocol,
+  cap → 409, verifier down → 503, delete by owner/non-owner/unknown.
 
 ### Step 4: Delivery dispatcher with backoff, rate limit and metrics
 - `EventDelivery` (`@Singleton`, `PublisherCondition`): `void publish(DataSpaceEventVO event)` fans out to
   `registry.active(event.getType())` and returns immediately (best-effort, stateless, D-4).
 - Each subscription has its own `SubscriptionChannel`: a bounded `Sinks.many().unicast()` queue of size `delivery.queueSize`,
-  drained with `concatMap`. One subscriber's slow or failing deliveries therefore never block the others. The channel paces sends to
-  `allowedRate` (minimum interval = 60s / rate between send starts, including retries), so the granted rate is never exceeded.
-  Channels are created lazily, and disposed when the subscription is removed, expires or is replaced.
+  drained with `concatMap`. One subscriber's slow or failing deliveries therefore never block the others.
+- Rate limit: the channel owns a pacer that enforces the minimum interval 60s / `allowedRate` between **HTTP requests to the sink**,
+  not between events. The pacer is applied inside the `executor` function passed to `executeWithAuth`, so the unauthenticated
+  first POST, the POST after the OID4VP token fetch and every backoff retry each wait for a slot. `Oid4VpAuthHandler` caches no
+  token, so an OID4VP-protected sink sees 2 requests per event; pacing per request keeps the granted rate regardless. (A token
+  cache per sink origin/clientId/scopes would halve the requests but changes `Oid4VpAuthHandler`; out of scope here.)
+- Channel lifecycle: keyed by subscription id, created lazily, and disposed only when the subscription is removed (DELETE, 410) or
+  expires. A renewal keeps the same id and the same channel: queued events stay queued and the pacer keeps its state. The channel
+  reads the current `Subscription` (lease, types, rate, clientId/scopes) from the registry before each attempt, so a renewal takes
+  effect in place.
 - One delivery attempt:
   - `Mono.defer` builds a new `HttpRequest.POST(sink, event)` with content type `application/cloudevents+json` and the
     `WebHook-Request-Origin` header.
   - It sets `CLIENT_ID_ATTRIBUTE` and `SCOPE_ATTRIBUTE` (a `Set`) from the subscription and sends via
     `Optional<AuthHandler>.executeWithAuth`, or a plain `httpClient.exchange` when no handler exists (exactly as in
-    `ContractManagementAdapter`). A 401 thus triggers one OID4VP token fetch and a retry inside the handler.
+    `ContractManagementAdapter`). A 401 thus triggers one OID4VP token fetch and a retry inside the handler. The executor is the
+    paced `dataspace-publisher` client (no redirects, Decision 9).
+- Errors arrive in several shapes, and all of them are classified by one function into a status (or none):
+  - a returned `HttpResponse` (first call inside `executeWithAuth`, which turns the first `HttpClientResponseException` into a
+    response);
+  - a thrown `HttpClientResponseException` (the second call after the token fetch is not wrapped, and the plain
+    `httpClient.exchange` branch throws on every error status): use `getStatus()`;
+  - `BadGatewayException` (transport error on the first call, or a failed token fetch): no status, retryable;
+  - any other exception (connection refused, timeout): no status, retryable.
 - Outcome mapping:
   - 2xx: delivered.
+  - 3xx: not followed; treated as a non-retryable failure.
   - `410 Gone`: remove the subscription (CloudEvents webhook unsubscribe).
   - 5xx, 408, 429, `BadGatewayException` or a connection error: retry with
     `Retry.backoff(maxAttempts - 1, initialBackoff).maxBackoff(maxBackoff)`.
@@ -143,8 +178,12 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - A 503 sequence retries up to `maxAttempts`, then drops and counts.
   - 400 gets no retry; 410 removes the subscription; an expired lease is not delivered.
   - A permanently failing (hanging/500) subscriber does not delay delivery to a healthy one (**acceptance**).
-  - With `allowedRate`, N events are not sent faster than the granted interval (**acceptance**).
-  - Parameterize the status → outcome mapping.
+  - With `allowedRate`, an OID4VP-protected sink (401 → token → 2xx per event) is not called more often than the granted rate:
+    the test counts **requests at the sink**, not events (**acceptance**).
+  - A renewal while events are queued keeps the queue and the pacing (no event lost, no burst).
+  - Parameterize the status → outcome mapping over both shapes: returned responses and thrown `HttpClientResponseException`s,
+    including the paths 401 → token → 503 (retried), 401 → token → 410 (removed), 401 → token → 401 (failed, no retry), a token
+    fetch failure (`BadGatewayException`, retried), and the no-`AuthHandler` branch throwing on 5xx/410.
 
 ### Step 5: Internal publish endpoint
 - `PublishEndpoint`: `@Endpoint(id = "events", defaultSensitive = false)` with `@Requires(condition = PublisherCondition.class)`,
@@ -155,10 +194,17 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - A blank `type` gives a `400`.
 - If Micronaut endpoint body binding cannot carry an untyped `data` value, fall back to a `@Controller` under `/internal/events`
   plus a filter that rejects requests whose local port is not the management port. Note the fallback in the PR.
-- `src/main/resources/application.yaml`: add `endpoints.events.enabled: true` / `sensitive: false` next to `refresh`, and a
-  commented `dataspace.events.publisher` sample next to the existing commented `dataspace.events` block.
+- `ManagementPortGuard` (`@Context`, `@Requires(condition = PublisherCondition.class)`): at startup, reads `endpoints.all.port`
+  and `micronaut.server.port` (default `8080`) and throws a `ConfigurationException` when the management port is unset or equals
+  the server port. The unauthenticated publish endpoint would otherwise move to the public port, collide with the listener's
+  `POST /events` and be reachable through the ingress. The exception message names both ports.
+- `src/main/resources/application.yaml`: add `endpoints.events.enabled: true` / `sensitive: false` next to `refresh`, a commented
+  `dataspace.events.publisher` sample next to the existing commented `dataspace.events` block, and the `dataspace-publisher`
+  client settings (`follow-redirects: false`, timeouts).
 - Tests: `PublishEndpointTest` (`@MicronautTest`, publisher enabled, mocked `EventDelivery`) checks the envelope fields filled by CM
   (source = own id, dataspaceid, specversion, generated id, time), an explicit id kept, and a missing type → 400.
+- `ManagementPortGuardTest`: parameterized `ApplicationContext.run(...)` with the publisher enabled: management port unset → startup
+  fails; equal to the server port → fails; distinct → starts. With the publisher disabled, an unset management port still starts.
 
 ### Step 6: Documentation and verification
 - `README.md`: add a `#### Publishing events` subsection under `### Data space events` covering:
@@ -169,7 +215,12 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - Renewal by re-POSTing; lease expiry.
   - Delivery semantics: best-effort, backoff and attempts, 401 → OID4VP, 410 unsubscribes, metric `dataspace.events.delivered`.
   - In-memory, single replica, lost on restart.
-  - The internal `POST :9090/events` with a curl example; keep 9090 cluster-internal.
+  - The internal `POST :9090/events` with a curl example; keep 9090 cluster-internal. The publisher refuses to start when
+    `endpoints.all.port` is unset or equal to the server port.
+  - Security notes: the sink trust assumption from Decision 8 (CM presents its OID4VP credentials to the subscriber-chosen sink
+    host; audience-bound but disclosed), redirects are never followed, and a failed handshake is reported only as
+    `handshake failed`.
+  - Rate limiting counts HTTP requests (an OID4VP-protected sink sees two per event without a cached token).
   - The verifier config is shared with the listener.
 - Update the refresh paragraph: `publisher.enabled` is startup-only, all other `publisher.*` values are refreshable.
 - Update `AGENTS.md` (project structure: the new classes in `dataspace/`, the `subscriptions` tag in `dataspace-events.yaml`).
