@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: Data Space Events API
+  description: Receiving endpoint for data space events, delivered as CloudEvents 1.0 (structured mode) via the CloudEvents
+    HTTP webhook binding.
+  version: 0.0.1
+tags:
+  - name: events
+paths:
+  /events:
+    post:
+      tags:
+        - events
+      operationId: receiveEvent
+      summary: Receive a data space event
+      description: Accepts a CloudEvent from an authorized data space participant. The bearer token issued by the verifier
+        identifies the participant, which has to match the event source.
+      security:
+        - bearerAuth: [ ]
+      requestBody:
+        required: true
+        content:
+          application/cloudevents+json:
+            schema:
+              $ref: '#/components/schemas/DataSpaceEvent'
+      responses:
+        '202':
+          description: The event was accepted. Also returned for duplicates, unknown types and events about the receiver itself.
+        '400':
+          description: The event is malformed.
+        '401':
+          description: No valid bearer token was presented.
+        '403':
+          description: The participant is not allowed to publish this event.
+        '415':
+          description: The request is not a structured-mode CloudEvent.
+        '500':
+          description: The event could not be handled. The publisher may retry.
+        '503':
+          description: An event with the same source and id is still being processed. The publisher should retry later.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+    options:
+      tags:
+        - events
+      operationId: validateWebhook
+      summary: CloudEvents webhook validation
+      description: Abuse protection handshake of the CloudEvents HTTP webhook specification.
+      parameters:
+        - name: WebHook-Request-Origin
+          in: header
+          required: false
+          description: DNS name of the sender asking for permission to deliver events.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lists the allowed methods and, if the requesting origin is a configured publisher, the allowed origin.
+          headers:
+            Allow:
+              description: Methods allowed on the endpoint.
+              schema:
+                type: string
+            WebHook-Allowed-Origin:
+              description: The origin that is allowed to deliver events.
+              schema:
+                type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    DataSpaceEvent:
+      type: object
+      description: CloudEvents 1.0 envelope of a data space event.
+      properties:
+        specversion:
+          type: string
+          enum:
+            - '1.0'
+        id:
+          type: string
+          description: Unique per source.
+          example: 4f1c3a1e-5d0b-4d7e-9a43-2a8b0f6c9e11
+        source:
+          type: string
+          description: Participant id of the publisher.
+          example: did:web:provider.org
+        type:
+          type: string
+          example: org.fiware.dataspace.example
+        subject:
+          type: string
+          description: Participant id the event is about.
+          example: did:web:consumer.org
+        time:
+          type: string
+          format: date-time
+          example: '2026-07-21T17:32:28Z'
+        datacontenttype:
+          type: string
+          example: application/json
+        dataschema:
+          type: string
+        dataspaceid:
+          type: string
+          description: Extension attribute identifying the data space the event belongs to.
+        data:
+          description: Event payload, any JSON value. Interpreted by the handler of the event type.
+      required:
+        - specversion
+        - id
+        - source
+        - type

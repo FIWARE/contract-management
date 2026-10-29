@@ -3,7 +3,7 @@
 ## Overview
 Add the receiving half of the data space event channel to contract-management. This means an OpenAPI-first CloudEvents endpoint
 (`POST`/`OPTIONS /events`), the authorization that makes it safe, a dispatch registry `DataSpaceEventHandler`, deduplication, and a
-`@Refreshable` `dataspace.events.*` configuration that is reloaded through `/refresh` and a file watch, without a restart. No concrete
+refreshable `dataspace.events.*` configuration that is reloaded through `/refresh` and a file watch, without a restart. No concrete
 event handler is part of this ticket; CM-2 (#100) adds the first one.
 
 ### Design decisions and assumptions (the design docs in data-space-connector were not reachable while planning)
@@ -33,7 +33,7 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   or timeout), the entry is removed so the next retry is processed; `complete` only turns an existing `IN_FLIGHT` into `DONE`
   (`asMap().replace(key, IN_FLIGHT, DONE)`), so it cannot resurrect an entry that eviction already dropped.
   `dedup.max-entries` and `dedup.ttl` are refreshable without depending on `RefreshEvent` listener order: on each `begin()` the
-  deduplicator compares the current values (read through the refreshable proxy) with the last values it applied, and on a change
+  deduplicator compares the current values (read through the injected properties bean) with the last values it applied, and on a change
   applies them to the live cache through Caffeine's `policy()` (`eviction().setMaximum`, `expireAfterWrite().setExpiresAfter`),
   keeping the existing entries.
 - **`dataspaceid`**: optional in the schema. If both the event and `dataspace.events.dataspace-id` carry one and they differ → `403`.
@@ -68,8 +68,11 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   `modelPackage` `org.fiware.iam.events.model`.
 - Jackson only decodes `application/json` by default. Register the CloudEvents media type in `src/main/resources/application.yaml`
   (`micronaut.codec.json.additional-types: [application/cloudevents+json]`).
-- New `org.fiware.iam.configuration.DataSpaceEventsProperties`: a `@Refreshable @ConfigurationProperties("dataspace.events")` Lombok
-  `@Data` class (mutable, because refresh rebinds it). Fields:
+- New `org.fiware.iam.configuration.DataSpaceEventsProperties`: a `@ConfigurationProperties("dataspace.events")` Lombok
+  `@Data` class (mutable, because refresh rebinds it). *Plan update (step 1):* no `@Refreshable` — Micronaut generates no scoped
+  proxy for a `@ConfigurationProperties` class, but its refresh scope rebinds `@ConfigurationProperties` singletons in place on every
+  `RefreshEvent`, which gives the same effect. A key *removed* from the config keeps its previous value (set it empty instead);
+  readers treat blank values as unset. Fields:
   - `dataspaceId` (`@Nullable`)
   - `ownParticipantId` (`@Nullable`)
   - `listener` with:
@@ -82,7 +85,7 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 
   Helper methods: `isAuthorized(publisherId, type)`, `allowedOrigin(requestOrigin)` (returns the configured origin, matched
   case-insensitively because it is a DNS name) and `ownId(GeneralProperties)`. Every reader must
-  go through the injected proxy on each request and never copy the publisher list into a singleton field, or refresh has no effect.
+  go through the injected bean on each request and never copy the publisher list into a singleton field, or refresh has no effect.
 - Conditions in the style of `GeneralProperties.CentralMarketplaceCondition`: `DataSpaceEventsProperties.ListenerCondition`
   (`listener.enabled`) and `WatchCondition` (`listener.watch.enabled`). With the listener enabled, a missing `verifier.audience` or
   `verifier.jwks-url` fails startup rather than silently disabling the listener: `BearerVerifier` is `@Context` (eager, like
@@ -186,7 +189,7 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   `@Options("/events")` method. First verify with a minimal test that the route is actually reached in Micronaut 4.7 and not
   answered by the server's built-in OPTIONS handling (`micronaut.server.dispatch-options-requests` / CORS); set what is needed so it
   is. The response always carries `Allow: POST`. When `WebHook-Request-Origin` matches the `origin` of a configured publisher
-  (`allowedOrigin`, case-insensitive because it is a DNS name, read through the refreshable proxy), it also carries
+  (`allowedOrigin`, case-insensitive because it is a DNS name, read through the injected properties bean), it also carries
   `WebHook-Allowed-Origin: <the configured origin>`. Otherwise that header is absent. No bearer is required, because the handshake is
   unauthenticated by spec. Header names are constants.
 - Tests: in `EventListenerTest` (or `EventListenerOptionsTest`), a `@ParameterizedTest` over a configured origin, an unconfigured
