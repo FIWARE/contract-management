@@ -29,9 +29,13 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - **Dedup cache**: an entry is written only *after* authorization, so an unauthenticated caller cannot burn a legitimate event id.
   An entry is `IN_FLIGHT` while the handler runs and `DONE` afterwards. A retry of a `DONE` event gets `202` (`duplicate`); a retry
   that arrives while the first attempt is still `IN_FLIGHT` gets `503` with `Retry-After` (retryable per the CloudEvents webhook
-  spec), so it is not lost if the first attempt then fails. If the handler fails, the entry is removed so the next retry is processed.
-  `dedup.max-entries` and `dedup.ttl` are refreshable: on `RefreshEvent` the deduplicator applies them to the live cache through
-  Caffeine's `policy()` (`eviction().setMaximum`, `expireAfterWrite().setExpiresAfter`), keeping the existing entries.
+  spec), so it is not lost if the first attempt then fails. If the handler fails, or the request is cancelled (publisher disconnect
+  or timeout), the entry is removed so the next retry is processed; `complete` only turns an existing `IN_FLIGHT` into `DONE`
+  (`asMap().replace(key, IN_FLIGHT, DONE)`), so it cannot resurrect an entry that eviction already dropped.
+  `dedup.max-entries` and `dedup.ttl` are refreshable without depending on `RefreshEvent` listener order: on each `begin()` the
+  deduplicator compares the current values (read through the refreshable proxy) with the last values it applied, and on a change
+  applies them to the live cache through Caffeine's `policy()` (`eviction().setMaximum`, `expireAfterWrite().setExpiresAfter`),
+  keeping the existing entries.
 - **`dataspaceid`**: optional in the schema. If both the event and `dataspace.events.dataspace-id` carry one and they differ → `403`.
   Otherwise no check.
 - **Rejections** are authorization decisions, not downstream failures. They are returned as a decision enum and logged once at WARN
@@ -43,6 +47,11 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   `micronaut.metrics.enabled`, but micrometer is not a dependency yet.
 - **`/refresh` exposure**: `endpoints.refresh.sensitive: false` leaves `POST :9090/refresh` open to anything that reaches the
   management port. The reviewer accepted this; the README states the exposure and recommends keeping 9090 cluster-internal.
+- **Startup-only switches**: `listener.enabled` and `listener.watch.enabled` drive startup-time `Condition`s, so they are *not*
+  refreshable; turning the listener or the watch on or off needs a restart. Everything else under `dataspace.events.*` is refreshable.
+  The README says so.
+- **No blocking on the event loop**: Nimbus fetches the JWKS with blocking I/O (on a cache miss and on an unknown `kid`), so bearer
+  verification runs on `Schedulers.boundedElastic()` (`Mono.fromCallable(..).subscribeOn(..)`), never on a Netty event-loop thread.
 
 ## Steps
 
@@ -76,8 +85,10 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   go through the injected proxy on each request and never copy the publisher list into a singleton field, or refresh has no effect.
 - Conditions in the style of `GeneralProperties.CentralMarketplaceCondition`: `DataSpaceEventsProperties.ListenerCondition`
   (`listener.enabled`) and `WatchCondition` (`listener.watch.enabled`). With the listener enabled, a missing `verifier.audience` or
-  `verifier.jwks-url` fails startup (`@PostConstruct` check in `BearerVerifier`, throwing a `ConfigurationException`) rather than
-  silently disabling the listener.
+  `verifier.jwks-url` fails startup rather than silently disabling the listener: `BearerVerifier` is `@Context` (eager, like
+  `NotificationSubscriber`; Micronaut singletons are otherwise created on first use), and its `@PostConstruct` throws a
+  `ConfigurationException`. A refresh that later blanks either value makes verification fail closed (every request `401`, logged at
+  ERROR), since a refresh cannot abort a running service.
 - Add a commented example `dataspace:` block to `src/main/resources/application.yaml`, and add rows to the README configuration table.
 - Tests: `DataSpaceEventsPropertiesTest`, a parameterized test of binding and the helpers (`isAuthorized`/`allowedOrigin` over
   configured, unconfigured, type-not-listed and case-variant cases; `ownId` fallback to `general.did`). `mvn clean package -DskipTests` must
@@ -85,9 +96,10 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - **Acceptance:** the build generates the new API, the config binds, and the tests pass. No controller exists yet.
 
 ### Step 2: Bearer verification against the verifier JWKS
-- New `org.fiware.iam.dataspace.BearerVerifier` (`@Singleton`, `@Requires(condition = ListenerCondition.class)`).
+- New `org.fiware.iam.dataspace.BearerVerifier` (`@Context`, `@Requires(condition = ListenerCondition.class)`).
   `Optional<String> participantIdOf(String authorizationHeader)` strips `Bearer `, then verifies the token with Nimbus
-  `DefaultJWTProcessor`:
+  `DefaultJWTProcessor`. The method may block (JWKS fetch), which its Javadoc states; callers run it off the event loop (Step 4).
+  It checks:
   - the signature against a `JWKSource` built with `JWKSourceBuilder` (cached, refreshed on an unknown `kid`) from the current
     `verifier.jwksUrl`, re-created when the URL changes after a refresh;
   - a `JWSVerificationKeySelector` over the explicit `verifier.algorithms` set, never the algorithms the JWKS advertises;
@@ -100,7 +112,8 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - Isolate JWK source creation behind a small package-private factory, so that tests can inject an `ImmutableJWKSet`.
 - Tests: `BearerVerifierTest`, a `@ParameterizedTest` that signs tokens with a generated EC key. Cases: valid; expired; wrong key;
   unknown `kid`; `alg: none`; an algorithm outside `verifier.algorithms`; wrong `iss`; no `aud`; other `aud`; missing participant
-  claim; non-string participant claim; missing or malformed header. Plus a startup test: listener enabled without `audience` fails.
+  claim; non-string participant claim; missing or malformed header. Plus a startup test: `ApplicationContext.run(...)` with the
+  listener enabled and no `audience` (and, separately, no `jwks-url`) throws, without any `getBean` call.
 - **Acceptance:** only a token signed by a key from the configured JWKS with an allowed algorithm, valid time claims, our audience
   and a participant claim produces a participant id.
 
@@ -129,15 +142,19 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - New interface `org.fiware.iam.dataspace.DataSpaceEventHandler`, mirroring `TMForumEventHandler`:
   `boolean isEventTypeSupported(String type)` and `Mono<Void> handleEvent(DataSpaceEventVO event)`.
 - New `org.fiware.iam.dataspace.EventDeduplicator` (`@Singleton`). A Caffeine cache bounded by `dedup.maxEntries` with
-  `expireAfterWrite(dedup.ttl)`, keyed by the record `(source, id)`, valued `IN_FLIGHT`/`DONE`. `Seen begin(key)` uses an atomic
-  `putIfAbsent` and returns `NEW`, `IN_FLIGHT` or `DONE`; `complete(key)` marks it `DONE`; `forget(key)` removes it after a handler
-  failure. An `ApplicationEventListener<RefreshEvent>` applies changed `maxEntries`/`ttl` to the live cache via `policy()`.
+  `expireAfterWrite(dedup.ttl)`, keyed by the record `(source, id)`, valued `IN_FLIGHT`/`DONE`. `Seen begin(key)` first applies
+  changed `maxEntries`/`ttl` (see Overview), then uses an atomic `putIfAbsent` and returns `NEW`, `IN_FLIGHT` or `DONE`;
+  `complete(key)` does `asMap().replace(key, IN_FLIGHT, DONE)`; `forget(key)` removes it. No `RefreshEvent` listener, so there is no
+  dependency on the order in which `RefreshScope` and other listeners run.
 - New `org.fiware.iam.dataspace.EventListener`: `@Controller("${general.basepath:/}")`, `@Requires(condition = ListenerCondition.class)`,
   implements the generated `EventsApi` POST. It injects `List<DataSpaceEventHandler>`, `BearerVerifier`, `EventAuthorizer`,
-  `EventDeduplicator` and `MeterRegistry`. Flow: authorize → on `ACCEPT`/`SELF` dedup (`DONE` → `202 duplicate`, `IN_FLIGHT` →
+  `EventDeduplicator` and `MeterRegistry`. Flow: verify the bearer via
+  `Mono.fromCallable(() -> bearerVerifier.participantIdOf(header)).subscribeOn(Schedulers.boundedElastic())` (never on the event
+  loop) → authorize → on `ACCEPT`/`SELF` dedup (`DONE` → `202 duplicate`, `IN_FLIGHT` →
   `503` + `Retry-After` named constant, `in_flight`) → `SELF` logs at INFO
-  (`Data space event <id> from <source> is about this participant, not acted on.`) → dispatch → `202`. On handler error: `forget`,
-  log the WARN once with `DownstreamError.reason(e)` and the exception attached, and return `500`. Every path increments
+  (`Data space event <id> from <source> is about this participant, not acted on.`) → dispatch → `202`. After `begin` returned
+  `NEW`, a `doFinally` on the signal type settles the entry: `ON_COMPLETE` → `complete`, `ON_ERROR`/`CANCEL` → `forget`. On handler
+  error it also logs the WARN once with `DownstreamError.reason(e)` and the exception attached, and returns `500`. Every path increments
   `dataspace.events.received{type,outcome}`, with `type` = the event type if a handler supports it, else `other`. Rejections log
   one WARN line.
 - Tests: `EventListenerTest` as a `@MicronautTest` with `dataspace.events.listener.enabled=true`. A test-only
@@ -153,11 +170,14 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   - unknown and rejected events with random type names → counted under `type=other`, no new meter per name
   - self subject → `202`, `self` counter +1, not handled
   - handler failure followed by a retry → handled twice
+  - cancellation while the handler runs (the controller `Mono` is subscribed directly and disposed while the test handler blocks)
+    → the dedup entry is gone and the next retry is handled, not answered with `503`
   - `application/json` instead of `application/cloudevents+json` → `415`
 
   Also check that existing tests stay green while the listener is disabled (the default).
-- `EventDeduplicatorTest`: begin/complete/forget transitions, and after a refresh that lowers `max-entries`/`ttl` the live cache
-  uses the new values.
+- `EventDeduplicatorTest`: begin/complete/forget transitions; `complete` after eviction does not re-add the entry; and, through a
+  real `ApplicationContext` (`Environment#refreshAndDiff()` + `RefreshEvent`, as `/refresh` does), a refresh that lowers
+  `max-entries`/`ttl` makes the live cache use the new values on the next `begin`.
 - Update `AGENTS.md`: add `dataspace/` to the structure, and document the micrometer and caffeine dependencies.
 - **Acceptance:** all `POST /events` rows of the ticket acceptance pass over HTTP. `mvn test` is green.
 
@@ -183,13 +203,18 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   `@Requires(condition = WatchCondition.class)`. It does what Micronaut's `RefreshEndpoint` does: call
   `Environment#refreshAndDiff()` (a bare `RefreshEvent` would only rebind beans from the stale Environment), and if the diff is
   non-empty publish `new RefreshEvent(diff)` through `ApplicationEventPublisher`. Debounce it with a named constant window, because a
-  Kubernetes ConfigMap update is an atomic `..data` symlink swap that emits several events.
+  Kubernetes ConfigMap update is an atomic `..data` symlink swap that emits several events. It must **not** filter on the config
+  file name: in a directory-mounted ConfigMap the events concern `..data` and `..<timestamp>` entries, while `application.yaml` is a
+  symlink that never changes itself. Any event under the watched path triggers the (debounced) `refreshAndDiff()`; an empty diff
+  makes that a no-op.
 - Tests: `DataSpaceEventsRefreshTest`, a surefire test that starts a real `ApplicationContext` + `EmbeddedServer`
   (`micronaut.config.files` points at a temp YAML file; the test JWKS controller from Step 4). Steps:
   1. Publisher B → `403`.
   2. Add B to the file, then `POST http://localhost:<management-port>/refresh`.
   3. B → `202`.
-  4. Add publisher C with the watch enabled, without calling `/refresh`.
+  4. Add publisher C with the watch enabled, without calling `/refresh`. The test lays the directory out like kubelet does
+     (`..<timestamp>/application.yaml`, a `..data` symlink to it, and `application.yaml` → `..data/application.yaml`) and applies the
+     update as a new `..<timestamp>` directory plus an atomic rename of the `..data` symlink, so a file-name filter would fail it.
   5. Awaitility until C → `202`.
   6. Add an origin and check that `OPTIONS` now grants it.
 
@@ -198,8 +223,12 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   `subPath`) with `MICRONAUT_CONFIG_FILES=/config/application.yaml`, and enables the listener, `/refresh` and the watch on `/config`.
   New `k3s/events-jwks.yaml`: a static JWKS served by nginx from a ConfigMap; the matching private key lives in
   `src/test/resources/dataspace/` so the IT can sign participant tokens.
+- `pom.xml` k3s plugin: add `<portBinding>9090:9090</portBinding>` (CM management; the CM `LoadBalancer` service already exposes
+  9090, and no other service binds it on the host). fabric8 reads the kubeconfig that the k3s plugin writes (its `kubeconfig`
+  parameter, default `${project.build.directory}/k3s.yaml`; confirm for plugin 2.0.1). The in-container profile passes that path to
+  failsafe as the system property `k3s.kubeconfig` in its `systemPropertyVariables`, so the IT does not hard-code a path.
 - New `InContainerDataSpaceEventsIT` (profile in-container). It patches the `contract-management-provider` ConfigMap through the
-  k3s kubeconfig (fabric8 `kubernetes-client`, test scope):
+  kubeconfig from `k3s.kubeconfig` (fabric8 `kubernetes-client`, test scope):
   1. Publisher B → `403`.
   2. Add B to the ConfigMap, then `POST /refresh` on 9090; Awaitility until B → `202` (kubelet propagates the change with a delay).
   3. Add publisher C to the ConfigMap without calling `/refresh`; Awaitility (timeout a named constant above the kubelet sync
@@ -207,8 +236,12 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 
   This IT is the acceptance evidence that a publisher added to the ConfigMap is accepted without a restart.
 - README: add a "Data space events" section with the config keys, the endpoint, the authorization order, the metric, the refresh
-  options, that `/refresh` on 9090 is unauthenticated, the verifier settings it needs (`participantId` claim, CM audience), and the
+  options, that `/refresh` on 9090 is unauthenticated, that `listener.enabled`/`listener.watch.enabled` need a restart (startup-time
+  conditions) while the rest is refreshable, the verifier settings it needs (`participantId` claim, CM audience), and the
   warning that the ConfigMap must be mounted as a directory, **not** with `subPath`, because kubelet never updates
   `subPath` mounts. The Helm side is DSC-1 (#102).
+- `AGENTS.md`: change the `k3s/*.yaml` line from "CM config is a ConfigMap mounted via subPath" to "mounted as a directory at
+  `/config` (no subPath, so refresh/watch see updates)", and list `InContainerDataSpaceEventsIT`, the `k3s.kubeconfig` property and
+  the 9090 port binding.
 - **Acceptance:** the embedded test and the in-container IT pass for both paths. `mvn test` and `mvn clean package` are green. README and `AGENTS.md`
   describe the feature.
