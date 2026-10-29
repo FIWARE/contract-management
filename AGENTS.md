@@ -27,8 +27,11 @@ src/main/java/org/fiware/iam/
     NotificationConfig.java         # Notification entity subscriptions
     NotificationProperties.java     # Notification host/timing config
     EventType.java                  # Notification event type enum
+    DataSpaceEventsProperties.java  # dataspace.events.* (refreshable; read via the bean on every use), startup Conditions
   domain/
     ContractManagement.java         # Core domain interface
+  dataspace/                        # Data space eventing: EventListener (POST/OPTIONS /events), BearerVerifier
+                                    # (verifier JWT -> participant id), EventAuthorizer, EventDeduplicator, refresh/watch
   dsp/                              # DSP / Rainbow adapter integration
   http/
     Oid4VpAuthHandler.java          # OID4VP authentication filter
@@ -59,6 +62,7 @@ src/test/resources/
 
 api/
   contract-management.yaml          # OpenAPI of CM's own API -> generated org.fiware.iam.cm.api/.model (*VO)
+  dataspace-events.yaml             # Data space events API -> org.fiware.iam.events.api/.model (DataSpaceEventVO)
   rainbow.yaml                      # Rainbow client spec -> org.fiware.rainbow.*
 ```
 
@@ -89,7 +93,10 @@ mvn test -Dtest=TMForumAdapterTest
 - Controllers: `@Controller("${general.basepath:/}")`, guarded by `@Requires(condition = ...)`; Lombok `@RequiredArgsConstructor` + `@Slf4j`
 - Handler registries: `List<XxxHandler>` injected, dispatch via `isEventTypeSupported` (see `NotificationListener` / `TMForumEventHandler`)
 - Unit tests use Mockito mocks and JUnit 5 `@ParameterizedTest` + `@MethodSource`; integration tests use k3s (k3s-maven-plugin)
-- Management endpoints (micronaut-management) listen on port 9090
+- Management endpoints (micronaut-management) listen on port 9090 (cluster-internal, unauthenticated; `/refresh` lives there)
+- Outbound authenticated calls: set `Oid4VpAuthHandler.CLIENT_ID_ATTRIBUTE`/`SCOPE_ATTRIBUTE` (a `Set`) on the request and
+  call `Optional<AuthHandler>.executeWithAuth` (see `ContractManagementAdapter`); a 401 triggers one OID4VP token fetch + retry
+- Metrics: inject `Optional<MeterRegistry>`, fall back to `CompositeMeterRegistry` (see `EventListener`); bounded tag values
 - Doc-comment density is low: one-line Javadoc on classes/interfaces and interface methods, Javadoc on configuration
   fields; most implementation methods have none. Match that — do not add `@param`/`@return` blocks
 - Logging: failures are raised as `ContractManagementException` subclasses with a `FailureReason` code and the ids involved,
