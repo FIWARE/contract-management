@@ -9,13 +9,15 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 ### Design decisions and assumptions (the design docs in data-space-connector were not reachable while planning)
 - **New code** lives in package `org.fiware.iam.dataspace` (config in `org.fiware.iam.configuration`). The generated API goes to
   `org.fiware.iam.events.api` / `org.fiware.iam.events.model` (suffix `VO`).
-- **Holder identifier**: the claim of the verified token that carries the participant identifier is configurable as a dot path
-  (`dataspace.events.listener.verifier.holder-claim`, default `sub`). If architecture §6 names a different claim, change only the default.
-- **Own identifier** (`subject` self-check): `dataspace.events.participant-id`, falling back to `general.did`.
+- **Participant id** (the acting organization, not the credential holder): extracting it from the presented credentials is the
+  verifier's job; the verifier writes it into its JWT under a claim of our choosing. CM reads that one top-level claim, configurable
+  as `dataspace.events.listener.verifier.participant-claim` (default `participantId`; the verifier must be configured to emit it,
+  DSC-1 #102). There is no dot-path walking into credential structures. Code and docs say "participant id", never "holder".
+- **Own identifier** (`subject` self-check): `dataspace.events.own-participant-id`, falling back to `general.did`.
 - **Check order** (architecture §6 plus the acceptance criteria):
   1. Verify the bearer (`401` if missing or invalid).
-  2. Read the holder identifier (`401` if absent).
-  3. Require `source == holder` (`403`).
+  2. Read the participant id claim (`401` if absent).
+  3. Require `source == participant id` (`403`).
   4. If no `DataSpaceEventHandler` supports the type: `202` and count it as `unknown_type`.
   5. Require the `(publisher id, type)` pair to be configured (`403`).
   6. Deduplicate on `(source, id)`; a replay gets `202` and is not dispatched.
@@ -24,15 +26,23 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 
   The acceptance criterion says "a *known* type from an unconfigured publisher gets 403", so the unknown-type branch must sit before
   the pair check. An unknown type does nothing, so placing it there opens no bypass.
-- **Dedup cache**: an entry is written only *after* authorization, so an unauthenticated caller cannot burn a legitimate event id. If
-  the handler fails, the entry is removed again so the publisher's retry is processed.
+- **Dedup cache**: an entry is written only *after* authorization, so an unauthenticated caller cannot burn a legitimate event id.
+  An entry is `IN_FLIGHT` while the handler runs and `DONE` afterwards. A retry of a `DONE` event gets `202` (`duplicate`); a retry
+  that arrives while the first attempt is still `IN_FLIGHT` gets `503` with `Retry-After` (retryable per the CloudEvents webhook
+  spec), so it is not lost if the first attempt then fails. If the handler fails, the entry is removed so the next retry is processed.
+  `dedup.max-entries` and `dedup.ttl` are refreshable: on `RefreshEvent` the deduplicator applies them to the live cache through
+  Caffeine's `policy()` (`eviction().setMaximum`, `expireAfterWrite().setExpiresAfter`), keeping the existing entries.
 - **`dataspaceid`**: optional in the schema. If both the event and `dataspace.events.dataspace-id` carry one and they differ → `403`.
   Otherwise no check.
 - **Rejections** are authorization decisions, not downstream failures. They are returned as a decision enum and logged once at WARN
   in the controller (one line with source, id, type and reason); they are not thrown as `ContractManagementException`.
 - **Metrics**: a Micrometer counter `dataspace.events.received`, tagged with `type` and `outcome`. The outcomes are `accepted`,
-  `duplicate`, `unknown_type`, `self`, `unauthenticated`, `source_mismatch`, `publisher_not_authorized`, `dataspace_mismatch` and
-  `handler_failed`. The README already advertises `micronaut.metrics.enabled`, but micrometer is not a dependency yet.
+  `duplicate`, `in_flight`, `unknown_type`, `self`, `unauthenticated`, `source_mismatch`, `publisher_not_authorized`,
+  `dataspace_mismatch` and `handler_failed`. The `type` tag carries the event type only if a registered `DataSpaceEventHandler`
+  supports it, and the constant `other` otherwise, so callers cannot create unbounded meters/series. The README already advertises
+  `micronaut.metrics.enabled`, but micrometer is not a dependency yet.
+- **`/refresh` exposure**: `endpoints.refresh.sensitive: false` leaves `POST :9090/refresh` open to anything that reaches the
+  management port. The reviewer accepted this; the README states the exposure and recommends keeping 9090 cluster-internal.
 
 ## Steps
 
@@ -40,7 +50,8 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - Add `api/dataspace-events.yaml` (OpenAPI 3.0.3, same style as `api/contract-management.yaml`):
   - `POST /events`, request body `application/cloudevents+json` → schema `DataSpaceEvent`. Required fields: `specversion` (enum
     `1.0`), `id`, `source`, `type`. Optional fields: `subject`, `time` (date-time), `datacontenttype`, `dataschema`, `dataspaceid`,
-    `data` (free-form object). Responses: `202`, `400`, `401`, `403`, `415`. Bearer `securitySchemes`.
+    `data` (free-form object). Responses: `202`, `400`, `401`, `403`, `415`, `500`, `503` (with `Retry-After`). Bearer
+    `securitySchemes`.
   - `OPTIONS /events`, header parameter `WebHook-Request-Origin` (optional). Response `200` with headers `Allow`,
     `WebHook-Allowed-Origin`.
 - `pom.xml`: add property `<events.api.url>${project.basedir}/api/dataspace-events.yaml</events.api.url>` and an
@@ -51,51 +62,57 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - New `org.fiware.iam.configuration.DataSpaceEventsProperties`: a `@Refreshable @ConfigurationProperties("dataspace.events")` Lombok
   `@Data` class (mutable, because refresh rebinds it). Fields:
   - `dataspaceId` (`@Nullable`)
-  - `participantId` (`@Nullable`)
+  - `ownParticipantId` (`@Nullable`)
   - `listener` with:
     - `enabled` (default false)
-    - `verifier` with `jwksUrl`, `@Nullable issuer`, `@Nullable audience`, `holderClaim = "sub"`
+    - `verifier` with `jwksUrl`, `@Nullable issuer`, `audience` (required when the listener is enabled), `participantClaim =
+      "participantId"`, and `algorithms` (allowed JWS algorithms, default the named constant set `ES256`, `RS256`)
     - `dedup` with `maxEntries` and a `ttl` `Duration`, both named constants as defaults (e.g. `10_000`, `PT1H`)
     - `watch` with `enabled` and `path`
   - `publishers`: a list of `Publisher` with `id`, `origin` and `types` (`List<String>`). `id` and `origin` are independent.
 
-  Helper methods: `isAuthorized(publisherId, type)`, `isAllowedOrigin(origin)` and `ownId(GeneralProperties)`. Every reader must
+  Helper methods: `isAuthorized(publisherId, type)`, `allowedOrigin(requestOrigin)` (returns the configured origin, matched
+  case-insensitively because it is a DNS name) and `ownId(GeneralProperties)`. Every reader must
   go through the injected proxy on each request and never copy the publisher list into a singleton field, or refresh has no effect.
 - Conditions in the style of `GeneralProperties.CentralMarketplaceCondition`: `DataSpaceEventsProperties.ListenerCondition`
-  (`listener.enabled`) and `WatchCondition` (`listener.watch.enabled`).
+  (`listener.enabled`) and `WatchCondition` (`listener.watch.enabled`). With the listener enabled, a missing `verifier.audience` or
+  `verifier.jwks-url` fails startup (`@PostConstruct` check in `BearerVerifier`, throwing a `ConfigurationException`) rather than
+  silently disabling the listener.
 - Add a commented example `dataspace:` block to `src/main/resources/application.yaml`, and add rows to the README configuration table.
-- Tests: `DataSpaceEventsPropertiesTest`, a parameterized test of binding and the helpers (`isAuthorized`/`isAllowedOrigin` over
-  configured, unconfigured and type-not-listed cases; `ownId` fallback to `general.did`). `mvn clean package -DskipTests` must
+- Tests: `DataSpaceEventsPropertiesTest`, a parameterized test of binding and the helpers (`isAuthorized`/`allowedOrigin` over
+  configured, unconfigured, type-not-listed and case-variant cases; `ownId` fallback to `general.did`). `mvn clean package -DskipTests` must
   generate `EventsApi` and `DataSpaceEventVO`.
 - **Acceptance:** the build generates the new API, the config binds, and the tests pass. No controller exists yet.
 
 ### Step 2: Bearer verification against the verifier JWKS
 - New `org.fiware.iam.dataspace.BearerVerifier` (`@Singleton`, `@Requires(condition = ListenerCondition.class)`).
-  `Optional<String> holderOf(String authorizationHeader)` strips `Bearer `, then verifies the token with Nimbus
+  `Optional<String> participantIdOf(String authorizationHeader)` strips `Bearer `, then verifies the token with Nimbus
   `DefaultJWTProcessor`:
   - the signature against a `JWKSource` built with `JWKSourceBuilder` (cached, refreshed on an unknown `kid`) from the current
     `verifier.jwksUrl`, re-created when the URL changes after a refresh;
+  - a `JWSVerificationKeySelector` over the explicit `verifier.algorithms` set, never the algorithms the JWKS advertises;
   - `exp`/`nbf`;
-  - `iss` and `aud` when configured.
+  - `aud` must contain `verifier.audience` (always enforced, so a token the verifier issued for another service is refused);
+    `iss` when configured.
 
-  It returns the value at `holderClaim`. A dot path walks nested map claims, e.g. `verifiableCredential.credentialSubject.id`.
-  The result is empty for a missing header, an invalid token or a missing claim, and the reason is logged at DEBUG (the
-  controller logs the WARN once).
+  It returns the top-level string claim `participantClaim`. The result is empty for a missing header, an invalid token or a
+  missing or non-string claim, and the reason is logged at DEBUG (the controller logs the WARN once).
 - Isolate JWK source creation behind a small package-private factory, so that tests can inject an `ImmutableJWKSet`.
 - Tests: `BearerVerifierTest`, a `@ParameterizedTest` that signs tokens with a generated EC key. Cases: valid; expired; wrong key;
-  unknown `kid`; `alg: none`; wrong `iss`; wrong `aud`; missing holder claim; nested holder claim; missing or malformed header.
-- **Acceptance:** only a token signed by a key from the configured JWKS, with valid time claims and a holder claim, produces a
-  holder id.
+  unknown `kid`; `alg: none`; an algorithm outside `verifier.algorithms`; wrong `iss`; no `aud`; other `aud`; missing participant
+  claim; non-string participant claim; missing or malformed header. Plus a startup test: listener enabled without `audience` fails.
+- **Acceptance:** only a token signed by a key from the configured JWKS with an allowed algorithm, valid time claims, our audience
+  and a participant claim produces a participant id.
 
 ### Step 3: Authorization chain with the parameterized authorization matrix
 - New `org.fiware.iam.dataspace.EventDecision` enum (`ACCEPT`, `UNKNOWN_TYPE`, `SELF`, `UNAUTHENTICATED`, `SOURCE_MISMATCH`,
   `PUBLISHER_NOT_AUTHORIZED`, `DATASPACE_MISMATCH`). Each value carries its `HttpStatus` and its metric `outcome` tag, so there are
   no magic strings or numbers in the controller.
-- New `org.fiware.iam.dataspace.EventAuthorizer` (`@Singleton`). `EventDecision authorize(Optional<String> holder,
+- New `org.fiware.iam.dataspace.EventAuthorizer` (`@Singleton`). `EventDecision authorize(Optional<String> participantId,
   DataSpaceEventVO event, Predicate<String> typeKnown)` implements checks 1–5 and 7 of the order in the Overview. It is a pure
   function over the refreshable properties, so it can be tested without HTTP. Dedup is not part of it: dedup is state and is added in
   Step 4.
-- Tests: `EventAuthorizerTest`, a `@ParameterizedTest` + `@MethodSource` matrix over holder present/absent, source equal/different,
+- Tests: `EventAuthorizerTest`, a `@ParameterizedTest` + `@MethodSource` matrix over participant id present/absent, source equal/different,
   type known/unknown, publisher configured/unconfigured/configured-for-other-type, subject self/other/absent, and dataspaceid
   equal/different/absent on either side. Expected decisions:
   - configured publisher, known type → `ACCEPT`
@@ -112,14 +129,17 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
 - New interface `org.fiware.iam.dataspace.DataSpaceEventHandler`, mirroring `TMForumEventHandler`:
   `boolean isEventTypeSupported(String type)` and `Mono<Void> handleEvent(DataSpaceEventVO event)`.
 - New `org.fiware.iam.dataspace.EventDeduplicator` (`@Singleton`). A Caffeine cache bounded by `dedup.maxEntries` with
-  `expireAfterWrite(dedup.ttl)`, keyed by the record `(source, id)`. `boolean firstSeen(key)` uses an atomic `putIfAbsent`, and
-  `forget(key)` removes the entry after a handler failure.
+  `expireAfterWrite(dedup.ttl)`, keyed by the record `(source, id)`, valued `IN_FLIGHT`/`DONE`. `Seen begin(key)` uses an atomic
+  `putIfAbsent` and returns `NEW`, `IN_FLIGHT` or `DONE`; `complete(key)` marks it `DONE`; `forget(key)` removes it after a handler
+  failure. An `ApplicationEventListener<RefreshEvent>` applies changed `maxEntries`/`ttl` to the live cache via `policy()`.
 - New `org.fiware.iam.dataspace.EventListener`: `@Controller("${general.basepath:/}")`, `@Requires(condition = ListenerCondition.class)`,
   implements the generated `EventsApi` POST. It injects `List<DataSpaceEventHandler>`, `BearerVerifier`, `EventAuthorizer`,
-  `EventDeduplicator` and `MeterRegistry`. Flow: authorize → on `ACCEPT`/`SELF` dedup (`duplicate` → `202`) → `SELF` logs at INFO
+  `EventDeduplicator` and `MeterRegistry`. Flow: authorize → on `ACCEPT`/`SELF` dedup (`DONE` → `202 duplicate`, `IN_FLIGHT` →
+  `503` + `Retry-After` named constant, `in_flight`) → `SELF` logs at INFO
   (`Data space event <id> from <source> is about this participant, not acted on.`) → dispatch → `202`. On handler error: `forget`,
   log the WARN once with `DownstreamError.reason(e)` and the exception attached, and return `500`. Every path increments
-  `dataspace.events.received{type,outcome}`. Rejections log one WARN line.
+  `dataspace.events.received{type,outcome}`, with `type` = the event type if a handler supports it, else `other`. Rejections log
+  one WARN line.
 - Tests: `EventListenerTest` as a `@MicronautTest` with `dataspace.events.listener.enabled=true`. A test-only
   `@Requires(env = "test")` controller serves a JWKS, and a test `DataSpaceEventHandler` counts its invocations. Parameterized over
   the acceptance list:
@@ -129,31 +149,41 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   - mismatched source → `403`
   - no bearer → `401`
   - replay of the same `(source, id)` → `202`, handled once
+  - retry while the first attempt is still running (test handler blocks on a latch) → `503` with `Retry-After`
+  - unknown and rejected events with random type names → counted under `type=other`, no new meter per name
   - self subject → `202`, `self` counter +1, not handled
   - handler failure followed by a retry → handled twice
   - `application/json` instead of `application/cloudevents+json` → `415`
 
   Also check that existing tests stay green while the listener is disabled (the default).
+- `EventDeduplicatorTest`: begin/complete/forget transitions, and after a refresh that lowers `max-entries`/`ttl` the live cache
+  uses the new values.
 - Update `AGENTS.md`: add `dataspace/` to the structure, and document the micrometer and caffeine dependencies.
 - **Acceptance:** all `POST /events` rows of the ticket acceptance pass over HTTP. `mvn test` is green.
 
 ### Step 5: `OPTIONS /events` CloudEvents webhook validation
 - Implement the `OPTIONS` operation of `EventsApi` in `EventListener`. If the generator does not emit `@Options`, add a hand-written
-  `@Options("/events")` method. The response always carries `Allow: POST`. When `WebHook-Request-Origin` matches the `origin` of a
-  configured publisher (`isAllowedOrigin`, exact match, read through the refreshable proxy), it also carries
-  `WebHook-Allowed-Origin: <that origin>`. Otherwise that header is absent. No bearer is required, because the handshake is
+  `@Options("/events")` method. First verify with a minimal test that the route is actually reached in Micronaut 4.7 and not
+  answered by the server's built-in OPTIONS handling (`micronaut.server.dispatch-options-requests` / CORS); set what is needed so it
+  is. The response always carries `Allow: POST`. When `WebHook-Request-Origin` matches the `origin` of a configured publisher
+  (`allowedOrigin`, case-insensitive because it is a DNS name, read through the refreshable proxy), it also carries
+  `WebHook-Allowed-Origin: <the configured origin>`. Otherwise that header is absent. No bearer is required, because the handshake is
   unauthenticated by spec. Header names are constants.
 - Tests: in `EventListenerTest` (or `EventListenerOptionsTest`), a `@ParameterizedTest` over a configured origin, an unconfigured
-  origin, a missing header, the origin of a publisher whose `id` differs from that origin, and a case-variant origin.
+  origin, a missing header, the origin of a publisher whose `id` differs from that origin, and a case-variant origin (granted,
+  echoing the configured spelling).
 - **Acceptance:** `OPTIONS /events` grants only configured origins and always returns `Allow: POST`.
 
 ### Step 6: Refresh without restart: `/refresh`, ConfigMap file watch and an end-to-end refresh test
 - `src/main/resources/application.yaml`: `endpoints.refresh.enabled: true` and `endpoints.refresh.sensitive: false`. Management runs
-  on port 9090 and is cluster-internal; without micronaut-security a sensitive endpoint is refused. When the watch is enabled, set
+  on port 9090; without micronaut-security a sensitive endpoint is refused. The open endpoint was accepted in review; the README
+  states the exposure. When the watch is enabled, set
   `micronaut.io.watch.enabled` and `micronaut.io.watch.paths` from `dataspace.events.listener.watch.path`.
 - New `org.fiware.iam.dataspace.ConfigFileRefresher`, an `ApplicationEventListener<FileChangedEvent>` with
-  `@Requires(condition = WatchCondition.class)`. It publishes a `RefreshEvent` through `ApplicationEventPublisher`. Debounce it with
-  a named constant window, because a Kubernetes ConfigMap update is an atomic `..data` symlink swap that emits several events.
+  `@Requires(condition = WatchCondition.class)`. It does what Micronaut's `RefreshEndpoint` does: call
+  `Environment#refreshAndDiff()` (a bare `RefreshEvent` would only rebind beans from the stale Environment), and if the diff is
+  non-empty publish `new RefreshEvent(diff)` through `ApplicationEventPublisher`. Debounce it with a named constant window, because a
+  Kubernetes ConfigMap update is an atomic `..data` symlink swap that emits several events.
 - Tests: `DataSpaceEventsRefreshTest`, a surefire test that starts a real `ApplicationContext` + `EmbeddedServer`
   (`micronaut.config.files` points at a temp YAML file; the test JWKS controller from Step 4). Steps:
   1. Publisher B → `403`.
@@ -163,10 +193,22 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   5. Awaitility until C → `202`.
   6. Add an origin and check that `OPTIONS` now grants it.
 
-  This test is the acceptance evidence that a publisher added to the config is accepted without a restart. Verify first that
-  `RefreshEvent` re-reads `micronaut.config.files`. If it does not, add a `PropertySourceLoader` for the watched file and document why.
+  It is the fast in-JVM check. It also asserts that an edit which changes nothing yields no `RefreshEvent`.
+- k3s: `src/test/resources/k3s/contract-management-provider.yaml` mounts the ConfigMap as a directory (`mountPath: /config`, no
+  `subPath`) with `MICRONAUT_CONFIG_FILES=/config/application.yaml`, and enables the listener, `/refresh` and the watch on `/config`.
+  New `k3s/events-jwks.yaml`: a static JWKS served by nginx from a ConfigMap; the matching private key lives in
+  `src/test/resources/dataspace/` so the IT can sign participant tokens.
+- New `InContainerDataSpaceEventsIT` (profile in-container). It patches the `contract-management-provider` ConfigMap through the
+  k3s kubeconfig (fabric8 `kubernetes-client`, test scope):
+  1. Publisher B → `403`.
+  2. Add B to the ConfigMap, then `POST /refresh` on 9090; Awaitility until B → `202` (kubelet propagates the change with a delay).
+  3. Add publisher C to the ConfigMap without calling `/refresh`; Awaitility (timeout a named constant above the kubelet sync
+     period) until C → `202`, exercising the real `..data` symlink swap.
+
+  This IT is the acceptance evidence that a publisher added to the ConfigMap is accepted without a restart.
 - README: add a "Data space events" section with the config keys, the endpoint, the authorization order, the metric, the refresh
-  options, and the warning that the ConfigMap must be mounted as a directory, **not** with `subPath`, because kubelet never updates
+  options, that `/refresh` on 9090 is unauthenticated, the verifier settings it needs (`participantId` claim, CM audience), and the
+  warning that the ConfigMap must be mounted as a directory, **not** with `subPath`, because kubelet never updates
   `subPath` mounts. The Helm side is DSC-1 (#102).
-- **Acceptance:** the refresh test passes for both paths. `mvn test` and `mvn clean package` are green. README and `AGENTS.md`
+- **Acceptance:** the embedded test and the in-container IT pass for both paths. `mvn test` and `mvn clean package` are green. README and `AGENTS.md`
   describe the feature.
