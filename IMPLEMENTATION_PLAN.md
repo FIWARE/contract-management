@@ -18,6 +18,8 @@ event handler is part of this ticket; CM-2 (#100) adds the first one.
   1. Verify the bearer (`401` if missing or invalid).
   2. Read the participant id claim (`401` if absent).
   3. Require `source == participant id` (`403`).
+  3a. If both the event and the configuration name a data space and they differ: `403` (`DATASPACE_MISMATCH`). Like the source
+      check it does not depend on the type, so it also applies to unknown types.
   4. If no `DataSpaceEventHandler` supports the type: `202` and count it as `unknown_type`.
   5. Require the `(publisher id, type)` pair to be configured (`403`).
   6. Deduplicate on `(source, id)`; a replay gets `202` and is not dispatched.
