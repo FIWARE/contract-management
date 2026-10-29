@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Verifies the verifier-issued bearer token of an incoming event and extracts the caller's participant id.
@@ -54,6 +55,11 @@ public class BearerVerifier {
     private static final String BEARER_SCHEME = "Bearer ";
     private static final String CONFIG_PREFIX = "dataspace.events.listener.verifier.";
     private static final Set<String> REQUIRED_CLAIMS = Collections.singleton(JWTClaimNames.EXPIRATION_TIME);
+    // DefaultJWSVerifierFactory only covers RSA, EC and HMAC keys; JDK 21's SunEC dropped secp256k1 (ES256K)
+    private static final Set<JWSAlgorithm> VERIFIABLE_ALGORITHMS = Stream.concat(
+                    JWSAlgorithm.Family.RSA.stream(), JWSAlgorithm.Family.EC.stream())
+            .filter(algorithm -> !JWSAlgorithm.ES256K.equals(algorithm))
+            .collect(Collectors.toUnmodifiableSet());
 
     private final DataSpaceEventsProperties properties;
     private final Function<URL, JWKSource<SecurityContext>> jwkSourceFactory;
@@ -149,11 +155,12 @@ public class BearerVerifier {
         }
         // JWSAlgorithm.parse accepts anything, so a typo would silently match no token
         Set<String> unsupported = verifier.getAlgorithms().stream()
-                .filter(algorithm -> !JWSAlgorithm.Family.SIGNATURE.contains(JWSAlgorithm.parse(algorithm)))
+                .filter(algorithm -> !VERIFIABLE_ALGORITHMS.contains(JWSAlgorithm.parse(algorithm)))
                 .collect(Collectors.toCollection(TreeSet::new));
         if (!unsupported.isEmpty()) {
             return Optional.of(CONFIG_PREFIX + "algorithms contains unsupported signature algorithms " + unsupported
-                    + ", allowed are " + JWSAlgorithm.Family.SIGNATURE + ".");
+                    + ", allowed are " + VERIFIABLE_ALGORITHMS.stream().map(JWSAlgorithm::getName)
+                    .collect(Collectors.toCollection(TreeSet::new)) + ".");
         }
         try {
             toUrl(verifier.getJwksUrl());

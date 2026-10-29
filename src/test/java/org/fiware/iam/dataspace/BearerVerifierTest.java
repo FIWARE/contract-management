@@ -348,6 +348,9 @@ class BearerVerifierTest {
                 Arguments.of("lower-case algorithm", "verifier.algorithms", List.of(LOWERCASE_ES256)),
                 Arguments.of("misspelled algorithm", "verifier.algorithms", List.of("ES-256")),
                 Arguments.of("MAC algorithm", "verifier.algorithms", List.of(JWSAlgorithm.HS256.getName())),
+                Arguments.of("EdDSA without a verifier", "verifier.algorithms", List.of(JWSAlgorithm.EdDSA.getName())),
+                Arguments.of("Ed25519 without a verifier", "verifier.algorithms", List.of(JWSAlgorithm.Ed25519.getName())),
+                Arguments.of("ES256K without JDK curve support", "verifier.algorithms", List.of(JWSAlgorithm.ES256K.getName())),
                 Arguments.of("one invalid among valid algorithms", "verifier.algorithms",
                         List.of(JWSAlgorithm.ES256.getName(), LOWERCASE_ES256)));
     }

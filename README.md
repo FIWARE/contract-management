@@ -52,7 +52,7 @@ The following table concentrates on the most important configuration parameters:
 | `dataspace.events.listener.verifier.issuer` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ISSUER` | Expected token issuer, not checked if unset | - |
 | `dataspace.events.listener.verifier.audience` | `DATASPACE_EVENTS_LISTENER_VERIFIER_AUDIENCE` | Expected token audience, required with the listener | - |
 | `dataspace.events.listener.verifier.participant-claim` | `DATASPACE_EVENTS_LISTENER_VERIFIER_PARTICIPANT_CLAIM` | Top-level token claim carrying the caller's participant id | participantId |
-| `dataspace.events.listener.verifier.algorithms` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ALGORITHMS` | Accepted JWS signature algorithms (exact names, e.g. `ES256`, `PS256`, `EdDSA`; anything else fails startup) | ES256,RS256 |
+| `dataspace.events.listener.verifier.algorithms` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ALGORITHMS` | Accepted JWS signature algorithms (RSA or EC family, exact names, e.g. `ES256`, `ES384`, `PS256`; EdDSA, ES256K and anything else fail startup) | ES256,RS256 |
 | `dataspace.events.listener.dedup.max-entries` | `DATASPACE_EVENTS_LISTENER_DEDUP_MAX_ENTRIES` | Number of remembered `(source, id)` pairs | 10000 |
 | `dataspace.events.listener.dedup.ttl` | `DATASPACE_EVENTS_LISTENER_DEDUP_TTL` | How long a `(source, id)` pair is remembered | PT1H |
 | `dataspace.events.listener.watch.enabled` | `DATASPACE_EVENTS_LISTENER_WATCH_ENABLED` | Refresh when the config directory changes (startup only, needs a restart) | false |
