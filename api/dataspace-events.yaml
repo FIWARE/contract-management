@@ -189,7 +189,8 @@ components:
         - type
     SubscriptionRequest:
       type: object
-      description: Subscription to data space events, shaped after CloudEvents Subscriptions.
+      description: Subscription to data space events, shaped after CloudEvents Subscriptions. Missing required fields or
+        empty types are rejected with 400.
       properties:
         subscriberId:
           type: string
@@ -218,18 +219,24 @@ components:
         - subscriberId
         - sink
         - types
+        - protocol
+        - protocolsettings
     HttpProtocolSettings:
       type: object
       description: Authentication towards the sink. If the sink answers 401, an OID4VP token is fetched for this client and these scopes.
       properties:
         clientId:
           type: string
+          description: OID4VP client id at the sink's verifier. Required, so that a sink answering 401 can always be authenticated against.
           example: contract-management
         scopes:
           type: array
+          description: Scopes requested with the OID4VP token. May be empty.
           items:
             type: string
             example: default
+      required:
+        - clientId
     Subscription:
       type: object
       description: An active subscription.
@@ -266,4 +273,6 @@ components:
         - subscriberId
         - sink
         - types
+        - protocol
+        - protocolsettings
         - expiresAt
