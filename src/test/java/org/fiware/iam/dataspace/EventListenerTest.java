@@ -56,7 +56,6 @@ class EventListenerTest implements TestPropertyProvider {
     private static final String OTHER_DATASPACE = "other-dataspace";
     private static final String PUBLISHER_ORIGIN = "events.provider.org";
     private static final String UNCONFIGURED_ORIGIN = "events.stranger.org";
-    private static final String REQUEST_ORIGIN_HEADER = "WebHook-Request-Origin";
     private static final String UNKNOWN_TYPE = "org.fiware.dataspace.unknown";
     private static final Duration AWAIT = Duration.ofSeconds(10);
     private static final int RANDOM_TYPES = 5;
@@ -224,14 +223,14 @@ class EventListenerTest implements TestPropertyProvider {
     void validatesWebhookOrigins(String description, @Nullable String requestOrigin, @Nullable String expectedAllowedOrigin) {
         MutableHttpRequest<?> request = HttpRequest.OPTIONS(EVENTS_PATH);
         if (requestOrigin != null) {
-            request.header(REQUEST_ORIGIN_HEADER, requestOrigin);
+            request.header(WebhookHeaders.REQUEST_ORIGIN, requestOrigin);
         }
 
         HttpResponse<?> response = exchange(request);
 
         assertEquals(HttpStatus.OK, response.getStatus(), description);
         assertEquals("POST", response.getHeaders().get(HttpHeaders.ALLOW), description);
-        assertEquals(expectedAllowedOrigin, response.getHeaders().get(EventListener.WEBHOOK_ALLOWED_ORIGIN), description);
+        assertEquals(expectedAllowedOrigin, response.getHeaders().get(WebhookHeaders.ALLOWED_ORIGIN), description);
     }
 
     static Stream<Arguments> webhookOrigins() {

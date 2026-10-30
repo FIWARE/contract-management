@@ -60,7 +60,6 @@ class DataSpaceEventsRefreshTest {
     private static final String EVENTS_PATH = "/events";
     private static final String REFRESH_PATH = "/refresh";
     private static final String CLOUDEVENTS_JSON = "application/cloudevents+json";
-    private static final String REQUEST_ORIGIN_HEADER = "WebHook-Request-Origin";
     private static final String AUDIENCE = "contract-management";
     private static final Publisher PUBLISHER_A = new Publisher("did:web:a.org", "events.a.org");
     private static final Publisher PUBLISHER_B = new Publisher("did:web:b.org", "events.b.org");
@@ -211,8 +210,8 @@ class DataSpaceEventsRefreshTest {
     }
 
     private String grantedOrigin(String origin) {
-        HttpResponse<?> response = exchange(client, HttpRequest.OPTIONS(EVENTS_PATH).header(REQUEST_ORIGIN_HEADER, origin));
-        return response.getHeaders().get(EventListener.WEBHOOK_ALLOWED_ORIGIN);
+        HttpResponse<?> response = exchange(client, HttpRequest.OPTIONS(EVENTS_PATH).header(WebhookHeaders.REQUEST_ORIGIN, origin));
+        return response.getHeaders().get(WebhookHeaders.ALLOWED_ORIGIN);
     }
 
     private static HttpResponse<?> exchange(BlockingHttpClient httpClient, HttpRequest<?> request) {

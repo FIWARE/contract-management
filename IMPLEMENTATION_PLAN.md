@@ -28,8 +28,8 @@ replica (architecture D-4). The CM-5 reconciliation sweep is the backstop.
    OID4VP against the sink host and presents the credentials that host's DCQL requests. The x509_san_dns resolver binds the token
    audience to that host, which limits replay but not disclosure. Sinks are not restricted to `publishers[].origin`. This trust
    assumption is documented in the README (Step 6).
-9. **No redirects to participant-chosen hosts:** handshake and delivery use a dedicated HTTP client (`dataspace-publisher`) with
-   redirect following disabled. A 3xx counts as a failure, so a sink cannot redirect CM to an internal address and bypass the
+9. **No redirects to participant-chosen hosts:** handshake and delivery use a dedicated HTTP client
+   (`@Client(configuration = PublisherHttpClientConfiguration.class)`), which turns redirect following off in code. A 3xx counts as a failure, so a sink cannot redirect CM to an internal address and bypass the
    handshake. Responses to the subscriber never carry the downstream status or connection error.
 
 ## Steps
@@ -86,9 +86,11 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - `active(type)`: unexpired subscriptions matching the type.
   - `get(id)`.
   - `@Scheduled(fixedDelay = ...)` eviction of expired leases (named constant interval).
-- `WebhookHandshake` (`@Singleton`, the `@Client("dataspace-publisher")` `HttpClient`, see Decision 9; configure
-  `micronaut.http.services.dataspace-publisher.follow-redirects: false` in `application.yaml`, or build the client from an
-  `HttpClientConfiguration` with `setFollowRedirects(false)` if service config is not picked up for an id without `url`):
+- `WebhookHandshake` (`@Singleton`, an `HttpClient` injected via `@Client(configuration = PublisherHttpClientConfiguration.class)`,
+  see Decision 9). `PublisherHttpClientConfiguration` copies the global client settings, then sets `followRedirects=false` and
+  connect/read timeouts from `publisher.sink-connect-timeout`/`sink-read-timeout` (`PT5S`/`PT10S`, startup only; a
+  whole handshake is bounded by the refreshable `publisher.handshake-timeout`, `PT15S`). A service entry in `application.yaml` would be lost whenever a deployment or the test classpath
+  replaces that file (the test `application.yaml` already shadows the main one):
   `Mono<Optional<Integer>> validate(URI sink)` sends `OPTIONS <sink>` with
   `WebHook-Request-Origin: <publisher.origin>`. It succeeds only on a 2xx whose `WebHook-Allowed-Origin` equals the origin
   (case-insensitive) or is `*`. It then parses `WebHook-Allowed-Rate`: a positive integer, or `*`/absent for unlimited.
@@ -152,7 +154,7 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - It sets `CLIENT_ID_ATTRIBUTE` and `SCOPE_ATTRIBUTE` (a `Set`) from the subscription and sends via
     `Optional<AuthHandler>.executeWithAuth`, or a plain `httpClient.exchange` when no handler exists (exactly as in
     `ContractManagementAdapter`). A 401 thus triggers one OID4VP token fetch and a retry inside the handler. The executor is the
-    paced `dataspace-publisher` client (no redirects, Decision 9).
+    paced publisher client (`PublisherHttpClientConfiguration`, no redirects, Decision 9).
 - Errors arrive in several shapes, and all of them are classified by one function into a status (or none):
   - a returned `HttpResponse` (first call inside `executeWithAuth`, which turns the first `HttpClientResponseException` into a
     response);
@@ -199,8 +201,8 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   the server port. The unauthenticated publish endpoint would otherwise move to the public port, collide with the listener's
   `POST /events` and be reachable through the ingress. The exception message names both ports.
 - `src/main/resources/application.yaml`: add `endpoints.events.enabled: true` / `sensitive: false` next to `refresh`, a commented
-  `dataspace.events.publisher` sample next to the existing commented `dataspace.events` block, and the `dataspace-publisher`
-  client settings (`follow-redirects: false`, timeouts).
+  `dataspace.events.publisher` sample next to the existing commented `dataspace.events` block. The publisher client settings
+  are in code (`PublisherHttpClientConfiguration`, Step 2).
 - Tests: `PublishEndpointTest` (`@MicronautTest`, publisher enabled, mocked `EventDelivery`) checks the envelope fields filled by CM
   (source = own id, dataspaceid, specversion, generated id, time), an explicit id kept, and a missing type → 400.
 - `ManagementPortGuardTest`: parameterized `ApplicationContext.run(...)` with the publisher enabled: management port unset → startup
@@ -210,6 +212,7 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
 - `README.md`: add a `#### Publishing events` subsection under `### Data space events` covering:
   - Enabling it, and the `publisher.*` keys with their defaults.
   - The subscription request/response with an example, and the order of the checks (401/403/400/409/503).
+  - The sink timeouts `sink-connect-timeout`/`sink-read-timeout` (startup only) and `handshake-timeout`.
   - The handshake: `WebHook-Request-Origin` = `publisher.origin`, the allowed origin must match, and `WebHook-Allowed-Rate` is
     honoured. No host is derived from the subscriber id.
   - Renewal by re-POSTing; lease expiry.
