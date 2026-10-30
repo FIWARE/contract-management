@@ -50,6 +50,21 @@ class DataSpaceEventsPropertiesTest {
     private static final Duration MAX_BACKOFF = Duration.ofSeconds(20);
     private static final int QUEUE_SIZE = 50;
     private static final Duration ATTEMPT_TIMEOUT = Duration.ofSeconds(12);
+    private static final String SINK = "https://cm.own.org/events";
+    private static final String SUBSCRIBER_CLIENT_ID = "subscriber-client";
+    private static final List<String> SUBSCRIBER_SCOPES = List.of("subscriptions");
+    private static final String PROTOCOL_CLIENT_ID = "contract-management";
+    private static final List<String> PROTOCOL_SCOPES = List.of("events", "default");
+    private static final Duration INITIAL_DELAY = Duration.ofSeconds(1);
+    private static final double RENEWAL_FRACTION = 0.75;
+    private static final Duration MIN_RENEWAL_DELAY = Duration.ofSeconds(3);
+    private static final Duration CONFLICT_RENEWAL_INTERVAL = Duration.ofMinutes(30);
+    private static final Duration RECONCILE_INTERVAL = Duration.ofSeconds(30);
+    private static final Duration RETRY_INITIAL_BACKOFF = Duration.ofSeconds(2);
+    private static final Duration RETRY_MAX_BACKOFF = Duration.ofMinutes(2);
+    private static final String SUBSCRIPTIONS_URL = "https://provider.org/subscriptions";
+    private static final String PUBLISHER_CLIENT_ID = "provider-client";
+    private static final List<String> PUBLISHER_SCOPES = List.of("provider-subscriptions");
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -168,6 +183,104 @@ class DataSpaceEventsPropertiesTest {
                                 Map.entry(publisher + "delivery.attempt-timeout", ATTEMPT_TIMEOUT.toString())),
                         true, OWN_ORIGIN, LEASE_TTL, MAX_PER_SUBSCRIBER, MAX_SUBSCRIPTIONS, true,
                         MAX_ATTEMPTS, INITIAL_BACKOFF, MAX_BACKOFF, QUEUE_SIZE, ATTEMPT_TIMEOUT));
+    }
+
+    @ParameterizedTest(name = "subscriber settings {0}")
+    @MethodSource("subscriberSettings")
+    void bindsSubscriberSettings(String name, Map<String, Object> subscriberConfig, boolean enabled, String sink, String clientId,
+                                 List<String> scopes, String protocolClientId, List<String> protocolScopes, Duration initialDelay,
+                                 double renewalFraction, Duration minRenewalDelay, Duration conflictRenewalInterval,
+                                 Duration reconcileInterval, Duration retryInitialBackoff, Duration retryMaxBackoff) {
+        try (ApplicationContext ctx = ApplicationContext.builder()
+                .properties(ISOLATED)
+                // an enabled subscriber needs the listener, which starts the bearer verifier
+                .properties(Map.of(PREFIX + "listener.verifier.audience", AUDIENCE, PREFIX + "listener.verifier.jwks-url", JWKS_URL))
+                .propertySources(PropertySource.of("test", subscriberConfig))
+                .start()) {
+            DataSpaceEventsProperties.SubscriberSettings subscriber = ctx.getBean(DataSpaceEventsProperties.class).getSubscriber();
+
+            assertEquals(enabled, subscriber.isEnabled());
+            assertEquals(sink, subscriber.getSink());
+            assertEquals(clientId, subscriber.getClientId());
+            assertEquals(scopes, subscriber.getScopes());
+            assertEquals(protocolClientId, subscriber.getProtocolSettings().getClientId());
+            assertEquals(protocolScopes, subscriber.getProtocolSettings().getScopes());
+            assertEquals(initialDelay, subscriber.getInitialDelay());
+            assertEquals(renewalFraction, subscriber.getRenewalFraction());
+            assertEquals(minRenewalDelay, subscriber.getMinRenewalDelay());
+            assertEquals(conflictRenewalInterval, subscriber.getConflictRenewalInterval());
+            assertEquals(reconcileInterval, subscriber.getReconcileInterval());
+            assertEquals(retryInitialBackoff, subscriber.getRetry().getInitialBackoff());
+            assertEquals(retryMaxBackoff, subscriber.getRetry().getMaxBackoff());
+        }
+    }
+
+    static Stream<Arguments> subscriberSettings() {
+        String subscriber = PREFIX + "subscriber.";
+        return Stream.of(
+                Arguments.of("defaults", Map.of(), false, null, null, List.of(), null, List.of(),
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_INITIAL_DELAY,
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RENEWAL_FRACTION,
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_MIN_RENEWAL_DELAY,
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL,
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL,
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RETRY_INITIAL_BACKOFF,
+                        DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RETRY_MAX_BACKOFF),
+                Arguments.of("configured", Map.ofEntries(
+                                Map.entry(PREFIX + "listener.enabled", true),
+                                Map.entry(subscriber + "enabled", true),
+                                Map.entry(subscriber + "sink", SINK),
+                                Map.entry(subscriber + "client-id", SUBSCRIBER_CLIENT_ID),
+                                Map.entry(subscriber + "scopes", SUBSCRIBER_SCOPES),
+                                Map.entry(subscriber + "protocol-settings.client-id", PROTOCOL_CLIENT_ID),
+                                Map.entry(subscriber + "protocol-settings.scopes", PROTOCOL_SCOPES),
+                                Map.entry(subscriber + "initial-delay", INITIAL_DELAY.toString()),
+                                Map.entry(subscriber + "renewal-fraction", RENEWAL_FRACTION),
+                                Map.entry(subscriber + "min-renewal-delay", MIN_RENEWAL_DELAY.toString()),
+                                Map.entry(subscriber + "conflict-renewal-interval", CONFLICT_RENEWAL_INTERVAL.toString()),
+                                Map.entry(subscriber + "reconcile-interval", RECONCILE_INTERVAL.toString()),
+                                Map.entry(subscriber + "retry.initial-backoff", RETRY_INITIAL_BACKOFF.toString()),
+                                Map.entry(subscriber + "retry.max-backoff", RETRY_MAX_BACKOFF.toString())),
+                        true, SINK, SUBSCRIBER_CLIENT_ID, SUBSCRIBER_SCOPES, PROTOCOL_CLIENT_ID, PROTOCOL_SCOPES, INITIAL_DELAY,
+                        RENEWAL_FRACTION, MIN_RENEWAL_DELAY, CONFLICT_RENEWAL_INTERVAL, RECONCILE_INTERVAL,
+                        RETRY_INITIAL_BACKOFF, RETRY_MAX_BACKOFF));
+    }
+
+    @ParameterizedTest(name = "publisher entry {0}")
+    @MethodSource("publisherEntries")
+    void bindsPublisherSubscriptionFields(String name, Map<String, Object> entry, String subscriptionsUrl, String clientId,
+                                          List<String> scopes) {
+        config.put(PREFIX + "publishers", List.of(entry));
+        refresh();
+
+        DataSpaceEventsProperties.Publisher publisher = properties().getPublishers().get(0);
+        assertEquals(subscriptionsUrl, publisher.getSubscriptionsUrl());
+        assertEquals(clientId, publisher.getClientId());
+        assertEquals(scopes, publisher.getScopes());
+    }
+
+    static Stream<Arguments> publisherEntries() {
+        Map<String, Object> listenerOnly = Map.of("id", PROVIDER_ID, "origin", PROVIDER_ORIGIN, "types", List.of(TYPE_A));
+        Map<String, Object> subscribable = new HashMap<>(listenerOnly);
+        subscribable.putAll(Map.of("subscriptions-url", SUBSCRIPTIONS_URL, "client-id", PUBLISHER_CLIENT_ID, "scopes", PUBLISHER_SCOPES));
+        return Stream.of(
+                Arguments.of("listener-only", listenerOnly, null, null, null),
+                Arguments.of("subscribable with overrides", subscribable, SUBSCRIPTIONS_URL, PUBLISHER_CLIENT_ID, PUBLISHER_SCOPES));
+    }
+
+    @ParameterizedTest(name = "subscriber {0} -> subscriber beans {0}")
+    @MethodSource("subscriberConditions")
+    void subscriberCondition(boolean subscriberEnabled) {
+        DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
+        properties.getSubscriber().setEnabled(subscriberEnabled);
+        ConditionContext conditionContext = mock(ConditionContext.class);
+        when(conditionContext.getBean(DataSpaceEventsProperties.class)).thenReturn(properties);
+
+        assertEquals(subscriberEnabled, new DataSpaceEventsProperties.SubscriberCondition().matches(conditionContext));
+    }
+
+    static Stream<Boolean> subscriberConditions() {
+        return Stream.of(false, true);
     }
 
     @ParameterizedTest(name = "listener {0}, publisher {1} -> verifier {2}, publisher beans {3}")

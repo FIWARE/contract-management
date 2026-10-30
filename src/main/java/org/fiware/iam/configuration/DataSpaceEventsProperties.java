@@ -37,6 +37,13 @@ public class DataSpaceEventsProperties {
     public static final Duration DEFAULT_DELIVERY_MAX_BACKOFF = Duration.ofMinutes(1);
     public static final int DEFAULT_DELIVERY_QUEUE_SIZE = 1000;
     public static final Duration DEFAULT_DELIVERY_ATTEMPT_TIMEOUT = Duration.ofSeconds(30);
+    public static final Duration DEFAULT_SUBSCRIBER_INITIAL_DELAY = Duration.ofSeconds(5);
+    public static final Duration DEFAULT_SUBSCRIBER_RETRY_INITIAL_BACKOFF = Duration.ofSeconds(5);
+    public static final Duration DEFAULT_SUBSCRIBER_RETRY_MAX_BACKOFF = Duration.ofMinutes(5);
+    public static final double DEFAULT_SUBSCRIBER_RENEWAL_FRACTION = 0.5;
+    public static final Duration DEFAULT_SUBSCRIBER_MIN_RENEWAL_DELAY = Duration.ofSeconds(10);
+    public static final Duration DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL = Duration.ofHours(1);
+    public static final Duration DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL = Duration.ofMinutes(1);
 
     /**
      * Id of the data space this instance belongs to. Events carrying a different dataspaceid are rejected.
@@ -59,6 +66,11 @@ public class DataSpaceEventsProperties {
      * The sending side: subscriptions and webhook delivery.
      */
     private PublisherSettings publisher = new PublisherSettings();
+
+    /**
+     * The subscribing side: registration of the own listener at the configured publishers.
+     */
+    private SubscriberSettings subscriber = new SubscriberSettings();
 
     /**
      * Participants allowed to publish events, with the event types each of them may publish.
@@ -287,6 +299,102 @@ public class DataSpaceEventsProperties {
     }
 
     /**
+     * The subscribing side: registers the own listener as webhook sink at every publisher with a subscriptions-url.
+     */
+    @Data
+    @ConfigurationProperties("subscriber")
+    public static class SubscriberSettings {
+
+        /**
+         * Enables the registration at the publishers. Requires the listener. Evaluated at startup only.
+         */
+        private boolean enabled = false;
+
+        /**
+         * Public URL of the own POST /events, registered as sink. Required when the subscriber is enabled.
+         */
+        @Nullable
+        private String sink;
+
+        /**
+         * OID4VP client id used towards the publishers' subscriptions API, unless a publisher overrides it.
+         */
+        @Nullable
+        private String clientId;
+
+        /**
+         * OID4VP scopes used towards the publishers' subscriptions API, unless a publisher overrides them.
+         */
+        private List<String> scopes = new ArrayList<>();
+
+        /**
+         * Client at the own verifier that the publishers use when the sink answers 401, sent as protocolsettings.
+         */
+        private ProtocolSettings protocolSettings = new ProtocolSettings();
+
+        /**
+         * Delay of the first registrations after startup.
+         */
+        private Duration initialDelay = DEFAULT_SUBSCRIBER_INITIAL_DELAY;
+
+        /**
+         * Fraction of the remaining lease after which it is renewed. Values outside (0, 1) fall back to the default.
+         */
+        private double renewalFraction = DEFAULT_SUBSCRIBER_RENEWAL_FRACTION;
+
+        /**
+         * Lower bound of the renewal delay, so a short or past expiry cannot cause a tight loop.
+         */
+        private Duration minRenewalDelay = DEFAULT_SUBSCRIBER_MIN_RENEWAL_DELAY;
+
+        /**
+         * Wait before re-registering after a 409, which carries no expiry.
+         */
+        private Duration conflictRenewalInterval = DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL;
+
+        /**
+         * Interval of the periodic reconcile backing up the refresh reaction.
+         */
+        private Duration reconcileInterval = DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL;
+
+        /**
+         * Backoff of failed registrations, retried without limit.
+         */
+        private Retry retry = new Retry();
+
+        @Data
+        @ConfigurationProperties("protocol-settings")
+        public static class ProtocolSettings {
+
+            /**
+             * OID4VP client id at the own verifier. Required when the subscriber is enabled.
+             */
+            @Nullable
+            private String clientId;
+
+            /**
+             * OID4VP scopes at the own verifier.
+             */
+            private List<String> scopes = new ArrayList<>();
+        }
+
+        @Data
+        @ConfigurationProperties("retry")
+        public static class Retry {
+
+            /**
+             * Wait before the first retry, doubled on each further one.
+             */
+            private Duration initialBackoff = DEFAULT_SUBSCRIBER_RETRY_INITIAL_BACKOFF;
+
+            /**
+             * Upper bound of the wait between retries.
+             */
+            private Duration maxBackoff = DEFAULT_SUBSCRIBER_RETRY_MAX_BACKOFF;
+        }
+    }
+
+    /**
      * A participant allowed to publish events. The id is matched against the token, the origin against the webhook handshake.
      */
     @Data
@@ -294,6 +402,24 @@ public class DataSpaceEventsProperties {
         private String id;
         private String origin;
         private List<String> types = new ArrayList<>();
+
+        /**
+         * URL of the publisher's subscriptions API. Without it (or blank) the publisher is listener-only and never subscribed to.
+         */
+        @Nullable
+        private String subscriptionsUrl;
+
+        /**
+         * OID4VP client id towards this publisher's subscriptions API. Blank falls back to subscriber.client-id.
+         */
+        @Nullable
+        private String clientId;
+
+        /**
+         * OID4VP scopes towards this publisher's subscriptions API. Empty falls back to subscriber.scopes.
+         */
+        @Nullable
+        private List<String> scopes;
     }
 
     /**
@@ -318,6 +444,19 @@ public class DataSpaceEventsProperties {
         public boolean matches(ConditionContext context) {
             return context.getBean(DataSpaceEventsProperties.class)
                     .getPublisher()
+                    .isEnabled();
+        }
+    }
+
+    /**
+     * Enables beans of the subscribing side.
+     */
+    public static class SubscriberCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context) {
+            return context.getBean(DataSpaceEventsProperties.class)
+                    .getSubscriber()
                     .isEnabled();
         }
     }
