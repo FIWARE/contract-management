@@ -41,6 +41,7 @@ final class SubscriberSettingsValidator {
         }
         try {
             URI uri = new URI(value);
+            // a host with '_' has no getHost(); CM-2 publishers refuse such sinks too, so fail here instead of retrying
             return uri.getScheme() != null && SINK_SCHEMES.contains(uri.getScheme().toLowerCase(Locale.ROOT)) && uri.getHost() != null;
         } catch (URISyntaxException e) {
             return false;

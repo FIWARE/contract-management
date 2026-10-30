@@ -28,7 +28,6 @@ class SubscriberStartupGuardTest {
     static Stream<Arguments> startingConfigurations() {
         return Stream.of(
                 Arguments.of("valid", valid(), true),
-                Arguments.of("http sink", with(SubscriberSettingsValidator.SINK_KEY, "http://cm.consumer.org/events"), true),
                 Arguments.of("subscriber disabled, nothing set", Map.of(SUBSCRIBER_ENABLED, "false"), false));
     }
 
@@ -36,17 +35,9 @@ class SubscriberStartupGuardTest {
         return Stream.of(
                 Arguments.of("listener disabled", with(SubscriberStartupGuard.LISTENER_ENABLED_KEY, "false"),
                         SubscriberStartupGuard.LISTENER_ENABLED_KEY),
+                // the URL rules live in SubscriberSettingsValidatorTest; one case per key proves the delegation
                 Arguments.of("no sink", without(SubscriberSettingsValidator.SINK_KEY), SubscriberSettingsValidator.SINK_KEY),
-                Arguments.of("blank sink", with(SubscriberSettingsValidator.SINK_KEY, " "), SubscriberSettingsValidator.SINK_KEY),
-                Arguments.of("relative sink", with(SubscriberSettingsValidator.SINK_KEY, "/events"), SubscriberSettingsValidator.SINK_KEY),
-                Arguments.of("sink without host", with(SubscriberSettingsValidator.SINK_KEY, "https:/events"), SubscriberSettingsValidator.SINK_KEY),
-                Arguments.of("non-http sink", with(SubscriberSettingsValidator.SINK_KEY, "ftp://cm.consumer.org/events"),
-                        SubscriberSettingsValidator.SINK_KEY),
-                Arguments.of("malformed sink", with(SubscriberSettingsValidator.SINK_KEY, "https://cm consumer/events"),
-                        SubscriberSettingsValidator.SINK_KEY),
                 Arguments.of("no protocol client id", without(SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY),
-                        SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY),
-                Arguments.of("blank protocol client id", with(SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY, ""),
                         SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY));
     }
 
