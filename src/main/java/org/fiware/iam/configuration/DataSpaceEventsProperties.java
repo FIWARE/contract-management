@@ -36,6 +36,7 @@ public class DataSpaceEventsProperties {
     public static final Duration DEFAULT_DELIVERY_INITIAL_BACKOFF = Duration.ofSeconds(1);
     public static final Duration DEFAULT_DELIVERY_MAX_BACKOFF = Duration.ofMinutes(1);
     public static final int DEFAULT_DELIVERY_QUEUE_SIZE = 1000;
+    public static final Duration DEFAULT_DELIVERY_ATTEMPT_TIMEOUT = Duration.ofSeconds(30);
 
     /**
      * Id of the data space this instance belongs to. Events carrying a different dataspaceid are rejected.
@@ -276,6 +277,12 @@ public class DataSpaceEventsProperties {
              * Pending events per subscription. Further events are dropped while the queue is full.
              */
             private int queueSize = DEFAULT_DELIVERY_QUEUE_SIZE;
+
+            /**
+             * Upper bound of one attempt incl. a token fetch the sink triggers, not counting the wait for the rate limit.
+             * A timed-out attempt is retried.
+             */
+            private Duration attemptTimeout = DEFAULT_DELIVERY_ATTEMPT_TIMEOUT;
         }
     }
 

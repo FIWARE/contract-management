@@ -49,6 +49,7 @@ class DataSpaceEventsPropertiesTest {
     private static final Duration INITIAL_BACKOFF = Duration.ofMillis(200);
     private static final Duration MAX_BACKOFF = Duration.ofSeconds(20);
     private static final int QUEUE_SIZE = 50;
+    private static final Duration ATTEMPT_TIMEOUT = Duration.ofSeconds(12);
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -116,7 +117,8 @@ class DataSpaceEventsPropertiesTest {
     @MethodSource("publisherSettings")
     void bindsPublisherSettings(String name, Map<String, Object> publisherConfig, boolean enabled, String origin,
                                 Duration leaseTtl, int maxPerSubscriber, int maxSubscriptions, boolean allowInsecureSinks,
-                                int maxAttempts, Duration initialBackoff, Duration maxBackoff, int queueSize) {
+                                int maxAttempts, Duration initialBackoff, Duration maxBackoff, int queueSize,
+                                Duration attemptTimeout) {
         try (ApplicationContext ctx = ApplicationContext.builder()
                 .properties(ISOLATED)
                 // an enabled publisher starts the bearer verifier, which needs its configuration
@@ -136,6 +138,7 @@ class DataSpaceEventsPropertiesTest {
             assertEquals(initialBackoff, delivery.getInitialBackoff());
             assertEquals(maxBackoff, delivery.getMaxBackoff());
             assertEquals(queueSize, delivery.getQueueSize());
+            assertEquals(attemptTimeout, delivery.getAttemptTimeout());
         }
     }
 
@@ -149,20 +152,22 @@ class DataSpaceEventsPropertiesTest {
                         DataSpaceEventsProperties.DEFAULT_DELIVERY_MAX_ATTEMPTS,
                         DataSpaceEventsProperties.DEFAULT_DELIVERY_INITIAL_BACKOFF,
                         DataSpaceEventsProperties.DEFAULT_DELIVERY_MAX_BACKOFF,
-                        DataSpaceEventsProperties.DEFAULT_DELIVERY_QUEUE_SIZE),
-                Arguments.of("configured", Map.of(
-                                publisher + "enabled", true,
-                                publisher + "origin", OWN_ORIGIN,
-                                publisher + "lease-ttl", LEASE_TTL.toString(),
-                                publisher + "max-subscriptions-per-subscriber", MAX_PER_SUBSCRIBER,
-                                publisher + "max-subscriptions", MAX_SUBSCRIPTIONS,
-                                publisher + "allow-insecure-sinks", true,
-                                publisher + "delivery.max-attempts", MAX_ATTEMPTS,
-                                publisher + "delivery.initial-backoff", INITIAL_BACKOFF.toString(),
-                                publisher + "delivery.max-backoff", MAX_BACKOFF.toString(),
-                                publisher + "delivery.queue-size", QUEUE_SIZE),
+                        DataSpaceEventsProperties.DEFAULT_DELIVERY_QUEUE_SIZE,
+                        DataSpaceEventsProperties.DEFAULT_DELIVERY_ATTEMPT_TIMEOUT),
+                Arguments.of("configured", Map.ofEntries(
+                                Map.entry(publisher + "enabled", true),
+                                Map.entry(publisher + "origin", OWN_ORIGIN),
+                                Map.entry(publisher + "lease-ttl", LEASE_TTL.toString()),
+                                Map.entry(publisher + "max-subscriptions-per-subscriber", MAX_PER_SUBSCRIBER),
+                                Map.entry(publisher + "max-subscriptions", MAX_SUBSCRIPTIONS),
+                                Map.entry(publisher + "allow-insecure-sinks", true),
+                                Map.entry(publisher + "delivery.max-attempts", MAX_ATTEMPTS),
+                                Map.entry(publisher + "delivery.initial-backoff", INITIAL_BACKOFF.toString()),
+                                Map.entry(publisher + "delivery.max-backoff", MAX_BACKOFF.toString()),
+                                Map.entry(publisher + "delivery.queue-size", QUEUE_SIZE),
+                                Map.entry(publisher + "delivery.attempt-timeout", ATTEMPT_TIMEOUT.toString())),
                         true, OWN_ORIGIN, LEASE_TTL, MAX_PER_SUBSCRIBER, MAX_SUBSCRIPTIONS, true,
-                        MAX_ATTEMPTS, INITIAL_BACKOFF, MAX_BACKOFF, QUEUE_SIZE));
+                        MAX_ATTEMPTS, INITIAL_BACKOFF, MAX_BACKOFF, QUEUE_SIZE, ATTEMPT_TIMEOUT));
     }
 
     @ParameterizedTest(name = "listener {0}, publisher {1} -> verifier {2}, publisher beans {3}")
