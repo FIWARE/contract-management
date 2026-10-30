@@ -30,7 +30,8 @@ public enum FailureReason {
 	VERIFIER_UNAVAILABLE("verifier_unavailable"),
 	SUBSCRIPTION_LIMIT_REACHED("subscription_limit_reached"),
 	WEBHOOK_HANDSHAKE_FAILED("webhook_handshake_failed"),
-	EVENT_DELIVERY_FAILED("event_delivery_failed");
+	EVENT_DELIVERY_FAILED("event_delivery_failed"),
+	EVENT_SUBSCRIPTION_FAILED("event_subscription_failed");
 
 	private final String code;
 
