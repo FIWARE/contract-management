@@ -10,7 +10,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
 ### Decisions (resolving the analysis questions)
 1. **Publisher subscriptions URL:** a new optional `subscriptions-url` on each `dataspace.events.publishers[]` entry. Entries
    without it are listener-only: they may still deliver to us, but we never subscribe to them. The URL is never derived
-   from the publisher id or origin (D-8).
+   from the publisher id or origin (D-8). A blank `subscriptions-url` is treated as absent: a refresh cannot unset a key
+   (a removed key keeps its previous value, see README / `DataSpaceEventsProperties`), so operators clear it with `""`.
 2. **Own sink:** `dataspace.events.subscriber.sink`, the public URL of this CM's `POST /events`. It is required when the
    subscriber is enabled. The subscriber also requires `listener.enabled`, because the publisher's `OPTIONS` handshake hits
    our listener. Both are checked at startup.
@@ -27,6 +28,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
      at **our** verifier that the publisher uses when our sink answers 401. `client-id` is required (the API requires it).
    - `subscriber.client-id` / `.scopes` are what **we** use for OID4VP towards the publisher's subscriptions API (set as
      `CLIENT_ID_ATTRIBUTE`/`SCOPE_ATTRIBUTE`). Each publisher entry may override them with optional `client-id` / `scopes`.
+     A blank override `client-id` or an empty `scopes` list counts as no override (falls back to `subscriber.*`), so an
+     override can be cleared by refresh with an empty value (Decision 1).
    - `subscriberId` = `DataSpaceEventsProperties.ownId(generalProperties)`. It must match the participant claim the publisher's
      verifier puts in our token.
 5. **Enable flag and timing:** `subscriber.enabled` is startup only. Everything else is refreshable and read through the bean
@@ -40,8 +43,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
      `min-renewal-delay`.
    - `min-renewal-delay` `PT10S`: lower bound on the renewal delay, so a tiny or past `expiresAt` cannot cause a tight loop.
    - `conflict-renewal-interval` `PT1H`: when to re-register after a `409`, since that response has no `expiresAt`.
-   - `reconcile-interval` `PT1M`: periodic backstop reconcile (see Step 4). The backstop reschedules itself after each run
-     with the current value, so a refreshed interval applies from the next run.
+   - `reconcile-interval` `PT1M`: periodic backstop reconcile (see Step 4). Exactly one backstop chain exists; it
+     reschedules itself after each run with the current value, so a refreshed interval applies from the next run.
 6. **409:** counts as success (acceptance criterion): it does not degrade the health status, and the publisher is
    re-registered after `conflict-renewal-interval`. **Review note:** a CM-2 publisher answers `409` when its subscription
    cap is reached, not for an existing subscription (it renews in place with `201`). This rule therefore mainly serves
@@ -65,7 +68,11 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
      is no longer the one we want deliveries on. A changed `types`, `origin` or credential keeps the same key, so the publisher
      renews in place and no DELETE is sent. Without a known id (never registered, or `409`) nothing can be deleted; the old
      lease expires on its own.
-   - A removed publisher, or one that lost its `subscriptions-url`, gets its pending tasks cancelled and is dropped from the
+   - Health on change: a changed key (`sink`, `subscriberId`) or `subscriptions-url` resets the state to `PENDING`
+     (`validUntil` null, id cleared), because the old subscription is deleted or no longer targets the sink we want; the
+     indicator is `DEGRADED` until the new POST succeeds. An in-place renewal (`types`, `origin`, credentials) keeps the old
+     phase and `validUntil`, because the old lease keeps delivering until the new outcome.
+   - A removed publisher, or one whose `subscriptions-url` was set to `""`, gets its pending tasks cancelled and is dropped from the
      health check. A best-effort `DELETE <subscriptions-url>/<id>` is sent when the subscription id is known; a failure is
      only logged at INFO, because the lease expires anyway.
 8. **Health:** `DataSpaceSubscriptionHealthIndicator`, named `dataspace-subscriptions`. **It never reports `DOWN`.**
@@ -88,7 +95,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
      details are hidden. The defaults are not changed; the README notes that operators can set
      `endpoints.health.details-visible: ANONYMOUS` (port 9090 is cluster-internal) to see them.
    - It is `DEGRADED` from startup until the first success. It is also `DEGRADED` when a renewal keeps failing past
-     `expiresAt`. A failed renewal before expiry stays `UP`, because the publisher still delivers.
+     `expiresAt`, and after a `sink`/`subscriberId`/`subscriptions-url` change until the new registration succeeds
+     (Decision 7). A failed renewal before expiry stays `UP`, because the publisher still delivers.
    - Details map each publisher id to its state (`PENDING|REGISTERED|CONFLICT|EXPIRED|SKIPPED`), `expiresAt` and, for
      `SKIPPED`, the reason (Decision 3). No error bodies.
    - With zero subscribable publishers it is `UP`.
@@ -132,7 +140,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
   `HttpClient` and `Optional<AuthHandler>` injected:
   - `src/main/java/org/fiware/iam/dataspace/SubscriptionTarget.java`: the immutable record of Decision 7 (lists and sets
     copied with `List.copyOf`/`Set.copyOf`), with a static factory `of(Publisher, SubscriberSettings, String ownId)` that
-    resolves the client id and scopes from the publisher override or the `subscriber.*` default. The client reads nothing
+    resolves the client id and scopes from the publisher override or the `subscriber.*` default (a blank override client
+    id or an empty override scopes list falls back to the default, Decision 4). The client reads nothing
     from the properties itself, so a request always matches the record it is stored with.
   - `Mono<Registration> subscribe(SubscriptionTarget target)`:
     - Builds a `SubscriptionRequestVO` with `subscriberId`, `sink`, `types`, `protocol` = `HTTP`, and `protocolsettings` from
@@ -153,7 +162,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     target's URL and credentials, same auth path. A `404` counts as success.
 - Tests: `PublisherSubscriptionClientTest`, using Mockito `HttpClient`/`AuthHandler` and `@ParameterizedTest` + `@MethodSource`.
   - The request body: own id, sink, types and protocolsettings, all taken from the target.
-  - `SubscriptionTargetTest`: client id and scopes from the default vs. the per-publisher override; equality changes for each
+  - `SubscriptionTargetTest`: client id and scopes from the default vs. the per-publisher override, and a `""` override
+    client id / empty override scopes falling back to the default; equality changes for each
     effective field; mutating the source `Publisher` lists after `of(...)` does not change the record.
   - Status mapping over both shapes, returned response and thrown exception: `201` → registration with id/expiry, `409` →
     empty registration, `400/401/403/500/503` → `EventSubscriptionException` with the status.
@@ -180,8 +190,9 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     simple name clashes with `dataspace.EventListener`.
   - Inject `DataSpaceEventsProperties`, `GeneralProperties`, `PublisherSubscriptionClient`, `SubscriptionStateStore`,
     `TaskScheduler` (named `TaskExecutors.SCHEDULED`) and `Clock`. Not the health indicator.
-  - `onApplicationEvent(ServerStartupEvent)` sets a `started` flag and schedules the backstop's first run, i.e.
-    `reconcile()`, after `initial-delay`. It creates no states itself: `reconcile()` (Step 4) is the single code path that
+  - `onApplicationEvent(ServerStartupEvent)` sets the `AtomicBoolean started` with `compareAndSet(false, true)` and, only if
+    that succeeded, schedules the first `backstopTick()` (Step 4) after `initial-delay`, so a repeated `ServerStartupEvent`
+    cannot start a second chain. It creates no states itself: `reconcile()` (Step 4) is the single code path that
     adds publishers, marks entries `SKIPPED` (subscriptions-url without types or a blank `origin`, with a WARN, Decision 3)
     and skips duplicate publisher ids with a WARN. Against an empty store the first reconcile adds every subscribable
     publisher and registers it immediately.
@@ -189,8 +200,9 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     `reconcile()` does):
     - Success: store the id and `expiresAt` and mark the state `REGISTERED`. Schedule renewal after
       `max(minRenewalDelay, (expiresAt - now) * renewalFraction)`. A missing `expiresAt` is treated like a 409. Log at INFO
-      (`Subscribed to <publisher> at <url> until <expiresAt>`).
-    - 409: state `CONFLICT`, no id, renewal after `conflict-renewal-interval` (Decision 6).
+      (`Subscribed to <publisher> at <url> until <expiresAt>`). Reset `attempt` to 0.
+    - 409: state `CONFLICT`, no id, renewal after `conflict-renewal-interval` (Decision 6). Reset `attempt` to 0.
+    - So after an outage that reached `max-backoff`, the first failed renewal days later waits `initial-backoff` again.
     - Failure: log a WARN with `DownstreamError.reason(e)` and the next delay, attached once. Schedule a retry after
       `backoff(attempt)`. Renewal is the same task, so a failed renewal retries with backoff.
     - `backoff(attempt)` saturates: starting at `initialBackoff`, it doubles while the delay is below `maxBackoff` and stops
@@ -215,6 +227,7 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
   records `(delay, Runnable)` and runs tasks on demand, and `MutableClock`. Parameterize where the shape repeats.
   - **Acceptance:** the publisher is unavailable at startup. The client fails N times, the retries follow the backoff and are
     capped at `maxBackoff`, and the indicator is `DEGRADED` after every failure. It is `UP` right after the first success.
+    A later failed renewal is retried after `initialBackoff` again (attempt reset), likewise after a `409`.
   - `backoff(attempt)` parameterized over `0`, `1`, the first capped attempt, `100` and `Integer.MAX_VALUE` (expecting exactly
     `maxBackoff` for the last three), and `initialBackoff > maxBackoff`.
   - The client throws synchronously (not via the `Mono`): the next attempt is still scheduled with the backoff.
@@ -222,7 +235,8 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     negative values falling back to the default), a tiny lease → `minRenewalDelay`, and a past `expiresAt`. Running the
     task re-registers. A renewal failing past `expiresAt` turns the indicator `DEGRADED`, and the next success turns it `UP`.
   - **Acceptance:** `409` → `UP` with the publisher in state `CONFLICT`, re-registration after `conflict-renewal-interval`.
-  - Startup schedules exactly one reconcile after `initial-delay`; running it registers each subscribable publisher once.
+  - Startup schedules exactly one backstop tick after `initial-delay`; running it registers each subscribable publisher
+    once. A second `ServerStartupEvent` schedules nothing.
   - Publishers without `subscriptions-url` are not contacted and not in the details. Entries with `subscriptions-url` but no
     types or a blank `origin` are not contacted, do not affect the status, and show as `SKIPPED` with the reason.
   - A stale-generation callback is ignored.
@@ -235,15 +249,15 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
 
 ### Step 4: Runtime refresh: added, changed and removed publishers
 - `DataSpaceEventSubscriber` also implements `ApplicationEventListener<RefreshEvent>`:
-  - The listener can run before Micronaut has rebound `DataSpaceEventsProperties`. It therefore only schedules `reconcile()`
-    with zero delay on the `TaskScheduler`.
+  - The listener can run before Micronaut has rebound `DataSpaceEventsProperties`. It therefore only schedules a one-shot
+    `reconcile()` with zero delay on the `TaskScheduler`. That run never reschedules anything (see the backstop below).
   - A `RefreshEvent` before `ServerStartupEvent` (e.g. a `ConfigFileRefresher` watch event during startup) is ignored while
     the `started` flag is unset: the startup reconcile reads the then-current properties anyway, and registering before the
     server listens would only fail the publisher's handshake.
   - `reconcile()` reads the properties inside `ConfigurationRefreshLock.exclusively(...)` and builds one `SubscriptionTarget`
     per subscribable publisher there. Both refresh paths (`ConfigFileRefresher`, `SerializedRefreshEndpoint`) publish under
     that lock, so the read waits for the rebind. The registrations themselves run outside the lock.
-  - `reconcile()` is `synchronized`, so a refresh-triggered run, the startup run and the backstop never interleave and never
+  - `reconcile()` is `synchronized`, so a refresh-triggered run and a backstop run never interleave and never
     create two states or loops for one publisher. Like the registration task, it catches every `RuntimeException` (WARN).
 - `reconcile()` compares the fresh targets with the stored states. It is the only place that adds or removes states:
   - **added** (including every publisher at the first, startup reconcile): create a `PENDING` state and register
@@ -251,29 +265,36 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
   - **changed**: the fresh `SubscriptionTarget` is not `equals` to the stored one (any of `subscriptions-url`, `types`,
     `origin`, the resolved `client-id`/`scopes`, `sink`, `subscriberId` or the protocol settings, Decision 7). Bump the
     generation, cancel the future, store the new target and re-register immediately. The attempt counter is reset.
-    The health stays as it was until the new outcome (the old lease is still valid). If the `sink`, `subscriberId` or
-    `subscriptions-url` changed and an old id is known, the re-registration first sends the best-effort `unsubscribe` with
-    the **old** target (old URL, old resolved credentials) and the old id; a failure is logged at INFO and does not stop the
-    POST. The old id is never reused.
+    If the `sink`, `subscriberId` or `subscriptions-url` changed, the state is reset to `PENDING` (id and `validUntil`
+    cleared, so the indicator is `DEGRADED` until the new POST succeeds), and if an old id was known the re-registration
+    first sends the best-effort `unsubscribe` with the **old** target (old URL, old resolved credentials) and the old id;
+    a failure is logged at INFO and does not stop the POST. The old id is never reused. For any other change (`types`,
+    `origin`, credentials, protocol settings) the publisher renews in place, so the phase and `validUntil` stay as they
+    were until the new outcome (Decision 7).
   - A publisher that becomes invalid (types or `origin` removed) is treated like a removal (cancel, best-effort
     `unsubscribe` with the old target) and then gets a `SKIPPED` state; one that becomes valid again is treated like an
     addition.
-  - **removed** (or the URL dropped): cancel, remove the state (it leaves the health check), and fire a best-effort
+  - **removed** (or the URL set to `""`, Decision 1): cancel, remove the state (it leaves the health check), and fire a best-effort
     `unsubscribe` with the old target when an id is known (Decision 7).
-- The periodic backstop: after each run (the first one after `initial-delay`, Step 3), `reconcile()` schedules its next run
-  with the then-current `reconcile-interval` (a non-positive value falls back to the default). It does not use
-  `scheduleWithFixedDelay`, so a refreshed interval applies and an exception cannot cancel the series; the next run is
-  scheduled in a `finally`. It catches a `RefreshEvent` published outside the lock (e.g. tests, other refresh paths) and
+- The periodic backstop is a separate private `backstopTick()`: it runs `reconcile()` and, in a `finally`, schedules the
+  next `backstopTick()` with the then-current `reconcile-interval` (a non-positive value falls back to the default).
+  `reconcile()` itself never schedules a reconcile, so refresh-triggered runs cannot multiply the chain: there is exactly
+  one chain, started once by the guarded startup handler (Step 3). It does not use `scheduleWithFixedDelay`, so a
+  refreshed interval applies and an exception cannot cancel the series. The backstop catches a `RefreshEvent` published outside the lock (e.g. tests, other refresh paths) and
   refresh keys that are rebound late. A reconcile with no differences does nothing.
 - Tests:
   - Extend `DataSpaceEventSubscriberTest`, parameterized over add / change types / change origin / change URL / change sink /
-    change global client id (no publisher override) / remove / remove URL / remove origin. Each case checks registrations,
+    change global client id (no publisher override) / blank override client id (falls back to the global one) / remove /
+    remove URL (set to `""`, since a refresh cannot drop a key) / remove origin. Each case checks registrations,
     cancellations, `unsubscribe` calls (old URL, old resolved credentials and old id, sent before the new POST, for change
     URL and change sink only when an id is known; none for change types, change client id or after a `409`) and the health
     details. A reconcile with unchanged properties makes no client call.
+  - Change sink (and change URL) after a successful registration, then the new POST fails: the publisher is `PENDING` and
+    the indicator `DEGRADED`. Change types with a failing POST: the indicator stays `UP` until the old `validUntil`.
   - A `RefreshEvent` before `ServerStartupEvent` schedules nothing; after startup, a refresh and the backstop reconciling
     the same added publisher create exactly one state and one registration.
   - The backstop reschedules itself with a refreshed `reconcile-interval` and keeps running after a reconcile that throws.
+  - After startup and K `RefreshEvent`s (all run), the fake scheduler holds exactly one pending backstop task.
   - A context test modelled on `EventDeduplicatorTest.refreshedLimitsApplyToTheLiveCache`:
     - Start `ApplicationContext` with the subscriber enabled and a `@MockBean`/`@Replaces` client.
     - Add a publisher to the mutable property source and publish `RefreshEvent(refreshAndDiff())` inside
@@ -290,7 +311,9 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     publisher's `dataspace.events.publisher.origin`, or the handshake fails.
   - Which client id is used where (Decision 4).
   - Retry/backoff, renewal timing, 409 handling (including the CM-2 cap note and the `CONFLICT` state).
-  - Refresh behaviour (added, changed, removed; the DELETE of the old subscription on a sink/URL change).
+  - Refresh behaviour (added, changed, removed; the DELETE of the old subscription and `DEGRADED` until re-registration on
+    a sink/URL change). Clearing `subscriptions-url` or a per-publisher `client-id`/`scopes` override at runtime needs an
+    empty value (`""` / `[]`), because a removed key keeps its previous value.
   - The health indicator `dataspace-subscriptions`: its states, and why it reports `DEGRADED` instead of `DOWN` (it must not
     fail `/health`, readiness or liveness probes, or the publisher's handshake could never reach the pod). It also notes that
     anonymous `/health` only shows the overall status, and that `endpoints.health.details-visible: ANONYMOUS` exposes the
