@@ -83,6 +83,18 @@ final class RecordingTaskScheduler implements TaskScheduler {
         Task task;
         synchronized (this) {
             task = pending().stream().findFirst().orElseThrow(() -> new AssertionError("No pending task."));
+        }
+        return run(task);
+    }
+
+    /**
+     * Runs the given pending task and returns it.
+     */
+    Task run(Task task) {
+        synchronized (this) {
+            if (task.isDone()) {
+                throw new AssertionError("Task is not pending.");
+            }
             task.done = true;
         }
         task.command.run();

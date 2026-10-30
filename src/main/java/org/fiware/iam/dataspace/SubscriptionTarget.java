@@ -5,6 +5,7 @@ import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.SubscriberSettings;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -31,6 +32,14 @@ public record SubscriptionTarget(String publisherId, String subscriptionsUrl, Li
         return new SubscriptionTarget(publisher.getId(), publisher.getSubscriptionsUrl(), publisher.getTypes(),
                 publisher.getOrigin(), clientId, scopes == null ? Set.of() : Set.copyOf(scopes), ownId, settings.getSink(),
                 protocolSettings.getClientId(), protocolSettings.getScopes());
+    }
+
+    /**
+     * Whether the publisher keys a registration with other the same way (subscriberId, sink, at the same URL), so it renews in place.
+     */
+    public boolean sameKeyAs(SubscriptionTarget other) {
+        return Objects.equals(subscriptionsUrl, other.subscriptionsUrl) && Objects.equals(subscriberId, other.subscriberId)
+                && Objects.equals(sink, other.sink);
     }
 
     private static List<String> copy(@Nullable List<String> values) {

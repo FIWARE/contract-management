@@ -98,6 +98,22 @@ final class PublisherState {
     }
 
     /**
+     * Points the loop at a changed target and returns its new generation. A re-keyed subscription is a different one at
+     * the publisher, so it starts over as PENDING without the old id; otherwise phase and lease stay until the next outcome.
+     */
+    synchronized long retarget(SubscriptionTarget changed, boolean rekeyed) {
+        cancel();
+        target = changed;
+        attempt = 0;
+        if (rekeyed) {
+            phase = Phase.PENDING;
+            subscriptionId = null;
+            validUntil = null;
+        }
+        return generation;
+    }
+
+    /**
      * Cancels the pending task and invalidates every callback of the current loop.
      */
     synchronized void cancel() {
