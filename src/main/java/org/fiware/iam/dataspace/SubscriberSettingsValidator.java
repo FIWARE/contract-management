@@ -17,12 +17,18 @@ final class SubscriberSettingsValidator {
 
     static final String SINK_KEY = "dataspace.events.subscriber.sink";
     static final String PROTOCOL_CLIENT_ID_KEY = "dataspace.events.subscriber.protocol-settings.client-id";
+    static final String OWN_ID_KEY = "dataspace.events.own-participant-id";
+    static final String DID_KEY = "general.did";
     private static final Set<String> SINK_SCHEMES = Set.of("http", "https");
 
     private SubscriberSettingsValidator() {
     }
 
-    static Optional<String> problem(DataSpaceEventsProperties.SubscriberSettings subscriber) {
+    static Optional<String> problem(DataSpaceEventsProperties.SubscriberSettings subscriber, @Nullable String ownId) {
+        if (ownId == null || ownId.isBlank()) {
+            return Optional.of("The subscriber needs %s or %s, the subscriberId the publishers' verifiers expect."
+                    .formatted(OWN_ID_KEY, DID_KEY));
+        }
         if (!isHttpUrl(subscriber.getSink())) {
             return Optional.of("The subscriber needs %s set to the absolute http(s) URL of the own POST /events, was '%s'."
                     .formatted(SINK_KEY, subscriber.getSink()));
