@@ -44,12 +44,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Verifies the verifier-issued bearer token of an incoming event and extracts the caller's participant id.
+ * Verifies the verifier-issued bearer token of an incoming event or subscription request and extracts the caller's participant id.
  * Reads the refreshable verifier configuration on every call; a refresh that makes it unusable fails closed.
  */
 @Slf4j
 @Context
-@Requires(condition = DataSpaceEventsProperties.ListenerCondition.class)
+@Requires(condition = DataSpaceEventsProperties.VerifierCondition.class)
 public class BearerVerifier {
 
     private static final String BEARER_SCHEME = "Bearer ";
@@ -145,10 +145,10 @@ public class BearerVerifier {
      */
     private static Optional<String> misconfiguration(DataSpaceEventsProperties.Listener.Verifier verifier) {
         if (isBlank(verifier.getAudience())) {
-            return Optional.of(CONFIG_PREFIX + "audience is required when the event listener is enabled.");
+            return Optional.of(CONFIG_PREFIX + "audience is required when the event listener or publisher is enabled.");
         }
         if (isBlank(verifier.getJwksUrl())) {
-            return Optional.of(CONFIG_PREFIX + "jwks-url is required when the event listener is enabled.");
+            return Optional.of(CONFIG_PREFIX + "jwks-url is required when the event listener or publisher is enabled.");
         }
         if (isEmpty(verifier.getAlgorithms())) {
             return Optional.of(CONFIG_PREFIX + "algorithms must not be empty.");
