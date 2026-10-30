@@ -28,7 +28,7 @@ class SubscriberStartupGuardTest {
     static Stream<Arguments> startingConfigurations() {
         return Stream.of(
                 Arguments.of("valid", valid(), true),
-                Arguments.of("http sink", with(SubscriberStartupGuard.SINK_KEY, "http://cm.consumer.org/events"), true),
+                Arguments.of("http sink", with(SubscriberSettingsValidator.SINK_KEY, "http://cm.consumer.org/events"), true),
                 Arguments.of("subscriber disabled, nothing set", Map.of(SUBSCRIBER_ENABLED, "false"), false));
     }
 
@@ -36,18 +36,18 @@ class SubscriberStartupGuardTest {
         return Stream.of(
                 Arguments.of("listener disabled", with(SubscriberStartupGuard.LISTENER_ENABLED_KEY, "false"),
                         SubscriberStartupGuard.LISTENER_ENABLED_KEY),
-                Arguments.of("no sink", without(SubscriberStartupGuard.SINK_KEY), SubscriberStartupGuard.SINK_KEY),
-                Arguments.of("blank sink", with(SubscriberStartupGuard.SINK_KEY, " "), SubscriberStartupGuard.SINK_KEY),
-                Arguments.of("relative sink", with(SubscriberStartupGuard.SINK_KEY, "/events"), SubscriberStartupGuard.SINK_KEY),
-                Arguments.of("sink without host", with(SubscriberStartupGuard.SINK_KEY, "https:/events"), SubscriberStartupGuard.SINK_KEY),
-                Arguments.of("non-http sink", with(SubscriberStartupGuard.SINK_KEY, "ftp://cm.consumer.org/events"),
-                        SubscriberStartupGuard.SINK_KEY),
-                Arguments.of("malformed sink", with(SubscriberStartupGuard.SINK_KEY, "https://cm consumer/events"),
-                        SubscriberStartupGuard.SINK_KEY),
-                Arguments.of("no protocol client id", without(SubscriberStartupGuard.PROTOCOL_CLIENT_ID_KEY),
-                        SubscriberStartupGuard.PROTOCOL_CLIENT_ID_KEY),
-                Arguments.of("blank protocol client id", with(SubscriberStartupGuard.PROTOCOL_CLIENT_ID_KEY, ""),
-                        SubscriberStartupGuard.PROTOCOL_CLIENT_ID_KEY));
+                Arguments.of("no sink", without(SubscriberSettingsValidator.SINK_KEY), SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("blank sink", with(SubscriberSettingsValidator.SINK_KEY, " "), SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("relative sink", with(SubscriberSettingsValidator.SINK_KEY, "/events"), SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("sink without host", with(SubscriberSettingsValidator.SINK_KEY, "https:/events"), SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("non-http sink", with(SubscriberSettingsValidator.SINK_KEY, "ftp://cm.consumer.org/events"),
+                        SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("malformed sink", with(SubscriberSettingsValidator.SINK_KEY, "https://cm consumer/events"),
+                        SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("no protocol client id", without(SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY),
+                        SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY),
+                Arguments.of("blank protocol client id", with(SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY, ""),
+                        SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -71,8 +71,8 @@ class SubscriberStartupGuardTest {
         return Map.of(
                 SUBSCRIBER_ENABLED, "true",
                 SubscriberStartupGuard.LISTENER_ENABLED_KEY, "true",
-                SubscriberStartupGuard.SINK_KEY, SINK,
-                SubscriberStartupGuard.PROTOCOL_CLIENT_ID_KEY, PROTOCOL_CLIENT_ID);
+                SubscriberSettingsValidator.SINK_KEY, SINK,
+                SubscriberSettingsValidator.PROTOCOL_CLIENT_ID_KEY, PROTOCOL_CLIENT_ID);
     }
 
     private static Map<String, Object> with(String key, Object value) {
