@@ -42,11 +42,18 @@ public class PublisherSubscriptionClient {
     private final Optional<AuthHandler> authHandler;
 
     /**
-     * Outcome of an accepted registration; both values are null for a 409, which carries no subscription.
+     * Outcome of an accepted registration; {@code conflict} marks a 409, which carries no subscription (id and expiry null).
      */
-    public record Registration(@Nullable String id, @Nullable Instant expiresAt) {
+    public record Registration(@Nullable String id, @Nullable Instant expiresAt, boolean conflict) {
 
-        static final Registration CONFLICT = new Registration(null, null);
+        public static final Registration CONFLICT = new Registration(null, null, true);
+
+        /**
+         * A 2xx answer; the publisher may omit the id or the expiry.
+         */
+        public static Registration registered(@Nullable String id, @Nullable Instant expiresAt) {
+            return new Registration(id, expiresAt, false);
+        }
     }
 
     /**
@@ -63,11 +70,16 @@ public class PublisherSubscriptionClient {
      * Removes our subscription; a 404 counts as success, because the subscription is gone either way.
      */
     public Mono<Void> unsubscribe(SubscriptionTarget target, String subscriptionId) {
-        String url = UriBuilder.of(target.subscriptionsUrl()).path(subscriptionId).build().toString();
-        return Mono.defer(() -> exchange(target, HttpRequest.DELETE(url), String.class))
-                .then()
-                .onErrorResume(e -> hasStatus(e, HttpStatus.NOT_FOUND), e -> Mono.empty())
-                .onErrorMap(e -> failure(target, url, "removal of subscription " + subscriptionId + " failed", e));
+        String message = "removal of subscription " + subscriptionId + " failed";
+        return Mono.defer(() -> {
+                    String url = UriBuilder.of(target.subscriptionsUrl()).path(subscriptionId).build().toString();
+                    return exchange(target, HttpRequest.DELETE(url), String.class)
+                            .then()
+                            .onErrorResume(e -> hasStatus(e, HttpStatus.NOT_FOUND), e -> Mono.empty())
+                            .onErrorMap(e -> failure(target, url, message, e));
+                })
+                // only reached when the URL itself cannot be built
+                .onErrorMap(e -> failure(target, target.subscriptionsUrl(), message, e));
     }
 
     // a non-2xx answer may be returned (first call inside executeWithAuth) or thrown; both end up as the thrown shape
@@ -99,7 +111,7 @@ public class PublisherSubscriptionClient {
         SubscriptionVO subscription = response.getBody(SubscriptionVO.class)
                 .orElseThrow(() -> new EventSubscriptionException(target.publisherId(), target.subscriptionsUrl(),
                         "answered " + response.code() + " without a subscription", response.code(), null));
-        return new Registration(subscription.getId(), subscription.getExpiresAt());
+        return Registration.registered(subscription.getId(), subscription.getExpiresAt());
     }
 
     private static boolean hasStatus(Throwable e, HttpStatus status) {

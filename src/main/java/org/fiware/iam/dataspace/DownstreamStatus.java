@@ -20,7 +20,7 @@ final class DownstreamStatus {
         return e instanceof HttpClientResponseException hcre ? Optional.of(hcre.getResponse().code()) : Optional.empty();
     }
 
-    // redirects are not followed, so a 3xx is a failure as well
+    // a 3xx that reaches us (not followed by the caller's client) is a failure as well
     static boolean isSuccess(int status) {
         return status >= HttpStatus.OK.getCode() && status < HttpStatus.MULTIPLE_CHOICES.getCode();
     }

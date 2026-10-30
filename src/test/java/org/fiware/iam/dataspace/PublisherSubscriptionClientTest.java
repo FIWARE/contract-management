@@ -33,6 +33,7 @@ import java.util.stream.Stream;
 import static org.fiware.iam.http.Oid4VpAuthHandler.CLIENT_ID_ATTRIBUTE;
 import static org.fiware.iam.http.Oid4VpAuthHandler.SCOPE_ATTRIBUTE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -115,7 +116,7 @@ class PublisherSubscriptionClientTest {
     void mapsACreatedSubscriptionToARegistration(Shape shape) {
         answer = request -> Mono.just(HttpResponse.created(subscription()));
 
-        assertEquals(new Registration(SUBSCRIPTION_ID, EXPIRES_AT), client(shape).subscribe(TARGET).block());
+        assertEquals(Registration.registered(SUBSCRIPTION_ID, EXPIRES_AT), client(shape).subscribe(TARGET).block());
     }
 
     @ParameterizedTest(name = "{0}")
@@ -123,7 +124,17 @@ class PublisherSubscriptionClientTest {
     void mapsAConflictToAnEmptyRegistration(Shape shape) {
         answer = failing(HttpStatus.CONFLICT.getCode());
 
-        assertEquals(new Registration(null, null), client(shape).subscribe(TARGET).block());
+        assertEquals(new Registration(null, null, true), client(shape).subscribe(TARGET).block());
+    }
+
+    @Test
+    void doesNotMistakeAnEmptySubscriptionForAConflict() {
+        answer = request -> Mono.just(HttpResponse.created(new SubscriptionVO()));
+
+        Registration registration = client(Shape.RETURNED).subscribe(TARGET).block();
+
+        assertEquals(Registration.registered(null, null), registration);
+        assertFalse(registration.conflict());
     }
 
     static Stream<Arguments> failedRegistrations() {
@@ -214,6 +225,18 @@ class PublisherSubscriptionClientTest {
             assertEquals(expectedFailure, e.getStatus());
             assertEquals(SUBSCRIPTIONS_URL + "/" + SUBSCRIPTION_ID, e.getSubscriptionsUrl());
         }
+    }
+
+    @Test
+    void unsubscribeFailsInTheMonoOnAnUnusableUrl() {
+        SubscriptionTarget withoutUrl = new SubscriptionTarget(PUBLISHER_ID, null, List.of(TYPE), "cm.provider.org",
+                CLIENT_ID, SCOPES, OWN_ID, SINK, PROTOCOL_CLIENT_ID, PROTOCOL_SCOPES);
+
+        Mono<Void> removal = client(Shape.RETURNED).unsubscribe(withoutUrl, SUBSCRIPTION_ID);
+
+        EventSubscriptionException e = assertThrows(EventSubscriptionException.class, removal::block);
+        assertEquals(PUBLISHER_ID, e.getPublisherId());
+        assertNull(e.getStatus());
     }
 
     private PublisherSubscriptionClient client(Shape shape) {
