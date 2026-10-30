@@ -25,6 +25,7 @@ import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -83,11 +84,13 @@ public class EventDelivery {
 
     /**
      * Queues the event for every active subscription of its type and returns at once; the outcome is only logged and counted.
+     * Returns the number of matching subscriptions, including those whose queue overflowed.
      */
-    public void publish(DataSpaceEventVO event) {
+    public int publish(DataSpaceEventVO event) {
         Objects.requireNonNull(event.getType(), "An event to publish needs a type.");
         pruneChannels();
-        for (Subscription subscription : registry.active(event.getType())) {
+        List<Subscription> subscriptions = registry.active(event.getType());
+        for (Subscription subscription : subscriptions) {
             SubscriptionChannel channel = channels.computeIfAbsent(subscription.id(),
                     id -> new SubscriptionChannel(queueSize(), (ch, queued) -> deliver(id, ch, queued)));
             switch (channel.offer(event)) {
@@ -102,6 +105,7 @@ public class EventDelivery {
                 case CLOSED -> count(event, Outcome.EXPIRED);
             }
         }
+        return subscriptions.size();
     }
 
     /**
