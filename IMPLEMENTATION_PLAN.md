@@ -14,8 +14,14 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
 2. **Own sink:** `dataspace.events.subscriber.sink`, the public URL of this CM's `POST /events`. It is required when the
    subscriber is enabled. The subscriber also requires `listener.enabled`, because the publisher's `OPTIONS` handshake hits
    our listener. Both are checked at startup.
-3. **Types:** each publisher is subscribed for its configured `types`. An entry with `subscriptions-url` but no types is
-   skipped with a WARN at reconcile time.
+3. **Types and origin:** each publisher is subscribed for its configured `types`. Its `origin` must be set as well:
+   during the publisher's `OPTIONS` handshake, our `EventListener` answers `WebHook-Allowed-Origin` only for an origin
+   configured on a `publishers[]` entry (`DataSpaceEventsProperties.allowedOrigin`). Without it every registration would fail
+   with an opaque `400 handshake failed` and retry forever. An entry with `subscriptions-url` but no types or a blank
+   `origin` is therefore skipped with a WARN at reconcile time (not at startup, because publishers are refreshable). It is
+   not contacted, does not affect the health status, and shows as `SKIPPED` with the reason in the health details. A
+   wrong-but-present origin cannot be detected locally; the README states that `origin` must equal the publisher's
+   `dataspace.events.publisher.origin`.
 4. **Credentials:** these are two different pairs of values.
    - `subscriber.protocol-settings.client-id` / `.scopes` go into the request's `protocolsettings`. They are the OID4VP client
      at **our** verifier that the publisher uses when our sink answers 401. `client-id` is required (the API requires it).
@@ -28,33 +34,53 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
    - `initial-delay` `PT5S`: delay before the first registration after startup.
    - `retry.initial-backoff` `PT5S` and `retry.max-backoff` `PT5M`: exponential backoff with no attempt limit, because a
      publisher may be down for a long time.
-   - `renewal-fraction` `0.5`: renew after this fraction of the remaining lease (`expiresAt - now`).
+   - `renewal-fraction` `0.5`: renew after this fraction of the remaining lease (`expiresAt - now`). A value outside the open
+     interval `(0, 1)` falls back to the default: `>= 1` would renew at or after expiry, `<= 0` would renew every
+     `min-renewal-delay`.
    - `min-renewal-delay` `PT10S`: lower bound on the renewal delay, so a tiny or past `expiresAt` cannot cause a tight loop.
    - `conflict-renewal-interval` `PT1H`: when to re-register after a `409`, since that response has no `expiresAt`.
    - `reconcile-interval` `PT1M`: periodic backstop reconcile (see Step 4).
-6. **409:** counts as success (acceptance criterion). The publisher is marked registered and re-registered after
-   `conflict-renewal-interval`. **Review note:** a CM-2 publisher answers `409` when its subscription cap is reached, not
-   for an existing subscription (it renews in place with `201`). This rule therefore mainly serves other publishers. The INFO
-   line says "409 treated as existing subscription" so an operator can spot the cap case.
+6. **409:** counts as success (acceptance criterion): it does not degrade the health status, and the publisher is
+   re-registered after `conflict-renewal-interval`. **Review note:** a CM-2 publisher answers `409` when its subscription
+   cap is reached, not for an existing subscription (it renews in place with `201`). This rule therefore mainly serves
+   other publishers. To keep the cap case visible, the publisher's state in the health details is `CONFLICT` (not
+   `REGISTERED`), and the INFO line says "409 treated as existing subscription".
 7. **Refresh changes:**
    - An added publisher is registered without a restart.
-   - A publisher whose `subscriptions-url`, `types` or credentials changed is re-registered immediately. So is every publisher
-     when `sink` or `protocol-settings` changed.
+   - A publisher whose `subscriptions-url`, `types`, `origin` or credentials changed is re-registered immediately. So is
+     every publisher when `sink`, `protocol-settings` or the global `client-id`/`scopes` changed.
+   - CM-2 keys subscriptions by `(subscriberId, sink)`. A changed `sink` or `subscriptions-url` would therefore leave the old
+     subscription live (it keeps receiving deliveries until its lease expires and counts against
+     `maxSubscriptionsPerSubscriber`, which can turn the re-POST into a `409`). When the old subscription id is known, the
+     re-registration first sends the best-effort `DELETE <old subscriptions-url>/<old id>` with the old snapshot's
+     credentials and then POSTs the new one. Deleting first frees the cap slot; the gap is one round trip, and the old sink
+     is no longer the one we want deliveries on. A changed `types`, `origin` or credential keeps the same key, so the publisher
+     renews in place and no DELETE is sent. Without a known id (never registered, or `409`) nothing can be deleted; the old
+     lease expires on its own.
    - A removed publisher, or one that lost its `subscriptions-url`, gets its pending tasks cancelled and is dropped from the
      health check. A best-effort `DELETE <subscriptions-url>/<id>` is sent when the subscription id is known; a failure is
      only logged at INFO, because the lease expires anyway.
-8. **Health:** `DataSpaceSubscriptionHealthIndicator`, named `dataspace-subscriptions`.
-   - It is UP only when every subscribable publisher holds a registration that has not expired. A 409 counts as unexpired
-     until the next re-registration is due.
-   - It is DOWN from startup until the first success. It also goes DOWN when a renewal keeps failing past `expiresAt`. A failed
-     renewal before expiry stays UP, because the publisher still delivers.
-   - Details map each publisher id to its state (`PENDING|REGISTERED|EXPIRED`) and `expiresAt`, without error bodies.
-   - With zero subscribable publishers it is UP.
-   - **It must not gate readiness:** the publisher's handshake reaches us through the ingress, so a pod that is not ready
-     could never register (deadlock). Step 3 checks in the micronaut-management 4.7 source which indicators
-     `/health/readiness` aggregates. If this one would be included, exclude it there, for example with the qualifier the
-     endpoint filters on. A test asserts that `/health/readiness` stays UP while the subscriber is DOWN. If no exclusion is
-     possible, stop and report it in the PR instead of shipping the deadlock.
+8. **Health:** `DataSpaceSubscriptionHealthIndicator`, named `dataspace-subscriptions`. **It never reports `DOWN`.**
+   - Why: the publisher's `OPTIONS` handshake reaches us through the Service/ingress. A pod that is not ready never receives
+     it, so registration could never succeed (deadlock), and a failing liveness probe would restart the pod in a loop. The
+     k3s manifest (`src/test/resources/k3s/contract-management-provider.yaml`) probes plain `/health` for both, and
+     deployments may do the same. Checked in the micronaut-management 4.7 source: `/health` and `/health/readiness` both
+     aggregate every indicator not qualified `@Liveness` (`HealthEndpoint.getReadinessHealthIndicators`), so excluding the
+     indicator from readiness is not possible. Requiring operators to change their probes was rejected because the deadlock
+     would come back silently with any chart that keeps `/health`.
+   - Status: `UP` when every subscribable publisher holds a registration that has not expired (`REGISTERED`, or `CONFLICT`
+     until the next re-registration is due). Otherwise a named constant `DEGRADED` status,
+     `new HealthStatus("DEGRADED", <description>, null, null)`: `operational` and `severity` are null, so
+     `DefaultHealthAggregator` ranks it above `UP` and below `DOWN` (`HealthStatus.compareTo`), and `HealthResultFilter` keeps
+     HTTP 200 (it only answers 503 for a mapped `DOWN` or `operational == false`). A real `DOWN` from another indicator still
+     wins the aggregate.
+   - This `DEGRADED` result is the "unhealthy" signal of the acceptance criteria. It is asserted on the indicator's result and
+     details, and is visible in `/health` (overall status and the `dataspace-subscriptions` entry) without failing a probe.
+   - It is `DEGRADED` from startup until the first success. It is also `DEGRADED` when a renewal keeps failing past
+     `expiresAt`. A failed renewal before expiry stays `UP`, because the publisher still delivers.
+   - Details map each publisher id to its state (`PENDING|REGISTERED|CONFLICT|EXPIRED|SKIPPED`), `expiresAt` and, for
+     `SKIPPED`, the reason (Decision 3). No error bodies.
+   - With zero subscribable publishers it is `UP`.
 9. **HTTP client:** the subscriptions URL is chosen by the operator, not by a participant, so the default `HttpClient` is used
    (not `PublisherHttpClientConfiguration`). Auth goes through `Optional<AuthHandler>.executeWithAuth`, as in
    `ContractManagementAdapter`. No new OpenAPI generation is needed: requests and responses use the existing
@@ -80,6 +106,9 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
   - `listener.enabled` is false;
   - `sink` is blank or not an absolute `http(s)` URI;
   - `protocol-settings.client-id` is blank.
+
+  The publisher entries (types, origin) are not checked here: they are refreshable, so `DataSpaceEventSubscriber` checks
+  them on every reconcile (Decision 3).
 - Tests:
   - Extend `DataSpaceEventsPropertiesTest` with a parameterized check of the defaults and of the binding of
     `dataspace.events.subscriber.*` and the new `publishers[]` fields.
@@ -130,32 +159,41 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     - the `ScheduledFuture` of the next task
     - a `generation` counter; a callback whose generation is stale is ignored, so cancelled or replaced loops never act twice.
     Mutations synchronize on the state.
-  - `onApplicationEvent(ServerStartupEvent)`: for every publisher with `subscriptions-url` and types, create a `PENDING` state
-    and schedule a registration after `initial-delay`. Duplicate publisher ids are skipped with a WARN.
+  - `onApplicationEvent(ServerStartupEvent)`: for every publisher with `subscriptions-url`, types and a non-blank `origin`,
+    create a `PENDING` state and schedule a registration after `initial-delay`. An entry with `subscriptions-url` but no
+    types or no `origin` gets a `SKIPPED` state with the reason and a WARN (Decision 3). Duplicate publisher ids are
+    skipped with a WARN.
   - Registration task, which re-reads the current publisher from the properties and stops if it is gone:
     - Success: store the id and `expiresAt` and mark the state `REGISTERED`. Schedule renewal after
       `max(minRenewalDelay, (expiresAt - now) * renewalFraction)`. A missing `expiresAt` is treated like a 409. Log at INFO
       (`Subscribed to <publisher> at <url> until <expiresAt>`).
-    - 409: same as success, with renewal after `conflict-renewal-interval` (Decision 6).
+    - 409: state `CONFLICT`, no id, renewal after `conflict-renewal-interval` (Decision 6).
     - Failure: log a WARN with `DownstreamError.reason(e)` and the next delay, attached once. Schedule a retry after
       `min(maxBackoff, initialBackoff * 2^attempt)`. Negative or zero configured durations fall back to the defaults, as
-      `EventDelivery.positiveOrDefault` does. Renewal is the same task, so a failed renewal retries with backoff.
+      `EventDelivery.positiveOrDefault` does, and a `renewal-fraction` outside `(0, 1)` falls back to its default
+      (Decision 5). Renewal is the same task, so a failed renewal retries with backoff.
 - `src/main/java/org/fiware/iam/dataspace/DataSpaceSubscriptionHealthIndicator.java` (`@Singleton`, `SubscriberCondition`,
   implements `HealthIndicator`):
   - It computes the result from the subscriber's states and the `Clock` (Decision 8). It does not keep its own boolean map, so
     expiry is evaluated at query time.
-  - Details hold the per-publisher state.
-  - Verify and document the readiness exclusion (Decision 8).
+  - `UP` or the `DEGRADED` constant status, never `DOWN`. Details hold the per-publisher state.
+  - A short class Javadoc states why it never reports `DOWN` (probe deadlock).
 - Tests: `DataSpaceEventSubscriberTest` uses a mocked client, a fake `TaskScheduler` that records `(delay, Runnable)` and runs
   tasks on demand, and `MutableClock`. Parameterize where the shape repeats.
   - **Acceptance:** the publisher is unavailable at startup. The client fails N times, the retries follow the backoff and are
-    capped at `maxBackoff`, and the health is DOWN after every failure. It is UP right after the first success.
-  - **Acceptance:** renewal is scheduled before `expiresAt` (fractions, a tiny lease → `minRenewalDelay`, a past `expiresAt`).
-    Running the task re-registers. A renewal failing past `expiresAt` turns the health DOWN, and the next success turns it UP.
-  - **Acceptance:** `409` → healthy, re-registration after `conflict-renewal-interval`.
-  - Publishers without `subscriptions-url` or without types are not contacted and not part of the health check.
+    capped at `maxBackoff`, and the indicator is `DEGRADED` after every failure. It is `UP` right after the first success.
+  - **Acceptance:** renewal is scheduled before `expiresAt`, parameterized over fractions (including `0`, `1`, `1.5` and
+    negative values falling back to the default), a tiny lease → `minRenewalDelay`, and a past `expiresAt`. Running the
+    task re-registers. A renewal failing past `expiresAt` turns the indicator `DEGRADED`, and the next success turns it `UP`.
+  - **Acceptance:** `409` → `UP` with the publisher in state `CONFLICT`, re-registration after `conflict-renewal-interval`.
+  - Publishers without `subscriptions-url` are not contacted and not in the details. Entries with `subscriptions-url` but no
+    types or a blank `origin` are not contacted, do not affect the status, and show as `SKIPPED` with the reason.
   - A stale-generation callback is ignored.
-  - `DataSpaceSubscriptionHealthIndicatorTest`: UP with no publishers, DOWN while pending, the expiry boundary, and the details.
+  - `DataSpaceSubscriptionHealthIndicatorTest`: `UP` with no publishers, `DEGRADED` while pending, the expiry boundary,
+    `CONFLICT` counting as `UP`, and the details.
+  - Probe test (context with the management port, modelled on `PublishEndpointTest`): with the subscriber
+    `DEGRADED` (client mocked to fail), `GET /health`, `/health/readiness` and `/health/liveness` on port 9090 all return
+    200, and `/health` shows the `dataspace-subscriptions` entry as `DEGRADED`.
 
 ### Step 4: Runtime refresh: added, changed and removed publishers
 - `DataSpaceEventSubscriber` also implements `ApplicationEventListener<RefreshEvent>`:
@@ -166,18 +204,23 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
     registrations themselves run outside the lock.
 - `reconcile()` compares the subscribable publishers with the states:
   - **added:** create a `PENDING` state and register immediately (**acceptance**: subscribed without a restart).
-  - **changed** `subscriptions-url`, `types`, `client-id` or `scopes`, or a changed global `sink`/`protocol-settings`/`client-id`/
-    `scopes`: bump the generation, cancel the future and re-register immediately. The attempt counter is reset. The health
-    stays as it was until the new outcome (the old lease is still valid). If the URL changed, the old subscription id is not
-    reused.
+  - **changed** `subscriptions-url`, `types`, `origin`, `client-id` or `scopes`, or a changed global `sink`/`protocol-settings`/
+    `client-id`/`scopes`: bump the generation, cancel the future and re-register immediately. The attempt counter is reset.
+    The health stays as it was until the new outcome (the old lease is still valid). If the `sink` or `subscriptions-url`
+    changed and an old id is known, the re-registration first sends the best-effort `unsubscribe` for the old URL/id with
+    the old snapshot (Decision 7); a failure is logged at INFO and does not stop the POST. The old id is never reused.
+  - A publisher that becomes invalid (types or `origin` removed) is treated like a removal (cancel, best-effort
+    `unsubscribe`) and then gets a `SKIPPED` state; one that becomes valid again is treated like an addition.
   - **removed** (or the URL dropped): cancel, remove the state (it leaves the health check), and fire a best-effort
     `unsubscribe` when an id is known (Decision 7).
 - A periodic backstop: `reconcile()` also runs every `reconcile-interval`, scheduled with `TaskScheduler.scheduleWithFixedDelay`
   at startup. It catches a `RefreshEvent` published outside the lock (e.g. tests, other refresh paths) and refresh keys that
   are rebound late. A reconcile with no differences does nothing.
 - Tests:
-  - Extend `DataSpaceEventSubscriberTest`, parameterized over add / change types / change URL / change sink / remove / remove
-    URL. Each case checks registrations, cancellations, `unsubscribe` calls and the health details.
+  - Extend `DataSpaceEventSubscriberTest`, parameterized over add / change types / change origin / change URL / change sink /
+    remove / remove URL / remove origin. Each case checks registrations, cancellations, `unsubscribe` calls (old URL and id,
+    sent before the new POST, for change URL and change sink only when an id is known; none for change types or after a
+    `409`) and the health details.
   - A context test modelled on `EventDeduplicatorTest.refreshedLimitsApplyToTheLiveCache`:
     - Start `ApplicationContext` with the subscriber enabled and a `@MockBean`/`@Replaces` client.
     - Add a publisher to the mutable property source and publish `RefreshEvent(refreshAndDiff())` inside
@@ -189,11 +232,14 @@ Base: `ticket-100/work` (CM-1 + CM-2 merged).
 - `README.md`, under `### Data space events`: add a `#### Subscribing to publishers` subsection next to `#### Publishing events`.
   It covers:
   - Enabling the subscriber and its prerequisites (listener enabled, public `sink`, `protocol-settings.client-id`).
-  - The `subscriber.*` keys with defaults, and the per-publisher `subscriptions-url` / `client-id` / `scopes`.
+  - The `subscriber.*` keys with defaults (incl. the valid `renewal-fraction` range), and the per-publisher
+    `subscriptions-url` / `client-id` / `scopes`. A subscribable entry needs `types` and an `origin` that equals the
+    publisher's `dataspace.events.publisher.origin`, or the handshake fails.
   - Which client id is used where (Decision 4).
-  - Retry/backoff, renewal timing, 409 handling (including the CM-2 cap note).
-  - Refresh behaviour (added, changed, removed), the health indicator `dataspace-subscriptions` and why it does not gate
-    readiness.
+  - Retry/backoff, renewal timing, 409 handling (including the CM-2 cap note and the `CONFLICT` state).
+  - Refresh behaviour (added, changed, removed; the DELETE of the old subscription on a sink/URL change).
+  - The health indicator `dataspace-subscriptions`: its states, and why it reports `DEGRADED` instead of `DOWN` (it must not
+    fail `/health`, readiness or liveness probes, or the publisher's handshake could never reach the pod).
   - A YAML example.
   - Update the refresh paragraph: `subscriber.enabled` is startup-only, all other `subscriber.*` keys are refreshable.
 - `src/main/resources/application.yaml`: add a commented `subscriber` block and `subscriptions-url` on the sample publisher,
