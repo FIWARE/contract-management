@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import reactor.core.publisher.Mono;
 
 import java.io.IOException;
@@ -84,6 +85,8 @@ class EventDeliveryTest {
     // timer granularity of the scheduler; a request may come a little early compared to the measured send time
     private static final Duration PACING_TOLERANCE = Duration.ofMillis(10);
     private static final Duration DELIVERY_TIMEOUT = Duration.ofSeconds(5);
+    // long enough for an asynchronously queued delivery to reach the sink
+    private static final Duration QUIET_PERIOD = Duration.ofMillis(300);
     private static final int EVENTS = 3;
     private static final String RETURNED = "returned";
     private static final String THROWN = "thrown";
@@ -351,7 +354,12 @@ class EventDeliveryTest {
 
         delivery.publish(event());
 
-        assertEquals(List.of(), sent);
+        // channels are created synchronously in publish, so none means nothing was queued
+        assertEquals(0, delivery.channelCount());
+        await().during(QUIET_PERIOD).atMost(DELIVERY_TIMEOUT).until(() -> sent.isEmpty());
+        for (EventDelivery.Outcome outcome : EventDelivery.Outcome.values()) {
+            assertEquals(0, count(outcome), outcome.tag());
+        }
     }
 
     @ParameterizedTest(name = "{0}")
@@ -401,10 +409,15 @@ class EventDeliveryTest {
             delivery.publish(event());
         }
         Subscription renewed = subscribe(SUBSCRIBER, SINK, ALLOWED_RATE);
+        // queued behind the earlier ones: a fresh pacer after the renewal would send these in a burst
+        for (int i = 0; i < EVENTS; i++) {
+            delivery.publish(event());
+        }
 
-        awaitCount(EventDelivery.Outcome.DELIVERED, EVENTS);
+        awaitCount(EventDelivery.Outcome.DELIVERED, 2 * EVENTS);
         assertEquals(subscription.id(), renewed.id());
-        assertEquals(EVENTS, sent.size());
+        assertEquals(1, delivery.channelCount());
+        assertEquals(2 * EVENTS, sent.size());
         assertPaced(sent);
     }
 
@@ -425,8 +438,9 @@ class EventDeliveryTest {
         assertEquals(2, count(EventDelivery.Outcome.OVERFLOW));
     }
 
-    @Test
-    void dropsQueuedEventsOfARemovedSubscription() {
+    @ParameterizedTest(name = "pruned before the sink answers: {0}")
+    @ValueSource(booleans = {false, true})
+    void dropsQueuedEventsOfARemovedSubscription(boolean pruned) {
         withOid4Vp();
         Subscription subscription = subscribe(SUBSCRIBER, SINK, null);
         CompletableFuture<HttpResponse<String>> firstAnswer = new CompletableFuture<>();
@@ -436,10 +450,14 @@ class EventDeliveryTest {
         await().atMost(DELIVERY_TIMEOUT).until(() -> sent.size() == 1);
 
         registry.remove(subscription.id(), SUBSCRIBER);
+        if (pruned) {
+            delivery.pruneChannels();
+        }
         firstAnswer.complete(HttpResponse.ok());
 
         awaitCount(EventDelivery.Outcome.EXPIRED, 1);
         assertEquals(1, sent.size());
+        assertEquals(1, count(EventDelivery.Outcome.DELIVERED));
     }
 
     private void assertOutcome(String description, Subscription subscription, EventDelivery.Outcome expectedOutcome,

@@ -72,7 +72,14 @@ final class SubscriptionChannel {
     }
 
     /**
-     * Stops delivery; queued events are dropped.
+     * Accepts no further events. Queued and in-flight ones still run through the delivery, which ends and counts them.
+     */
+    void complete() {
+        queue.tryEmitComplete();
+    }
+
+    /**
+     * Stops delivery at once on shutdown; queued events are dropped uncounted.
      */
     void dispose() {
         worker.dispose();

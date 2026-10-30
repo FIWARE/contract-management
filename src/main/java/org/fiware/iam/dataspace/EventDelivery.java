@@ -103,7 +103,7 @@ public class EventDelivery {
     }
 
     /**
-     * Disposes the channels of removed or expired subscriptions; a renewed subscription keeps its id and its channel.
+     * Closes the channels of removed or expired subscriptions; a renewed subscription keeps its id and its channel.
      */
     @Scheduled(fixedDelay = SubscriptionRegistry.EVICTION_INTERVAL)
     public void pruneChannels() {
@@ -111,9 +111,14 @@ public class EventDelivery {
             if (registry.get(entry.getKey()).isPresent()) {
                 return false;
             }
-            entry.getValue().dispose();
+            // drains the queue through deliver(), so every remaining event is counted as expired
+            entry.getValue().complete();
             return true;
         });
+    }
+
+    int channelCount() {
+        return channels.size();
     }
 
     @PreDestroy
@@ -141,7 +146,7 @@ public class EventDelivery {
                     dropped(subscriptionId, event, attempts, e);
                     return Mono.empty();
                 })
-                // an OID4VP token fetch must not run on the caller's (event loop) thread
+                // keeps publish from sending on the caller's thread
                 .subscribeOn(Schedulers.boundedElastic())
                 .then();
     }
@@ -163,9 +168,11 @@ public class EventDelivery {
         }
         request.setAttribute(CLIENT_ID_ATTRIBUTE, subscription.clientId());
         request.setAttribute(SCOPE_ATTRIBUTE, subscription.scopes());
-        // paces every request, including the one after an OID4VP token fetch
+        // paces every request, including the one after an OID4VP token fetch; the response is handed off the event loop,
+        // because the handler starts the (possibly blocking) token fetch on the thread that delivers it
         Function<MutableHttpRequest<?>, Mono<HttpResponse>> pacedSend = req -> channel.nextSlot(subscription.allowedRate())
-                .then(Mono.defer(() -> Mono.from(httpClient.exchange(req, String.class))));
+                .then(Mono.defer(() -> Mono.<HttpResponse>from(httpClient.exchange(req, String.class))))
+                .publishOn(Schedulers.boundedElastic());
         return authHandler.map(handler -> handler.executeWithAuth(request, pacedSend))
                 .orElseGet(() -> pacedSend.apply(request))
                 .switchIfEmpty(Mono.error(() -> new IllegalStateException("No response from " + subscription.sink())))
