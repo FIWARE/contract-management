@@ -42,7 +42,7 @@ public class SubscriptionRegistry {
      * @throws SubscriptionLimitException if a new subscription would exceed the per-subscriber or the total cap
      */
     public synchronized Subscription register(String subscriberId, URI sink, List<String> types, String clientId,
-                                              Set<String> scopes, @Nullable Integer allowedRate) {
+                                              @Nullable Set<String> scopes, @Nullable Integer allowedRate) {
         Instant now = clock.instant();
         evictExpired(now);
         Optional<Subscription> existing = subscriptions.values().stream()

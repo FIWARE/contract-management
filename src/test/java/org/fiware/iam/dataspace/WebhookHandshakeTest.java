@@ -18,10 +18,12 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,6 +45,9 @@ class WebhookHandshakeTest {
     private static final int NOT_FOUND = 404;
     private static final int SERVER_ERROR = 500;
     private static final int NO_BODY = -1;
+    private static final Duration SHORT_HANDSHAKE_TIMEOUT = Duration.ofMillis(200);
+    // well below the client's read timeout, so only the handshake timeout can end the wait
+    private static final Duration SINK_DELAY = Duration.ofSeconds(3);
     private static final Map<String, Object> CONFIG = Map.of(
             "notification.enabled", false,
             "general.enable-rainbow", false,
@@ -56,6 +61,7 @@ class WebhookHandshakeTest {
     private ApplicationContext context;
     private volatile int status;
     private volatile Map<String, String> responseHeaders;
+    private volatile Duration responseDelay = Duration.ZERO;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -140,6 +146,20 @@ class WebhookHandshakeTest {
     }
 
     @Test
+    void failsWhenTheSinkHangs() {
+        answer(OK, Map.of(WebhookHeaders.ALLOWED_ORIGIN, ORIGIN));
+        responseDelay = SINK_DELAY;
+        context.getBean(DataSpaceEventsProperties.class).getPublisher().setHandshakeTimeout(SHORT_HANDSHAKE_TIMEOUT);
+
+        long start = System.nanoTime();
+        WebhookHandshakeException thrown = assertHandshakeFails(sink(SINK_PATH), "A hanging sink must fail the handshake.");
+
+        assertInstanceOf(TimeoutException.class, thrown.getCause(), "The timeout has to be kept as the cause.");
+        assertTrue(Duration.ofNanos(System.nanoTime() - start).compareTo(SINK_DELAY) < 0,
+                "The handshake timeout has to end the wait before the sink answers.");
+    }
+
+    @Test
     void failsWithoutConfiguredOrigin() {
         answer(OK, Map.of(WebhookHeaders.ALLOWED_ORIGIN, ORIGIN));
         context.getBean(DataSpaceEventsProperties.class).getPublisher().setOrigin(null);
@@ -171,6 +191,11 @@ class WebhookHandshakeTest {
     private void respond(HttpExchange exchange) throws IOException {
         requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getPath(),
                 exchange.getRequestHeaders().getFirst(WebhookHeaders.REQUEST_ORIGIN)));
+        try {
+            Thread.sleep(responseDelay.toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         responseHeaders.forEach((name, value) -> exchange.getResponseHeaders().add(name, value));
         exchange.sendResponseHeaders(status, NO_BODY);
         exchange.close();

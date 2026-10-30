@@ -78,13 +78,10 @@ class SubscriptionRegistryTest {
     }
 
     @Test
-    void keepsTheSubscriptionUnchangedWithoutARenewal() {
-        // a failed renewal handshake never reaches the registry, so the old lease simply runs on
-        Subscription original = register(SUBSCRIBER, SINK, List.of(TYPE));
-        clock.advance(LEASE_TTL.minusSeconds(1));
+    void treatsMissingScopesAsNone() {
+        Subscription subscription = registry.register(SUBSCRIBER, SINK, List.of(TYPE), CLIENT_ID, null, RATE);
 
-        assertEquals(Optional.of(original), registry.get(original.id()));
-        assertEquals(List.of(original), registry.active(TYPE));
+        assertEquals(Set.of(), subscription.scopes());
     }
 
     @Test

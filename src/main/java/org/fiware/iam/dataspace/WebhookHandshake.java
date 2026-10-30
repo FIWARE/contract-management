@@ -12,7 +12,6 @@ import org.fiware.iam.exception.WebhookHandshakeException;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
-import java.time.Duration;
 import java.util.Optional;
 
 /**
@@ -24,8 +23,6 @@ import java.util.Optional;
 public class WebhookHandshake {
 
     static final String ANY = "*";
-    // bounds a sink that trickles its answer, which the per-read timeout of the client does not
-    static final Duration HANDSHAKE_TIMEOUT = Duration.ofSeconds(15);
 
     private final HttpClient httpClient;
     private final DataSpaceEventsProperties properties;
@@ -46,7 +43,8 @@ public class WebhookHandshake {
         }
         HttpRequest<?> request = HttpRequest.OPTIONS(sink.toString()).header(WebhookHeaders.REQUEST_ORIGIN, origin);
         return Mono.from(httpClient.exchange(request, Void.class))
-                .timeout(HANDSHAKE_TIMEOUT)
+                // bounds a sink that trickles its answer, which the per-read timeout of the client does not
+                .timeout(properties.getPublisher().getHandshakeTimeout())
                 .switchIfEmpty(Mono.error(() -> new WebhookHandshakeException(sink, "no response", null)))
                 .map(response -> allowedRate(sink, origin, response))
                 .onErrorMap(e -> !(e instanceof WebhookHandshakeException), e -> new WebhookHandshakeException(sink,

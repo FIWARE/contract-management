@@ -29,6 +29,9 @@ public class DataSpaceEventsProperties {
     public static final Duration DEFAULT_LEASE_TTL = Duration.ofHours(24);
     public static final int DEFAULT_MAX_SUBSCRIPTIONS_PER_SUBSCRIBER = 10;
     public static final int DEFAULT_MAX_SUBSCRIPTIONS = 1000;
+    public static final Duration DEFAULT_SINK_CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    public static final Duration DEFAULT_SINK_READ_TIMEOUT = Duration.ofSeconds(10);
+    public static final Duration DEFAULT_HANDSHAKE_TIMEOUT = Duration.ofSeconds(15);
     public static final int DEFAULT_DELIVERY_MAX_ATTEMPTS = 5;
     public static final Duration DEFAULT_DELIVERY_INITIAL_BACKOFF = Duration.ofSeconds(1);
     public static final Duration DEFAULT_DELIVERY_MAX_BACKOFF = Duration.ofMinutes(1);
@@ -229,6 +232,21 @@ public class DataSpaceEventsProperties {
          * Accepts http sinks as well. When false, only https sinks are accepted.
          */
         private boolean allowInsecureSinks = false;
+
+        /**
+         * Connect timeout of handshake and delivery requests to sinks. Evaluated at startup only.
+         */
+        private Duration sinkConnectTimeout = DEFAULT_SINK_CONNECT_TIMEOUT;
+
+        /**
+         * Read timeout (per read) of handshake and delivery requests to sinks. Evaluated at startup only.
+         */
+        private Duration sinkReadTimeout = DEFAULT_SINK_READ_TIMEOUT;
+
+        /**
+         * Upper bound of a whole handshake, so a sink trickling its answer cannot hold it open.
+         */
+        private Duration handshakeTimeout = DEFAULT_HANDSHAKE_TIMEOUT;
 
         /**
          * Retries and queueing of deliveries.

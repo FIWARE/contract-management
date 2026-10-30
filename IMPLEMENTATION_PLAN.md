@@ -88,7 +88,8 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
   - `@Scheduled(fixedDelay = ...)` eviction of expired leases (named constant interval).
 - `WebhookHandshake` (`@Singleton`, an `HttpClient` injected via `@Client(configuration = PublisherHttpClientConfiguration.class)`,
   see Decision 9). `PublisherHttpClientConfiguration` copies the global client settings, then sets `followRedirects=false` and
-  connect/read timeouts in code. A service entry in `application.yaml` would be lost whenever a deployment or the test classpath
+  connect/read timeouts from `publisher.sink-connect-timeout`/`sink-read-timeout` (`PT5S`/`PT10S`, startup only; a
+  whole handshake is bounded by the refreshable `publisher.handshake-timeout`, `PT15S`). A service entry in `application.yaml` would be lost whenever a deployment or the test classpath
   replaces that file (the test `application.yaml` already shadows the main one):
   `Mono<Optional<Integer>> validate(URI sink)` sends `OPTIONS <sink>` with
   `WebHook-Request-Origin: <publisher.origin>`. It succeeds only on a 2xx whose `WebHook-Allowed-Origin` equals the origin
@@ -211,6 +212,7 @@ Add these under `src/main/java/org/fiware/iam/dataspace/` (`publisher` subpackag
 - `README.md`: add a `#### Publishing events` subsection under `### Data space events` covering:
   - Enabling it, and the `publisher.*` keys with their defaults.
   - The subscription request/response with an example, and the order of the checks (401/403/400/409/503).
+  - The sink timeouts `sink-connect-timeout`/`sink-read-timeout` (startup only) and `handshake-timeout`.
   - The handshake: `WebHook-Request-Origin` = `publisher.origin`, the allowed origin must match, and `WebHook-Allowed-Rate` is
     honoured. No host is derived from the subscriber id.
   - Renewal by re-POSTing; lease expiry.
