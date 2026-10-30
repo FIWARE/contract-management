@@ -40,6 +40,11 @@ import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUB
 @Slf4j
 public class DataSpaceEventSubscriber implements ApplicationEventListener<ServerStartupEvent> {
 
+    /**
+     * Upper bound for every scheduled delay: an unlimited lease or an oversized interval would overflow the scheduler.
+     */
+    static final Duration MAX_SCHEDULE_DELAY = Duration.ofDays(1);
+
     private final DataSpaceEventsProperties properties;
     private final GeneralProperties generalProperties;
     private final PublisherSubscriptionClient client;
@@ -80,6 +85,7 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
             Optional<String> settingsProblem = SubscriberSettingsValidator.problem(settings);
             if (settingsProblem.isPresent()) {
                 log.warn("Not subscribing to any publisher: {}", settingsProblem.get());
+                store.markUnusableSettings(settingsProblem.get());
                 return;
             }
             String ownId = properties.ownId(generalProperties);
@@ -110,10 +116,9 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
                 store.put(publisherId, state);
                 register(state, state.generation());
             }
+            store.markReconciled();
         } catch (RuntimeException e) {
             log.warn("Reconciling the publisher subscriptions failed.", e);
-        } finally {
-            store.markReconciled();
         }
     }
 
@@ -156,8 +161,10 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
                     return;
                 }
                 if (registration.conflict() || registration.expiresAt() == null) {
-                    delay = positiveOrDefault(settings().getConflictRenewalInterval(), DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL);
-                    state.conflict(registration.id(), now.plus(delay));
+                    delay = capped(positiveOrDefault(settings().getConflictRenewalInterval(),
+                            DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL));
+                    // a max-backoff of grace: a failing re-registration is retried before the publisher counts as expired
+                    state.conflict(registration.id(), now.plus(delay).plus(capped(backoff(Integer.MAX_VALUE))));
                 } else {
                     delay = renewalDelay(now, registration.expiresAt());
                     state.registered(registration.id(), registration.expiresAt());
@@ -186,8 +193,9 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
                 if (!state.isCurrent(generation)) {
                     return;
                 }
-                delay = backoff(state.attempt());
-                state.attemptFailed(delay.compareTo(backoff(Integer.MAX_VALUE)) >= 0);
+                Duration backoff = backoff(state.attempt());
+                state.attemptFailed(backoff.compareTo(backoff(Integer.MAX_VALUE)) >= 0);
+                delay = capped(backoff);
                 scheduleNext(state, generation, delay);
             }
             log.warn("Subscribing to {} at {} failed: {}. Retrying in {}.", target.publisherId(), target.subscriptionsUrl(),
@@ -210,7 +218,7 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
         Duration remaining = Duration.between(now, expiresAt);
         Duration delay = remaining.isNegative() ? Duration.ZERO : Duration.ofMillis((long) (remaining.toMillis() * fraction));
         Duration minRenewalDelay = positiveOrDefault(settings().getMinRenewalDelay(), DEFAULT_SUBSCRIBER_MIN_RENEWAL_DELAY);
-        return delay.compareTo(minRenewalDelay) < 0 ? minRenewalDelay : delay;
+        return capped(delay.compareTo(minRenewalDelay) < 0 ? minRenewalDelay : delay);
     }
 
     private SubscriberSettings settings() {
@@ -231,6 +239,10 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
     // invalid values (e.g. blanked by a refresh) fall back to the defaults instead of breaking the subscriptions
     private static Duration positiveOrDefault(@Nullable Duration value, Duration defaultValue) {
         return value != null && value.isPositive() ? value : defaultValue;
+    }
+
+    private static Duration capped(Duration delay) {
+        return delay.compareTo(MAX_SCHEDULE_DELAY) > 0 ? MAX_SCHEDULE_DELAY : delay;
     }
 
     private static boolean isBlank(@Nullable String value) {

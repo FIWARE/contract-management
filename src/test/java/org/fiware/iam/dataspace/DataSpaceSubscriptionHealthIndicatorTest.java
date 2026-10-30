@@ -19,6 +19,7 @@ import static org.fiware.iam.dataspace.DataSpaceSubscriptionHealthIndicator.DEGR
 import static org.fiware.iam.dataspace.DataSpaceSubscriptionHealthIndicator.EXPIRED;
 import static org.fiware.iam.dataspace.DataSpaceSubscriptionHealthIndicator.EXPIRES_AT_DETAIL;
 import static org.fiware.iam.dataspace.DataSpaceSubscriptionHealthIndicator.REASON_DETAIL;
+import static org.fiware.iam.dataspace.DataSpaceSubscriptionHealthIndicator.SETTINGS_DETAIL;
 import static org.fiware.iam.dataspace.DataSpaceSubscriptionHealthIndicator.STATE_DETAIL;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -83,6 +84,20 @@ class DataSpaceSubscriptionHealthIndicatorTest {
         assertEquals(expectedState, publisherDetails.get(STATE_DETAIL));
         assertEquals(phase == Phase.PENDING ? null : VALID_UNTIL.toString(), publisherDetails.get(EXPIRES_AT_DETAIL));
         assertEquals(Map.of(STATE_DETAIL, Phase.SKIPPED.name(), REASON_DETAIL, SKIP_REASON), details(result).get(SKIPPED_ID));
+    }
+
+    @Test
+    void unusableSettingsDegradeUntilTheNextSuccessfulReconcile() {
+        String problem = "dataspace.events.subscriber.sink is blank";
+        store.markReconciled();
+        store.markUnusableSettings(problem);
+
+        HealthResult result = indicator.result();
+        assertEquals(DEGRADED, result.getStatus());
+        assertEquals(Map.of(SETTINGS_DETAIL, problem), result.getDetails());
+
+        store.markReconciled();
+        assertEquals(HealthStatus.UP, indicator.result().getStatus());
     }
 
     @Test

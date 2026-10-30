@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -237,12 +238,53 @@ class DataSpaceEventSubscriberTest {
         start();
 
         assertEquals(HealthStatus.UP, status());
-        assertEquals(new PublisherStatus(Phase.CONFLICT, NOW.plus(CONFLICT_RENEWAL_INTERVAL), null),
+        assertEquals(new PublisherStatus(Phase.CONFLICT, NOW.plus(CONFLICT_RENEWAL_INTERVAL).plus(MAX_BACKOFF), null),
                 store.snapshot().get(PUBLISHER_ID));
         assertEquals(CONFLICT_RENEWAL_INTERVAL, onlyPendingTask().delay());
 
         scheduler.runNext();
         verify(client, times(2)).subscribe(any());
+    }
+
+    @Test
+    void failingConflictReRegistrationDegradesOnlyAfterMaxBackoff() {
+        stubSubscribe(List.of(Mono.just(Registration.CONFLICT), Mono.error(PUBLISHER_DOWN)));
+        start();
+
+        clock.advance(CONFLICT_RENEWAL_INTERVAL);
+        scheduler.runNext();
+        assertEquals(HealthStatus.UP, status(), "the re-registration is still being retried");
+
+        clock.advance(MAX_BACKOFF);
+        assertEquals(DataSpaceSubscriptionHealthIndicator.DEGRADED, status());
+        assertEquals(DataSpaceSubscriptionHealthIndicator.EXPIRED, publisherDetails().get(DataSpaceSubscriptionHealthIndicator.STATE_DETAIL));
+    }
+
+    static Stream<Arguments> oversizedDelays() {
+        Duration oversized = Duration.ofDays(365L * 1000);
+        return Stream.of(
+                Arguments.of("unlimited lease", (Consumer<SubscriberSettings>) settings -> {
+                }, Mono.just(Registration.registered(SUBSCRIPTION_ID, Instant.parse("9999-12-31T23:59:59Z"))), HealthStatus.UP),
+                Arguments.of("oversized conflict interval",
+                        (Consumer<SubscriberSettings>) settings -> settings.setConflictRenewalInterval(oversized),
+                        Mono.just(Registration.CONFLICT), HealthStatus.UP),
+                Arguments.of("oversized max backoff", (Consumer<SubscriberSettings>) settings -> {
+                    settings.getRetry().setInitialBackoff(oversized);
+                    settings.getRetry().setMaxBackoff(oversized);
+                }, Mono.error(PUBLISHER_DOWN), DataSpaceSubscriptionHealthIndicator.DEGRADED));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("oversizedDelays")
+    void oversizedDelaysAreCapped(String description, Consumer<SubscriberSettings> configure, Mono<Registration> answer,
+                                  HealthStatus expectedStatus) {
+        configure.accept(properties.getSubscriber());
+        stubSubscribe(List.of(answer));
+        start();
+
+        assertEquals(DataSpaceEventSubscriber.MAX_SCHEDULE_DELAY, onlyPendingTask().delay());
+        assertEquals(expectedStatus, status());
+        verify(client).subscribe(any());
     }
 
     @Test
@@ -309,6 +351,18 @@ class DataSpaceEventSubscriberTest {
 
         verify(client, never()).subscribe(any());
         assertTrue(scheduler.pending().isEmpty());
+        assertEquals(DataSpaceSubscriptionHealthIndicator.DEGRADED, status());
+        Map<?, ?> details = (Map<?, ?>) indicator.result().getDetails();
+        assertTrue(details.get(DataSpaceSubscriptionHealthIndicator.SETTINGS_DETAIL).toString().contains("sink"));
+    }
+
+    @Test
+    void failedReconcileIsNotReportedAsUp() {
+        properties.getPublishers().add(0, null);
+        start();
+
+        verify(client, never()).subscribe(any());
+        assertEquals(DataSpaceSubscriptionHealthIndicator.DEGRADED, status());
     }
 
     @Test

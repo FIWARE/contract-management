@@ -25,14 +25,16 @@ public class SubscriptionStateStore {
     public enum Phase {PENDING, REGISTERED, CONFLICT, SKIPPED}
 
     /**
-     * Immutable view of one publisher's state. validUntil is the lease end for REGISTERED and the next re-registration for
-     * CONFLICT; reason is only set for SKIPPED.
+     * Immutable view of one publisher's state. validUntil is the lease end for REGISTERED and, for CONFLICT, the next
+     * re-registration plus max-backoff of retries; reason is only set for SKIPPED.
      */
     public record PublisherStatus(Phase phase, @Nullable Instant validUntil, @Nullable String reason) {
     }
 
     private final Map<String, PublisherState> states = new ConcurrentHashMap<>();
     private volatile boolean reconciled;
+    @Nullable
+    private volatile String settingsProblem;
 
     /**
      * The status of every known publisher, ordered by id.
@@ -50,8 +52,20 @@ public class SubscriptionStateStore {
         return reconciled;
     }
 
+    /**
+     * Why the last reconcile could not subscribe anywhere (e.g. a blanked sink); empty once a reconcile succeeded.
+     */
+    public Optional<String> settingsProblem() {
+        return Optional.ofNullable(settingsProblem);
+    }
+
     void markReconciled() {
+        settingsProblem = null;
         reconciled = true;
+    }
+
+    void markUnusableSettings(String problem) {
+        settingsProblem = problem;
     }
 
     Optional<PublisherState> get(String publisherId) {

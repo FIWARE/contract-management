@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Health of the subscriptions at the publishers: UP while every subscribable publisher holds a live registration, else DEGRADED.
@@ -31,6 +32,7 @@ public class DataSpaceSubscriptionHealthIndicator implements HealthIndicator {
     static final String STATE_DETAIL = "state";
     static final String EXPIRES_AT_DETAIL = "expiresAt";
     static final String REASON_DETAIL = "reason";
+    static final String SETTINGS_DETAIL = "subscriber-settings";
 
     /**
      * Without operational flag and severity it ranks between UP and DOWN, and the health endpoints keep answering 200.
@@ -48,8 +50,10 @@ public class DataSpaceSubscriptionHealthIndicator implements HealthIndicator {
 
     HealthResult result() {
         Instant now = clock.instant();
-        boolean healthy = store.isReconciled();
+        Optional<String> settingsProblem = store.settingsProblem();
+        boolean healthy = store.isReconciled() && settingsProblem.isEmpty();
         Map<String, Object> details = new LinkedHashMap<>();
+        settingsProblem.ifPresent(problem -> details.put(SETTINGS_DETAIL, problem));
         for (Map.Entry<String, PublisherStatus> entry : store.snapshot().entrySet()) {
             PublisherStatus status = entry.getValue();
             boolean live = isLive(status, now);
