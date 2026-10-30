@@ -23,10 +23,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -57,6 +60,8 @@ class PublisherSubscriptionClientTest {
     private static final List<String> PROTOCOL_SCOPES = List.of("events");
     private static final String SUBSCRIPTION_ID = "9b2e1f6a-0c41-4d55-8a3e-7d2f5c1b0e88";
     private static final Instant EXPIRES_AT = Instant.parse("2026-10-30T13:00:00Z");
+    private static final Duration SHORT_TIMEOUT = Duration.ofMillis(100);
+    private static final String BLOCKING_THREAD_PREFIX = "boundedElastic";
     private static final SubscriptionTarget TARGET = new SubscriptionTarget(PUBLISHER_ID, SUBSCRIPTIONS_URL, List.of(TYPE),
             "cm.provider.org", CLIENT_ID, SCOPES, OWN_ID, SINK, PROTOCOL_CLIENT_ID, PROTOCOL_SCOPES);
 
@@ -237,6 +242,38 @@ class PublisherSubscriptionClientTest {
         EventSubscriptionException e = assertThrows(EventSubscriptionException.class, removal::block);
         assertEquals(PUBLISHER_ID, e.getPublisherId());
         assertNull(e.getStatus());
+    }
+
+    static Stream<Arguments> calls() {
+        return Stream.of(
+                Arguments.of("subscribe", (Function<PublisherSubscriptionClient, Mono<?>>) client -> client.subscribe(TARGET)),
+                Arguments.of("unsubscribe", (Function<PublisherSubscriptionClient, Mono<?>>) client ->
+                        client.unsubscribe(TARGET, SUBSCRIPTION_ID)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("calls")
+    void failsInsteadOfWaitingForeverOnAHangingTokenFetch(String call, Function<PublisherSubscriptionClient, Mono<?>> request) {
+        AuthHandler hanging = (req, executor) -> Mono.never();
+
+        EventSubscriptionException e = assertThrows(EventSubscriptionException.class,
+                () -> request.apply(new PublisherSubscriptionClient(httpClient, Optional.of(hanging), SHORT_TIMEOUT)).block());
+
+        assertNull(e.getStatus());
+        assertTrue(e.getCause() instanceof TimeoutException, String.valueOf(e.getCause()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("calls")
+    void handsTheResponseToTheAuthHandlerOffTheEventLoop(String call, Function<PublisherSubscriptionClient, Mono<?>> request) {
+        answer = req -> Mono.just(HttpResponse.created(subscription()));
+        AtomicReference<String> handlerThread = new AtomicReference<>();
+        AuthHandler recording = (req, executor) -> executor.apply(req)
+                .doOnNext(response -> handlerThread.set(Thread.currentThread().getName()));
+
+        request.apply(new PublisherSubscriptionClient(httpClient, Optional.of(recording))).block();
+
+        assertTrue(handlerThread.get().startsWith(BLOCKING_THREAD_PREFIX), handlerThread.get());
     }
 
     private PublisherSubscriptionClient client(Shape shape) {

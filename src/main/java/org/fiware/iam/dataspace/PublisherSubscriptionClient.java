@@ -10,7 +10,7 @@ import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.http.uri.UriBuilder;
 import jakarta.inject.Singleton;
-import lombok.RequiredArgsConstructor;
+import jakarta.inject.Inject;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.HttpProtocolSettingsVO;
 import org.fiware.iam.events.model.SubscriptionRequestVO;
@@ -18,8 +18,10 @@ import org.fiware.iam.events.model.SubscriptionVO;
 import org.fiware.iam.exception.EventSubscriptionException;
 import org.fiware.iam.http.AuthHandler;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Function;
@@ -33,13 +35,27 @@ import static org.fiware.iam.http.Oid4VpAuthHandler.SCOPE_ATTRIBUTE;
  */
 @Singleton
 @Requires(condition = DataSpaceEventsProperties.SubscriberCondition.class)
-@RequiredArgsConstructor
 public class PublisherSubscriptionClient {
+
+    // bounds a whole exchange including the OID4VP token fetch a 401 triggers, which no client timeout covers
+    static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
     // the subscriptions URL is chosen by the operator, not by a participant, so the default client is used
     private final HttpClient httpClient;
     // only use authentication if a handler is provided
     private final Optional<AuthHandler> authHandler;
+    private final Duration requestTimeout;
+
+    @Inject
+    public PublisherSubscriptionClient(HttpClient httpClient, Optional<AuthHandler> authHandler) {
+        this(httpClient, authHandler, REQUEST_TIMEOUT);
+    }
+
+    PublisherSubscriptionClient(HttpClient httpClient, Optional<AuthHandler> authHandler, Duration requestTimeout) {
+        this.httpClient = httpClient;
+        this.authHandler = authHandler;
+        this.requestTimeout = requestTimeout;
+    }
 
     /**
      * Outcome of an accepted registration; {@code conflict} marks a 409, which carries no subscription (id and expiry null).
@@ -88,9 +104,14 @@ public class PublisherSubscriptionClient {
             request.setAttribute(CLIENT_ID_ATTRIBUTE, target.clientId());
         }
         request.setAttribute(SCOPE_ATTRIBUTE, target.scopes());
-        Function<MutableHttpRequest<?>, Mono<HttpResponse>> send = req -> Mono.<HttpResponse>from(httpClient.exchange(req, bodyType));
+        // the response is handed off the event loop, because the handler starts the (possibly blocking) token fetch on
+        // the thread that delivers it; every registration starts unauthenticated, so that happens on every 401
+        Function<MutableHttpRequest<?>, Mono<HttpResponse>> send = req -> Mono.<HttpResponse>from(httpClient.exchange(req, bodyType))
+                .publishOn(Schedulers.boundedElastic());
         return authHandler.map(handler -> handler.executeWithAuth(request, send))
                 .orElseGet(() -> send.apply(request))
+                // a timeout is a transport error, so the subscriber's backoff retries it instead of waiting forever
+                .timeout(requestTimeout)
                 .switchIfEmpty(Mono.error(() -> new IllegalStateException("No response from " + request.getUri())))
                 .flatMap(response -> DownstreamStatus.isSuccess(response.code()) ? Mono.just(response)
                         : Mono.error(new HttpClientResponseException("Publisher answered " + response.code(), response)));
