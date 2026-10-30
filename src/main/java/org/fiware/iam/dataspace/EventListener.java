@@ -45,7 +45,6 @@ public class EventListener implements EventsApi {
     static final String HANDLER_FAILED = "handler_failed";
     static final String VERIFIER_UNAVAILABLE = "verifier_unavailable";
     static final Duration RETRY_AFTER = Duration.ofSeconds(5);
-    static final String WEBHOOK_ALLOWED_ORIGIN = "WebHook-Allowed-Origin";
 
     private final List<DataSpaceEventHandler> handlers;
     private final BearerVerifier bearerVerifier;
@@ -79,7 +78,7 @@ public class EventListener implements EventsApi {
         // unauthenticated by the CloudEvents webhook spec; it only tells the sender whether to deliver at all
         MutableHttpResponse<Object> response = HttpResponse.ok().header(HttpHeaders.ALLOW, HttpMethod.POST.name());
         properties.allowedOrigin(webHookRequestOrigin)
-                .ifPresent(origin -> response.header(WEBHOOK_ALLOWED_ORIGIN, origin));
+                .ifPresent(origin -> response.header(WebhookHeaders.ALLOWED_ORIGIN, origin));
         return Mono.just(response);
     }
 

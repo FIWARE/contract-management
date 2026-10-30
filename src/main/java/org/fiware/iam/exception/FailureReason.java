@@ -27,7 +27,9 @@ public enum FailureReason {
 	AGREEMENT_FAILED("agreement_failed"),
 	RAINBOW_ERROR("rainbow_error"),
 	TMFORUM_ERROR("tmforum_error"),
-	VERIFIER_UNAVAILABLE("verifier_unavailable");
+	VERIFIER_UNAVAILABLE("verifier_unavailable"),
+	SUBSCRIPTION_LIMIT_REACHED("subscription_limit_reached"),
+	WEBHOOK_HANDSHAKE_FAILED("webhook_handshake_failed");
 
 	private final String code;
 
