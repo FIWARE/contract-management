@@ -45,9 +45,7 @@ public class SubscriptionRegistry {
                                               @Nullable Set<String> scopes, @Nullable Integer allowedRate) {
         Instant now = clock.instant();
         evictExpired(now);
-        Optional<Subscription> existing = subscriptions.values().stream()
-                .filter(subscription -> subscription.subscriberId().equals(subscriberId) && subscription.sink().equals(sink))
-                .findFirst();
+        Optional<Subscription> existing = find(subscriberId, sink);
         if (existing.isEmpty()) {
             enforceCaps(subscriberId);
         }
@@ -56,6 +54,19 @@ public class SubscriptionRegistry {
                 now.plus(leaseTtl()), allowedRate);
         subscriptions.put(id, subscription);
         return subscription;
+    }
+
+    /**
+     * Checks the caps without registering, so a subscriber at its cap cannot make CM run handshakes against hosts of its
+     * choice. Renewals always pass; {@link #register} checks again atomically.
+     *
+     * @throws SubscriptionLimitException if a new subscription would exceed the per-subscriber or the total cap
+     */
+    public synchronized void checkCapacity(String subscriberId, URI sink) {
+        evictExpired(clock.instant());
+        if (find(subscriberId, sink).isEmpty()) {
+            enforceCaps(subscriberId);
+        }
     }
 
     /**
@@ -106,6 +117,12 @@ public class SubscriptionRegistry {
             }
             return false;
         });
+    }
+
+    private Optional<Subscription> find(String subscriberId, URI sink) {
+        return subscriptions.values().stream()
+                .filter(subscription -> subscription.subscriberId().equals(subscriberId) && subscription.sink().equals(sink))
+                .findFirst();
     }
 
     private void enforceCaps(String subscriberId) {

@@ -390,6 +390,8 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <!-- the upstream spec marks fields nullable; keep plain types instead of JsonNullable -->
+                                <openApiNullable>false</openApiNullable>
                                 <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
                                 <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase

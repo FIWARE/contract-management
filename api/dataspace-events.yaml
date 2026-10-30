@@ -96,6 +96,10 @@ paths:
                 $ref: '#/components/schemas/Subscription'
         '400':
           description: The request is invalid or the sink did not pass the webhook handshake.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionError'
         '401':
           description: No valid bearer token was presented.
         '403':
@@ -189,8 +193,9 @@ components:
         - type
     SubscriptionRequest:
       type: object
-      description: Subscription to data space events, shaped after CloudEvents Subscriptions. Missing required fields or
-        empty types are rejected with 400.
+      description: Subscription to data space events, shaped after CloudEvents Subscriptions. The bearer token is checked
+        first (401). A missing subscriberId is rejected with 400, one that differs from the token with 403; the other
+        missing or invalid fields, including empty types, are then rejected with 400.
       properties:
         subscriberId:
           type: string
@@ -221,6 +226,16 @@ components:
         - types
         - protocol
         - protocolsettings
+    SubscriptionError:
+      type: object
+      description: Why a subscription request was refused. Only generic reasons are given, never the sink's answer or a
+        connection error.
+      properties:
+        reason:
+          type: string
+          example: handshake failed
+      required:
+        - reason
     HttpProtocolSettings:
       type: object
       description: Authentication towards the sink. If the sink answers 401, an OID4VP token is fetched for this client and these scopes.
