@@ -11,7 +11,10 @@ import org.fiware.iam.configuration.GeneralProperties;
 @ConfigurationProperties("test")
 public class TestConfiguration {
 
-	private static final String IN_CONTAINER_PROPERTY = "inContainer";
+	/** System property set by the in-container profile, marking that contract-management runs inside k3s. */
+	public static final String IN_CONTAINER_PROPERTY = "inContainer";
+	/** Value of {@link #IN_CONTAINER_PROPERTY} that enables the in-container setup. */
+	public static final String IN_CONTAINER_ENABLED = "true";
 
 	private boolean inContainer = false;
 

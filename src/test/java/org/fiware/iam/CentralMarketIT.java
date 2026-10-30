@@ -8,11 +8,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.tmforum.notification.SubscriptionHealthIndicator;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+// Micronaut's @Requires is only evaluated after the embedded server has been started, so it cannot keep the
+// local setup from claiming ports that k3s already binds in the in-container profile.
+@DisabledIfSystemProperty(named = TestConfiguration.IN_CONTAINER_PROPERTY, matches = TestConfiguration.IN_CONTAINER_ENABLED, disabledReason = "contract-management runs inside k3s, the local setup is not started.")
 @Requires(condition = TestConfiguration.LocalCondition.class)
 @MicronautTest(environments = {"central"})
 @Slf4j

@@ -12,6 +12,18 @@ micronaut:
         step: PT2s
         descriptions: false
 
+  codec:
+    json:
+      # data space events arrive as structured CloudEvents
+      additional-types:
+        - application/cloudevents+json
+
+  io:
+    # file watch behind dataspace.events.listener.watch, see ConfigFileRefresher
+    watch:
+      enabled: ${dataspace.events.listener.watch.enabled:false}
+      paths: ${dataspace.events.listener.watch.path:}
+
   executors:
     notification-subscriber:
       type: scheduled
@@ -89,10 +101,56 @@ oid4vp:
 #    keyType: "EC"
 #    keyPath: "oid4vp/private-key.pem"
 #    signatureAlgorithm: "ECDH-ES"
+# -- data space events. Everything except the enabled flags and publisher.sink-*-timeout is reloaded on refresh.
+#dataspace:
+#  events:
+#    dataspace-id: "my-dataspace"
+#    # falls back to general.did
+#    own-participant-id: "did:web:provider.org"
+#    listener:
+#      enabled: true
+#      verifier:
+#        jwks-url: "http://verifier:8080/.well-known/jwks"
+#        issuer: "http://verifier:8080"
+#        audience: "contract-management"
+#        participant-claim: "participantId"
+#        algorithms: [ "ES256", "RS256" ]
+#      dedup:
+#        max-entries: 10000
+#        ttl: PT1H
+#      watch:
+#        enabled: true
+#        path: "/config"
+#    publishers:
+#      - id: "did:web:consumer.org"
+#        origin: "events.consumer.org"
+#        types: [ "org.fiware.dataspace.example" ]
+#    # sending side: POST /subscriptions, webhook delivery and the internal POST :9090/events
+#    publisher:
+#      enabled: true
+#      origin: "cm.provider.org"
+#      lease-ttl: PT24H
+#      max-subscriptions-per-subscriber: 10
+#      max-subscriptions: 1000
+#      delivery:
+#        max-attempts: 5
+#        initial-backoff: PT1S
+#        max-backoff: PT1M
+#        queue-size: 1000
+#        attempt-timeout: PT30S
 
 endpoints:
   all:
     port: 9090
+  # POST :9090/refresh reloads the configuration. Not authenticated, keep the management port cluster-internal.
+  refresh:
+    enabled: true
+    sensitive: false
+  # POST :9090/events publishes an event to the subscribers (publisher only). Not authenticated either; startup fails
+  # unless endpoints.all.port is set and differs from micronaut.server.port.
+  events:
+    enabled: true
+    sensitive: false
 notification:
   host: contract-management
   subscriptionInitialDelay: 5
