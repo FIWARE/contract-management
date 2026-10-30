@@ -6,6 +6,7 @@ import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.HttpProtocolSettingsVO;
+import org.fiware.iam.events.model.SubscriptionErrorVO;
 import org.fiware.iam.events.model.SubscriptionRequestVO;
 import org.fiware.iam.events.model.SubscriptionVO;
 import org.fiware.iam.exception.VerifierUnavailableException;
@@ -125,14 +126,14 @@ class SubscriptionControllerTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("refusedRequests")
     void refusesBeforeTheHandshake(String description, @Nullable String participant, Consumer<SubscriptionRequestVO> change,
-                                   HttpStatus expectedStatus) {
+                                   HttpStatus expectedStatus, @Nullable String expectedReason) {
         SubscriptionRequestVO request = request();
         change.accept(request);
 
         HttpResponse<SubscriptionVO> response = create(participant, request);
 
         assertEquals(expectedStatus, response.getStatus(), description);
-        assertTrue(response.getBody().isEmpty(), description);
+        assertEquals(Optional.ofNullable(expectedReason), reasonOf(response), description);
         verify(handshake, never()).validate(any());
         assertTrue(registry.active(TYPE).isEmpty(), description);
     }
@@ -141,24 +142,35 @@ class SubscriptionControllerTest {
         Consumer<SubscriptionRequestVO> unchanged = request -> {
         };
         return Stream.of(
-                Arguments.of("no bearer token", null, unchanged, HttpStatus.UNAUTHORIZED),
-                Arguments.of("subscriberId differs from the participant", OTHER_SUBSCRIBER, unchanged, HttpStatus.FORBIDDEN),
-                Arguments.of("missing subscriberId", SUBSCRIBER, change(request -> request.subscriberId(null)), HttpStatus.FORBIDDEN),
-                Arguments.of("insecure sink", SUBSCRIBER, change(request -> request.sink(INSECURE_SINK)), HttpStatus.BAD_REQUEST),
-                Arguments.of("relative sink", SUBSCRIBER, change(request -> request.sink(URI.create("/events"))), HttpStatus.BAD_REQUEST),
-                Arguments.of("opaque sink", SUBSCRIBER, change(request -> request.sink(URI.create("https:events"))), HttpStatus.BAD_REQUEST),
+                Arguments.of("no bearer token", null, unchanged, HttpStatus.UNAUTHORIZED, null),
+                Arguments.of("subscriberId differs from the participant", OTHER_SUBSCRIBER, unchanged, HttpStatus.FORBIDDEN, null),
+                Arguments.of("missing subscriberId", SUBSCRIBER, change(request -> request.subscriberId(null)),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.MISSING_SUBSCRIBER_ID),
+                Arguments.of("missing subscriberId without bearer token", null, change(request -> request.subscriberId(null)),
+                        HttpStatus.UNAUTHORIZED, null),
+                Arguments.of("insecure sink", SUBSCRIBER, change(request -> request.sink(INSECURE_SINK)),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_SINK),
+                Arguments.of("relative sink", SUBSCRIBER, change(request -> request.sink(URI.create("/events"))),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_SINK),
+                Arguments.of("opaque sink", SUBSCRIBER, change(request -> request.sink(URI.create("https:events"))),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_SINK),
                 Arguments.of("other scheme", SUBSCRIBER, change(request -> request.sink(URI.create("ftp://events.consumer.org/"))),
-                        HttpStatus.BAD_REQUEST),
-                Arguments.of("missing sink", SUBSCRIBER, change(request -> request.sink(null)), HttpStatus.BAD_REQUEST),
-                Arguments.of("empty types", SUBSCRIBER, change(request -> request.types(new ArrayList<>())), HttpStatus.BAD_REQUEST),
-                Arguments.of("missing types", SUBSCRIBER, change(request -> request.types(null)), HttpStatus.BAD_REQUEST),
-                Arguments.of("blank type", SUBSCRIBER, change(request -> request.types(List.of(" "))), HttpStatus.BAD_REQUEST),
-                Arguments.of("missing protocol", SUBSCRIBER, change(request -> request.protocol(null)), HttpStatus.BAD_REQUEST),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_SINK),
+                Arguments.of("missing sink", SUBSCRIBER, change(request -> request.sink(null)),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_SINK),
+                Arguments.of("empty types", SUBSCRIBER, change(request -> request.types(new ArrayList<>())),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_TYPES),
+                Arguments.of("missing types", SUBSCRIBER, change(request -> request.types(null)),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_TYPES),
+                Arguments.of("blank type", SUBSCRIBER, change(request -> request.types(List.of(" "))),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_TYPES),
+                Arguments.of("missing protocol", SUBSCRIBER, change(request -> request.protocol(null)),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.UNSUPPORTED_PROTOCOL),
                 Arguments.of("missing protocolsettings", SUBSCRIBER, change(request -> request.protocolsettings(null)),
-                        HttpStatus.BAD_REQUEST),
+                        HttpStatus.BAD_REQUEST, SubscriptionController.MISSING_CLIENT_ID),
                 Arguments.of("missing clientId", SUBSCRIBER,
                         change(request -> request.protocolsettings(new HttpProtocolSettingsVO().scopes(List.of(SCOPE)))),
-                        HttpStatus.BAD_REQUEST));
+                        HttpStatus.BAD_REQUEST, SubscriptionController.MISSING_CLIENT_ID));
     }
 
     @Test
@@ -218,10 +230,46 @@ class SubscriptionControllerTest {
         assertEquals(List.of(TYPE), after.types());
     }
 
-    @Test
-    void refusesSubscriptionsBeyondTheCap() {
-        properties.getPublisher().setMaxSubscriptionsPerSubscriber(1);
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("caps")
+    void refusesSubscriptionsBeyondTheCapWithoutAHandshake(String description, Consumer<DataSpaceEventsProperties.PublisherSettings> cap,
+                                                           String participant) {
+        cap.accept(properties.getPublisher());
         assertEquals(HttpStatus.CREATED, create(SUBSCRIBER, request()).getStatus());
+
+        HttpResponse<SubscriptionVO> response = create(participant, request().subscriberId(participant).sink(OTHER_SINK));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatus(), description);
+        verify(handshake, never()).validate(OTHER_SINK);
+        assertEquals(1, registry.active(TYPE).size(), description);
+    }
+
+    static Stream<Arguments> caps() {
+        Consumer<DataSpaceEventsProperties.PublisherSettings> perSubscriber = settings -> settings.setMaxSubscriptionsPerSubscriber(1);
+        Consumer<DataSpaceEventsProperties.PublisherSettings> total = settings -> settings.setMaxSubscriptions(1);
+        return Stream.of(
+                Arguments.of("per-subscriber cap", perSubscriber, SUBSCRIBER),
+                Arguments.of("total cap", total, OTHER_SUBSCRIBER));
+    }
+
+    @Test
+    void renewsAtTheCap() {
+        properties.getPublisher().setMaxSubscriptionsPerSubscriber(1);
+        String id = create(SUBSCRIBER, request()).body().getId();
+
+        HttpResponse<SubscriptionVO> renewed = create(SUBSCRIBER, request().types(List.of(OTHER_TYPE)));
+
+        assertEquals(HttpStatus.CREATED, renewed.getStatus());
+        assertEquals(id, renewed.body().getId());
+    }
+
+    @Test
+    void refusesWhenTheCapIsTakenDuringTheHandshake() {
+        properties.getPublisher().setMaxSubscriptions(1);
+        when(handshake.validate(OTHER_SINK)).thenReturn(Mono.fromCallable(() -> {
+            registry.register(OTHER_SUBSCRIBER, SINK, List.of(TYPE), CLIENT_ID, Set.of(), null);
+            return Optional.of(RATE);
+        }));
 
         assertEquals(HttpStatus.CONFLICT, create(SUBSCRIBER, request().sink(OTHER_SINK)).getStatus());
         assertEquals(1, registry.active(TYPE).size());
@@ -267,9 +315,12 @@ class SubscriptionControllerTest {
 
     private static void assertGenericHandshakeFailure(HttpResponse<SubscriptionVO> response, String description) {
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatus(), description);
-        assertEquals(SubscriptionController.HANDSHAKE_FAILED, response.reason(), description);
-        assertTrue(response.getBody().isEmpty(), description);
+        assertEquals(Optional.of(SubscriptionController.HANDSHAKE_FAILED), reasonOf(response), description);
         assertFalse(response.reason().contains(INTERNAL_HOST), description);
+    }
+
+    private static Optional<String> reasonOf(HttpResponse<?> response) {
+        return response.getBody(SubscriptionErrorVO.class).map(SubscriptionErrorVO::getReason);
     }
 
     private static void assertRetryLater(@Nullable HttpResponse<?> response) {

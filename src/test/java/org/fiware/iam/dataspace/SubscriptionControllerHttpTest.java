@@ -12,6 +12,7 @@ import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import io.micronaut.test.support.TestPropertyProvider;
 import jakarta.inject.Inject;
+import org.fiware.iam.events.model.SubscriptionErrorVO;
 import org.fiware.iam.events.model.SubscriptionVO;
 import org.fiware.iam.exception.WebhookHandshakeException;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,7 +31,6 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
@@ -122,11 +122,12 @@ class SubscriptionControllerHttpTest implements TestPropertyProvider {
         when(handshake.validate(sink)).thenReturn(Mono.error(
                 new WebhookHandshakeException(sink, "connection failed", new ConnectException("Connection refused"))));
 
-        HttpResponse<String> response = exchange(post(SUBSCRIBER, INTERNAL_SINK), String.class);
+        HttpResponse<SubscriptionErrorVO> response = exchange(post(SUBSCRIBER, INTERNAL_SINK), SubscriptionErrorVO.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatus());
-        assertEquals(SubscriptionController.HANDSHAKE_FAILED, response.reason());
-        assertFalse(response.getBody(String.class).orElse("").contains("refused"), "The connection error must not be answered.");
+        assertEquals(SubscriptionController.HANDSHAKE_FAILED,
+                response.getBody(SubscriptionErrorVO.class).map(SubscriptionErrorVO::getReason).orElse(null),
+                "Only the generic reason may be answered, never the connection error.");
     }
 
     private MutableHttpRequest<Map<String, Object>> post(@Nullable String participant, String sink) {

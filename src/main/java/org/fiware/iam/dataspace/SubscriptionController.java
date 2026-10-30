@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.api.SubscriptionsApi;
 import org.fiware.iam.events.model.HttpProtocolSettingsVO;
+import org.fiware.iam.events.model.SubscriptionErrorVO;
 import org.fiware.iam.events.model.SubscriptionRequestVO;
 import org.fiware.iam.events.model.SubscriptionVO;
 import org.fiware.iam.exception.SubscriptionLimitException;
@@ -40,6 +41,7 @@ import java.util.stream.Collectors;
 public class SubscriptionController implements SubscriptionsApi {
 
     static final String HANDSHAKE_FAILED = "handshake failed";
+    static final String MISSING_SUBSCRIBER_ID = "subscriberId is required";
     static final String INVALID_SINK = "invalid sink";
     static final String INVALID_TYPES = "types must not be empty";
     static final String UNSUPPORTED_PROTOCOL = "unsupported protocol";
@@ -99,6 +101,9 @@ public class SubscriptionController implements SubscriptionsApi {
         if (participantId.isEmpty()) {
             return refuse(HttpStatus.UNAUTHORIZED, subscriberId, sink, "no valid bearer token");
         }
+        if (subscriberId == null || subscriberId.isBlank()) {
+            return refuse(HttpStatus.BAD_REQUEST, subscriberId, sink, MISSING_SUBSCRIBER_ID);
+        }
         if (!participantId.get().equals(subscriberId)) {
             return refuse(HttpStatus.FORBIDDEN, subscriberId, sink, "the bearer token identifies " + participantId.get());
         }
@@ -111,17 +116,21 @@ public class SubscriptionController implements SubscriptionsApi {
             log.error("Refused subscription of {} to {}: dataspace.events.publisher.origin is not configured.", subscriberId, sink);
             return Mono.just(HttpResponse.status(HttpStatus.SERVICE_UNAVAILABLE));
         }
+        try {
+            registry.checkCapacity(subscriberId, sink);
+        } catch (SubscriptionLimitException e) {
+            return refuse(HttpStatus.CONFLICT, subscriberId, sink, e.getMessage());
+        }
         return handshake.validate(sink)
                 .map(allowedRate -> register(request, allowedRate.orElse(null)))
                 .onErrorResume(WebhookHandshakeException.class, e -> {
                     // the cause stays in the log: answering it would let a subscriber probe internal hosts and ports
                     log.info("Refused subscription of {} to {}: {}{}", subscriberId, sink, DownstreamError.reason(e), causeOf(e));
-                    return Mono.just(HttpResponse.status(HttpStatus.BAD_REQUEST, HANDSHAKE_FAILED));
+                    return Mono.just(badRequest(HANDSHAKE_FAILED));
                 })
-                .onErrorResume(SubscriptionLimitException.class, e -> {
-                    log.info("Refused subscription of {} to {}: {}", subscriberId, sink, e.getMessage());
-                    return Mono.just(HttpResponse.status(HttpStatus.CONFLICT));
-                });
+                // a concurrent registration may have taken the last slot during the handshake
+                .onErrorResume(SubscriptionLimitException.class,
+                        e -> refuse(HttpStatus.CONFLICT, subscriberId, sink, e.getMessage()));
     }
 
     private HttpResponse<SubscriptionVO> register(SubscriptionRequestVO request, @Nullable Integer allowedRate) {
@@ -171,11 +180,14 @@ public class SubscriptionController implements SubscriptionsApi {
 
     private static <T> Mono<HttpResponse<T>> refuse(HttpStatus status, @Nullable String subscriberId, @Nullable URI sink,
                                                     String reason) {
-        log.info("Refused subscription of {} to {}: {}.", subscriberId, sink, reason);
-        HttpResponse<T> response = status == HttpStatus.BAD_REQUEST
-                ? HttpResponse.status(status, reason)
-                : HttpResponse.status(status);
-        return Mono.just(response);
+        log.info("Refused subscription of {} to {}: {}", subscriberId, sink, reason);
+        return Mono.just(status == HttpStatus.BAD_REQUEST ? badRequest(reason) : HttpResponse.status(status));
+    }
+
+    // the generated API types every response as a Subscription; the error body is serialized by its runtime type
+    @SuppressWarnings("unchecked")
+    private static <T> HttpResponse<T> badRequest(String reason) {
+        return (HttpResponse<T>) (HttpResponse<?>) HttpResponse.badRequest(new SubscriptionErrorVO().reason(reason));
     }
 
     private static <T> HttpResponse<T> retryLater() {
