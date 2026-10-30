@@ -9,6 +9,8 @@ import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import io.micronaut.test.support.TestPropertyProvider;
 import jakarta.inject.Inject;
+import org.fiware.iam.configuration.DataSpaceEventsProperties;
+import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.events.model.DataSpaceEventVO;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +38,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
@@ -45,7 +48,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Checks the internal publish endpoint on the management port: the envelope CM fills in and the rejection of a missing type.
+ * Checks the internal publish endpoint on the management port: the envelope CM fills in, the rejections, and that the
+ * public port (with the listener's own {@code POST /events}) never reaches it.
  */
 @MicronautTest(packages = {"org.fiware.iam"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -62,9 +66,16 @@ class PublishEndpointTest implements TestPropertyProvider {
     private final int serverPort = freePort();
     private final int managementPort = freePort();
     private final HttpClient client = HttpClient.create(url(managementPort));
+    private final HttpClient publicClient = HttpClient.create(url(serverPort));
 
     @Inject
     private EventDelivery eventDelivery;
+
+    @Inject
+    private DataSpaceEventsProperties properties;
+
+    @Inject
+    private GeneralProperties generalProperties;
 
     @Override
     public Map<String, String> getProperties() {
@@ -73,6 +84,7 @@ class PublishEndpointTest implements TestPropertyProvider {
         properties.put("endpoints.all.port", String.valueOf(managementPort));
         properties.put("notification.enabled", "false");
         properties.put("general.enable-rainbow", "false");
+        properties.put("dataspace.events.listener.enabled", "true");
         properties.put("dataspace.events.publisher.enabled", "true");
         properties.put("dataspace.events.publisher.origin", "cm.provider.org");
         properties.put("dataspace.events.listener.verifier.audience", "contract-management");
@@ -101,6 +113,7 @@ class PublishEndpointTest implements TestPropertyProvider {
     @AfterAll
     void closeClient() {
         client.close();
+        publicClient.close();
     }
 
     static Stream<Arguments> payloads() {
@@ -159,6 +172,35 @@ class PublishEndpointTest implements TestPropertyProvider {
         HttpClientResponseException exception = assertThrows(HttpClientResponseException.class, () -> post(body));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verify(eventDelivery, never()).publish(any());
+    }
+
+    @Test
+    void rejectsAPublishWithoutOwnId() {
+        String ownParticipantId = properties.getOwnParticipantId();
+        String did = generalProperties.getDid();
+        properties.setOwnParticipantId(null);
+        generalProperties.setDid(null);
+        try {
+            HttpClientResponseException exception = assertThrows(HttpClientResponseException.class,
+                    () -> post(Map.of("type", TYPE)));
+
+            assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.getStatus());
+            verify(eventDelivery, never()).publish(any());
+        } finally {
+            properties.setOwnParticipantId(ownParticipantId);
+            generalProperties.setDid(did);
+        }
+    }
+
+    @Test
+    void isNotServedOnThePublicPort() {
+        HttpRequest<Map<String, Object>> request = HttpRequest.POST(EVENTS_PATH, Map.of("type", TYPE, "subject", SUBJECT));
+
+        HttpClientResponseException exception = assertThrows(HttpClientResponseException.class,
+                () -> publicClient.toBlocking().exchange(request));
+
+        assertNotEquals(HttpStatus.ACCEPTED, exception.getStatus());
         verify(eventDelivery, never()).publish(any());
     }
 

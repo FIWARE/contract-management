@@ -4,6 +4,7 @@ import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
 import io.micronaut.json.tree.JsonNode;
 import io.micronaut.management.endpoint.annotation.Endpoint;
 import io.micronaut.management.endpoint.annotation.Write;
@@ -40,10 +41,16 @@ public class PublishEndpoint {
         if (type == null || type.isBlank()) {
             return HttpResponse.badRequest();
         }
+        String source = properties.ownId(generalProperties);
+        // receivers reject an event without source, after the 202 the caller would never learn about the drop
+        if (source == null || source.isBlank()) {
+            log.error("Cannot publish event of type {}: neither dataspace.events.own-participant-id nor general.did is set.", type);
+            return HttpResponse.status(HttpStatus.SERVICE_UNAVAILABLE);
+        }
         DataSpaceEventVO event = new DataSpaceEventVO()
                 .specversion(DataSpaceEventVO.Specversion._1_0)
                 .id(id == null || id.isBlank() ? UUID.randomUUID().toString() : id)
-                .source(properties.ownId(generalProperties))
+                .source(source)
                 .type(type)
                 .subject(subject)
                 .time(clock.instant())
