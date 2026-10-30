@@ -165,7 +165,8 @@ curl -X POST https://cm.provider.org/subscriptions \
 }
 ```
 
-`clientId` and `scopes` are used for the OID4VP flow when the sink answers a delivery with `401`. A `POST` is checked in this order:
+`clientId` and `scopes` are used for the OID4VP flow when the sink answers a delivery with `401` (only with `oid4vp.enabled`).
+A `POST` is checked in this order:
 
 1. The bearer token must be a valid JWT of the verifier carrying the participant id claim, else `401`.
 2. `subscriberId` is required (`400`) and must equal that participant id, else `403`.
@@ -198,11 +199,12 @@ drops further events until the sink catches up.
 * A `2xx` is delivered. Redirects are never followed, so a `3xx` is a failure.
 * Transport errors, timeouts, `408`, `429` and `5xx` are retried with exponential backoff (`initial-backoff`, doubled up to
   `max-backoff`) for at most `max-attempts` attempts in total; afterwards the event is dropped and logged.
-* A `401` makes CM run OID4VP against the sink host with the subscription's `clientId` and `scopes`, and retry once with
-  the token. A `401` after that is not retried.
+* With `oid4vp.enabled`, a `401` makes CM run OID4VP against the sink host with the subscription's `clientId` and `scopes`,
+  and retry once with the token. A `401` after that is not retried. Without OID4VP, a `401` drops the event like any other
+  `4xx`.
 * A `410 Gone` removes the subscription. Other `4xx` drop the event without a retry.
 * The rate granted in the handshake counts HTTP requests, not events: an OID4VP-protected sink sees two requests per
-  event while CM has no valid token for it.
+  event (CM caches no OID4VP token), so grant twice the intended event rate.
 
 The counter `dataspace.events.delivered` (tags `type`, `outcome` = `delivered`, `failed`, `gone`, `expired`, `overflow`) counts
 the final result of every event at every subscription.
@@ -226,10 +228,10 @@ never expose it through the ingress. CM refuses to start the publisher when `end
 
 **Security notes:**
 
-* The subscriber chooses `sink`, `clientId` and `scopes`. When the sink answers `401`, CM presents the credentials the sink
-  host's OID4VP request asks for. The resulting token is bound to that host, which limits replay, but the credentials are
-  disclosed to it. Sinks are not restricted to the `origin`s in `dataspace.events.publishers`, so only hold credentials in CM
-  you are willing to present to any authenticated participant's host.
+* The subscriber chooses `sink`, `clientId` and `scopes`. With `oid4vp.enabled`, when the sink answers `401`, CM presents the
+  credentials the sink host's OID4VP request asks for. The resulting token is bound to that host, which limits replay, but the
+  credentials are disclosed to it. Sinks are not restricted to the `origin`s in `dataspace.events.publishers`, so only hold
+  credentials in CM you are willing to present to any authenticated participant's host.
 * Handshake and delivery never follow redirects, so a sink cannot redirect CM to an internal address.
 * A failed handshake is answered only with `handshake failed`; the sink's status or the connection error is logged, never
   returned, so the API cannot be used to probe hosts reachable from CM.

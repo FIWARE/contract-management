@@ -101,7 +101,7 @@ oid4vp:
 #    keyType: "EC"
 #    keyPath: "oid4vp/private-key.pem"
 #    signatureAlgorithm: "ECDH-ES"
-# -- receiving endpoint for data space events. Everything except the enabled flags is reloaded on refresh.
+# -- data space events. Everything except the enabled flags and publisher.sink-*-timeout is reloaded on refresh.
 #dataspace:
 #  events:
 #    dataspace-id: "my-dataspace"
