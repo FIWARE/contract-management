@@ -48,6 +48,8 @@ public class EventDelivery {
     static final String TYPE_TAG = "type";
     static final String OUTCOME_TAG = "outcome";
     static final String CLOUDEVENTS_JSON = "application/cloudevents+json";
+    // the first request and the one after an OID4VP token fetch each wait for a slot
+    private static final int MAX_REQUESTS_PER_ATTEMPT = 2;
 
     /**
      * Final result of an event at one subscription; its lower-case name is the metric's outcome tag.
@@ -132,7 +134,9 @@ public class EventDelivery {
         int maxAttempts = settings.getMaxAttempts() > 0 ? settings.getMaxAttempts()
                 : DataSpaceEventsProperties.DEFAULT_DELIVERY_MAX_ATTEMPTS;
         Attempts attempts = new Attempts();
-        return Mono.defer(() -> attempt(subscriptionId, channel, event, attempts))
+        Duration attemptTimeout = positiveOrDefault(settings.getAttemptTimeout(),
+                DataSpaceEventsProperties.DEFAULT_DELIVERY_ATTEMPT_TIMEOUT);
+        return Mono.defer(() -> attempt(subscriptionId, channel, event, attempts, attemptTimeout))
                 .retryWhen(Retry.backoff(maxAttempts - 1L,
                                 positiveOrDefault(settings.getInitialBackoff(), DataSpaceEventsProperties.DEFAULT_DELIVERY_INITIAL_BACKOFF))
                         .maxBackoff(positiveOrDefault(settings.getMaxBackoff(), DataSpaceEventsProperties.DEFAULT_DELIVERY_MAX_BACKOFF))
@@ -151,7 +155,8 @@ public class EventDelivery {
                 .then();
     }
 
-    private Mono<Void> attempt(String subscriptionId, SubscriptionChannel channel, DataSpaceEventVO event, Attempts attempts) {
+    private Mono<Void> attempt(String subscriptionId, SubscriptionChannel channel, DataSpaceEventVO event, Attempts attempts,
+                               Duration attemptTimeout) {
         // read before each attempt, so expiry, removal and renewal take effect on queued events
         Optional<Subscription> current = registry.get(subscriptionId);
         if (current.isEmpty()) {
@@ -178,7 +183,11 @@ public class EventDelivery {
                 .switchIfEmpty(Mono.error(() -> new IllegalStateException("No response from " + subscription.sink())))
                 .flatMap(response -> isSuccess(response.code()) ? Mono.<Void>empty()
                         // a returned error response is turned into the exception other paths throw, so one classification fits all
-                        : Mono.error(new HttpClientResponseException("Sink answered " + response.code(), response)));
+                        : Mono.error(new HttpClientResponseException("Sink answered " + response.code(), response)))
+                // bounds the token fetch a sink's 401 triggers, which no client timeout covers; the slot waits are added,
+                // so the rate limit never cuts an attempt. A timeout is a transport error and therefore retried.
+                .timeout(attemptTimeout.plus(SubscriptionChannel.interval(subscription.allowedRate())
+                        .multipliedBy(MAX_REQUESTS_PER_ATTEMPT)));
     }
 
     private void dropped(String subscriptionId, DataSpaceEventVO event, Attempts attempts, Throwable e) {

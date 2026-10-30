@@ -88,6 +88,7 @@ class EventDeliveryTest {
     // long enough for an asynchronously queued delivery to reach the sink
     private static final Duration QUIET_PERIOD = Duration.ofMillis(300);
     private static final int EVENTS = 3;
+    private static final Duration SHORT_ATTEMPT_TIMEOUT = Duration.ofMillis(200);
     private static final String RETURNED = "returned";
     private static final String THROWN = "thrown";
     private static final String CONTENT_TYPE = "Content-Type";
@@ -421,6 +422,47 @@ class EventDeliveryTest {
         assertPaced(sent);
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("stalledTokenFetches")
+    void boundsAStalledTokenFetch(String description, int stalledFetches, EventDelivery.Outcome expectedOutcome) {
+        properties.getPublisher().getDelivery().setAttemptTimeout(SHORT_ATTEMPT_TIMEOUT);
+        withOid4Vp();
+        subscribe(SUBSCRIBER, SINK, null);
+        fallbacks.put(SINK, EventDeliveryTest::protectedSink);
+        stallTokenFetches(stalledFetches);
+
+        delivery.publish(event());
+
+        awaitCount(expectedOutcome, 1);
+        verify(oid4VPClient, times(Math.min(stalledFetches + 1, MAX_ATTEMPTS))).getAccessToken(any());
+        // the channel is not stuck behind the stalled fetch
+        delivery.publish(event());
+        awaitCount(EventDelivery.Outcome.DELIVERED, expectedOutcome == EventDelivery.Outcome.DELIVERED ? 2 : 1);
+    }
+
+    static Stream<Arguments> stalledTokenFetches() {
+        return Stream.of(
+                Arguments.of("one stalled fetch is retried", 1, EventDelivery.Outcome.DELIVERED),
+                Arguments.of("stalled on every attempt", MAX_ATTEMPTS, EventDelivery.Outcome.FAILED));
+    }
+
+    @Test
+    void slotWaitsDoNotCountAgainstTheAttemptTimeout() {
+        // shorter than the two slot waits of an attempt against a protected sink
+        properties.getPublisher().getDelivery().setAttemptTimeout(PACING_INTERVAL);
+        withOid4Vp();
+        subscribe(SUBSCRIBER, SINK, ALLOWED_RATE);
+        fallbacks.put(SINK, EventDeliveryTest::protectedSink);
+
+        for (int i = 0; i < EVENTS; i++) {
+            delivery.publish(event());
+        }
+
+        awaitCount(EventDelivery.Outcome.DELIVERED, EVENTS);
+        assertEquals(2 * EVENTS, sent.size());
+        assertEquals(0, count(EventDelivery.Outcome.FAILED));
+    }
+
     @Test
     void countsOverflowingEvents() {
         properties.getPublisher().getDelivery().setQueueSize(SINGLE_QUEUE_SLOT);
@@ -501,6 +543,15 @@ class EventDeliveryTest {
         doAnswer(invocation -> remaining.poll() != null
                 ? CompletableFuture.failedFuture(new IllegalStateException("verifier down"))
                 : token()).when(oid4VPClient).getAccessToken(any());
+    }
+
+    private void stallTokenFetches(int stalls) {
+        Deque<Boolean> remaining = new ConcurrentLinkedDeque<>();
+        for (int i = 0; i < stalls; i++) {
+            remaining.add(true);
+        }
+        doAnswer(invocation -> remaining.poll() != null ? new CompletableFuture<TokenResponse>() : token())
+                .when(oid4VPClient).getAccessToken(any());
     }
 
     private Subscription subscribe(String subscriber, URI sink, @Nullable Integer allowedRate) {

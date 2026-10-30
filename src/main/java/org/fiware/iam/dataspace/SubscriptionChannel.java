@@ -74,7 +74,8 @@ final class SubscriptionChannel {
     /**
      * Accepts no further events. Queued and in-flight ones still run through the delivery, which ends and counts them.
      */
-    void complete() {
+    // same monitor as offer: the sink refuses concurrent emissions, and a lost completion would leak the worker
+    synchronized void complete() {
         queue.tryEmitComplete();
     }
 
@@ -85,11 +86,17 @@ final class SubscriptionChannel {
         worker.dispose();
     }
 
+    /**
+     * Longest wait for one slot at the given rate; zero if unlimited.
+     */
+    static Duration interval(@Nullable Integer allowedRate) {
+        return Duration.ofNanos(allowedRate == null || allowedRate <= 0 ? 0 : NANOS_PER_MINUTE / allowedRate);
+    }
+
     private synchronized Duration reserveSlot(@Nullable Integer allowedRate) {
         long now = System.nanoTime();
         long slot = nextSlot - now > 0 ? nextSlot : now;
-        long interval = allowedRate == null || allowedRate <= 0 ? 0 : NANOS_PER_MINUTE / allowedRate;
-        nextSlot = slot + interval;
+        nextSlot = slot + interval(allowedRate).toNanos();
         return Duration.ofNanos(slot - now);
     }
 }
