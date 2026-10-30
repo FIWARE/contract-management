@@ -45,6 +45,11 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
      */
     static final Duration MAX_SCHEDULE_DELAY = Duration.ofDays(1);
 
+    /**
+     * Health detail of an entry whose values could not be read, e.g. a null element in its types or scopes.
+     */
+    static final String INVALID_ENTRY_REASON = "the publisher entry could not be read";
+
     private final DataSpaceEventsProperties properties;
     private final GeneralProperties generalProperties;
     private final PublisherSubscriptionClient client;
@@ -82,44 +87,57 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
     synchronized void reconcile() {
         try {
             SubscriberSettings settings = settings();
-            Optional<String> settingsProblem = SubscriberSettingsValidator.problem(settings);
+            String ownId = properties.ownId(generalProperties);
+            Optional<String> settingsProblem = SubscriberSettingsValidator.problem(settings, ownId);
             if (settingsProblem.isPresent()) {
                 log.warn("Not subscribing to any publisher: {}", settingsProblem.get());
                 store.markUnusableSettings(settingsProblem.get());
                 return;
             }
-            String ownId = properties.ownId(generalProperties);
             Set<String> seen = new HashSet<>();
             for (Publisher publisher : properties.getPublishers()) {
-                if (isBlank(publisher.getSubscriptionsUrl())) {
-                    continue;
+                try {
+                    reconcile(publisher, settings, ownId, seen);
+                } catch (RuntimeException e) {
+                    // one broken entry (e.g. a null list element) must not keep the others from being subscribed
+                    String publisherId = publisher == null ? null : publisher.getId();
+                    log.warn("Not subscribing to publisher {}: its entry could not be read.", publisherId, e);
+                    if (!isBlank(publisherId) && store.get(publisherId).isEmpty()) {
+                        store.put(publisherId, PublisherState.skipped(INVALID_ENTRY_REASON));
+                    }
                 }
-                String publisherId = publisher.getId();
-                if (isBlank(publisherId)) {
-                    log.warn("Not subscribing at {}: the publisher entry has no id.", publisher.getSubscriptionsUrl());
-                    continue;
-                }
-                if (!seen.add(publisherId)) {
-                    log.warn("Publisher {} is configured more than once; only its first entry is subscribed to.", publisherId);
-                    continue;
-                }
-                if (store.get(publisherId).isPresent()) {
-                    continue;
-                }
-                Optional<String> skipReason = skipReason(publisher);
-                if (skipReason.isPresent()) {
-                    log.warn("Not subscribing to publisher {}: {}.", publisherId, skipReason.get());
-                    store.put(publisherId, PublisherState.skipped(skipReason.get()));
-                    continue;
-                }
-                PublisherState state = PublisherState.pending(SubscriptionTarget.of(publisher, settings, ownId));
-                store.put(publisherId, state);
-                register(state, state.generation());
             }
             store.markReconciled();
         } catch (RuntimeException e) {
             log.warn("Reconciling the publisher subscriptions failed.", e);
         }
+    }
+
+    private void reconcile(Publisher publisher, SubscriberSettings settings, String ownId, Set<String> seen) {
+        if (isBlank(publisher.getSubscriptionsUrl())) {
+            return;
+        }
+        String publisherId = publisher.getId();
+        if (isBlank(publisherId)) {
+            log.warn("Not subscribing at {}: the publisher entry has no id.", publisher.getSubscriptionsUrl());
+            return;
+        }
+        if (!seen.add(publisherId)) {
+            log.warn("Publisher {} is configured more than once; only its first entry is subscribed to.", publisherId);
+            return;
+        }
+        if (store.get(publisherId).isPresent()) {
+            return;
+        }
+        Optional<String> skipReason = skipReason(publisher);
+        if (skipReason.isPresent()) {
+            log.warn("Not subscribing to publisher {}: {}.", publisherId, skipReason.get());
+            store.put(publisherId, PublisherState.skipped(skipReason.get()));
+            return;
+        }
+        PublisherState state = PublisherState.pending(SubscriptionTarget.of(publisher, settings, ownId));
+        store.put(publisherId, state);
+        register(state, state.generation());
     }
 
     /**
@@ -164,7 +182,13 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
                     delay = capped(positiveOrDefault(settings().getConflictRenewalInterval(),
                             DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL));
                     // a max-backoff of grace: a failing re-registration is retried before the publisher counts as expired
-                    state.conflict(registration.id(), now.plus(delay).plus(capped(backoff(Integer.MAX_VALUE))));
+                    Instant validUntil = now.plus(delay).plus(capped(backoff(Integer.MAX_VALUE)));
+                    // CONFLICT stays reserved for a real 409 (e.g. the publisher's cap), only the timing is shared
+                    if (registration.conflict()) {
+                        state.conflict(registration.id(), validUntil);
+                    } else {
+                        state.registered(registration.id(), validUntil);
+                    }
                 } else {
                     delay = renewalDelay(now, registration.expiresAt());
                     state.registered(registration.id(), registration.expiresAt());

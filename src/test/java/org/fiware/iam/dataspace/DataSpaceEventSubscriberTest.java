@@ -288,13 +288,16 @@ class DataSpaceEventSubscriberTest {
     }
 
     @Test
-    void registrationWithoutExpiryIsTreatedLikeAConflict() {
+    void registrationWithoutExpiryIsRenewedLikeAConflictButStaysRegistered() {
         stubSubscribe(List.of(Mono.just(Registration.registered(SUBSCRIPTION_ID, null))));
         start();
 
-        assertEquals(Phase.CONFLICT, store.snapshot().get(PUBLISHER_ID).phase());
+        PublisherStatus status = store.snapshot().get(PUBLISHER_ID);
+        assertEquals(Phase.REGISTERED, status.phase());
+        assertEquals(NOW.plus(CONFLICT_RENEWAL_INTERVAL).plus(MAX_BACKOFF), status.validUntil());
         assertEquals(SUBSCRIPTION_ID, store.get(PUBLISHER_ID).orElseThrow().subscriptionId());
         assertEquals(CONFLICT_RENEWAL_INTERVAL, onlyPendingTask().delay());
+        assertEquals(HealthStatus.UP, status());
     }
 
     @Test
@@ -344,21 +347,51 @@ class DataSpaceEventSubscriberTest {
         assertTrue(snapshot.get("did:web:no-origin.org").reason().contains("origin"));
     }
 
-    @Test
-    void unusableSubscriberSettingsRegisterNothing() {
-        properties.getSubscriber().setSink("");
+    static Stream<Arguments> unusableSettings() {
+        return Stream.of(
+                Arguments.of("blank sink", (Consumer<DataSpaceEventsProperties>) p -> p.getSubscriber().setSink(""),
+                        SubscriberSettingsValidator.SINK_KEY),
+                Arguments.of("no own id", (Consumer<DataSpaceEventsProperties>) p -> p.setOwnParticipantId(" "),
+                        SubscriberSettingsValidator.OWN_ID_KEY));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("unusableSettings")
+    void unusableSubscriberSettingsRegisterNothing(String description, Consumer<DataSpaceEventsProperties> change,
+                                                  String offendingKey) {
+        change.accept(properties);
         start();
 
         verify(client, never()).subscribe(any());
         assertTrue(scheduler.pending().isEmpty());
         assertEquals(DataSpaceSubscriptionHealthIndicator.DEGRADED, status());
         Map<?, ?> details = (Map<?, ?>) indicator.result().getDetails();
-        assertTrue(details.get(DataSpaceSubscriptionHealthIndicator.SETTINGS_DETAIL).toString().contains("sink"));
+        assertTrue(details.get(DataSpaceSubscriptionHealthIndicator.SETTINGS_DETAIL).toString().contains(offendingKey));
+    }
+
+    @Test
+    void brokenEntriesDoNotKeepTheOthersFromBeingSubscribed() {
+        String brokenId = "did:web:broken.org";
+        Publisher broken = publisher(brokenId, "https://cm.broken.org/subscriptions", List.of(TYPE), "cm.broken.org");
+        // a YAML '~' list element, which List.copyOf rejects
+        broken.getTypes().add(null);
+        properties.getPublishers().add(0, broken);
+        properties.getPublishers().add(0, null);
+        stubSubscribe(List.of(Mono.just(Registration.registered(SUBSCRIPTION_ID, NOW.plus(LEASE)))));
+        start();
+
+        ArgumentCaptor<SubscriptionTarget> target = ArgumentCaptor.forClass(SubscriptionTarget.class);
+        verify(client).subscribe(target.capture());
+        assertEquals(PUBLISHER_ID, target.getValue().publisherId());
+        PublisherStatus brokenStatus = store.snapshot().get(brokenId);
+        assertEquals(Phase.SKIPPED, brokenStatus.phase());
+        assertEquals(DataSpaceEventSubscriber.INVALID_ENTRY_REASON, brokenStatus.reason());
+        assertEquals(HealthStatus.UP, status());
     }
 
     @Test
     void failedReconcileIsNotReportedAsUp() {
-        properties.getPublishers().add(0, null);
+        properties.setPublishers(null);
         start();
 
         verify(client, never()).subscribe(any());
