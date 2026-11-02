@@ -4,10 +4,13 @@ import io.micronaut.context.annotation.Context;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.context.event.ApplicationEventListener;
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.runtime.context.scope.refresh.RefreshEvent;
 import io.micronaut.runtime.server.event.ServerStartupEvent;
 import io.micronaut.scheduling.TaskExecutors;
 import io.micronaut.scheduling.TaskScheduler;
 import jakarta.inject.Named;
+import jakarta.inject.Singleton;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
@@ -19,7 +22,8 @@ import reactor.core.publisher.Mono;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,13 +31,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL;
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_INITIAL_DELAY;
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_MIN_RENEWAL_DELAY;
+import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL;
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RENEWAL_FRACTION;
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RETRY_INITIAL_BACKOFF;
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_SUBSCRIBER_RETRY_MAX_BACKOFF;
 
 /**
  * Registers the own POST /events as webhook sink at every publisher with a subscriptions-url, renews each lease before it
- * expires and retries failures with a saturating backoff. Settings are read from the refreshable bean on every use.
+ * expires and retries failures with a saturating backoff. Settings are read from the refreshable bean on every use;
+ * a refresh or the periodic backstop reconcile registers added, re-registers changed and unsubscribes removed publishers.
  */
 @Context
 @Requires(condition = DataSpaceEventsProperties.SubscriberCondition.class)
@@ -56,17 +62,22 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
     private final SubscriptionStateStore store;
     private final TaskScheduler taskScheduler;
     private final Clock clock;
+    private final ConfigurationRefreshLock refreshLock;
     private final AtomicBoolean started = new AtomicBoolean();
+    // only touched inside the synchronized reconcile
+    private Set<String> reportedWarnings = Set.of();
 
     public DataSpaceEventSubscriber(DataSpaceEventsProperties properties, GeneralProperties generalProperties,
                                     PublisherSubscriptionClient client, SubscriptionStateStore store,
-                                    @Named(TaskExecutors.SCHEDULED) TaskScheduler taskScheduler, Clock clock) {
+                                    @Named(TaskExecutors.SCHEDULED) TaskScheduler taskScheduler, Clock clock,
+                                    ConfigurationRefreshLock refreshLock) {
         this.properties = properties;
         this.generalProperties = generalProperties;
         this.client = client;
         this.store = store;
         this.taskScheduler = taskScheduler;
         this.clock = clock;
+        this.refreshLock = refreshLock;
     }
 
     @Override
@@ -77,67 +88,198 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
         }
     }
 
+    /**
+     * Schedules a one-shot reconcile. Ignored before startup, whose own reconcile reads the then-current values anyway.
+     */
+    void onRefresh() {
+        if (!started.get()) {
+            log.debug("Ignoring a configuration refresh before startup.");
+            return;
+        }
+        // the listener may run before the properties are rebound, so the reconcile runs async and waits for the rebind
+        taskScheduler.schedule(Duration.ZERO, this::reconcile);
+    }
+
+    // the only scheduler of itself, so there is exactly one chain however many refresh-triggered runs happen
     private void backstopTick() {
-        reconcile();
+        try {
+            reconcile();
+        } finally {
+            scheduleBackstop();
+        }
+    }
+
+    private void scheduleBackstop() {
+        try {
+            taskScheduler.schedule(capped(positiveOrDefault(settings().getReconcileInterval(),
+                    DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL)), this::backstopTick);
+        } catch (RuntimeException e) {
+            log.warn("Could not schedule the next periodic reconcile; publisher changes now only apply on a refresh.", e);
+        }
     }
 
     /**
-     * Adds a state for every subscribable publisher not known yet and registers it; the only place states are created.
+     * Brings the states in line with the configured publishers: adds, re-registers on change, drops removed ones.
+     * The only place states are created or removed; synchronized, so overlapping runs cannot duplicate a state.
      */
     synchronized void reconcile() {
         try {
-            SubscriberSettings settings = settings();
-            String ownId = properties.ownId(generalProperties);
-            Optional<String> settingsProblem = SubscriberSettingsValidator.problem(settings, ownId);
-            if (settingsProblem.isPresent()) {
-                log.warn("Not subscribing to any publisher: {}", settingsProblem.get());
-                store.markUnusableSettings(settingsProblem.get());
+            // both refresh paths rebind under this lock, so the read never sees half-rebound properties
+            Reading reading = refreshLock.exclusively(this::read);
+            report(reading.warnings());
+            if (reading.settingsProblem().isPresent()) {
+                store.markUnusableSettings(reading.settingsProblem().get());
                 return;
             }
-            Set<String> seen = new HashSet<>();
-            for (Publisher publisher : properties.getPublishers()) {
-                try {
-                    reconcile(publisher, settings, ownId, seen);
-                } catch (RuntimeException e) {
-                    // one broken entry (e.g. a null list element) must not keep the others from being subscribed
-                    String publisherId = publisher == null ? null : publisher.getId();
-                    log.warn("Not subscribing to publisher {}: its entry could not be read.", publisherId, e);
-                    if (!isBlank(publisherId) && store.get(publisherId).isEmpty()) {
-                        store.put(publisherId, PublisherState.skipped(INVALID_ENTRY_REASON));
-                    }
+            for (String publisherId : store.publisherIds()) {
+                if (!reading.wanted().containsKey(publisherId)) {
+                    remove(publisherId);
                 }
             }
+            reading.wanted().forEach(this::reconcilePublisher);
             store.markReconciled();
         } catch (RuntimeException e) {
             log.warn("Reconciling the publisher subscriptions failed.", e);
         }
     }
 
-    private void reconcile(Publisher publisher, SubscriberSettings settings, String ownId, Set<String> seen) {
+    private Reading read() {
+        Map<String, Throwable> warnings = new LinkedHashMap<>();
+        SubscriberSettings settings = settings();
+        String ownId = properties.ownId(generalProperties);
+        Optional<String> settingsProblem = SubscriberSettingsValidator.problem(settings, ownId);
+        if (settingsProblem.isPresent()) {
+            warnings.put("Not subscribing to any publisher: " + settingsProblem.get(), null);
+            return new Reading(settingsProblem, Map.of(), warnings);
+        }
+        Map<String, Wanted> wanted = new LinkedHashMap<>();
+        for (Publisher publisher : properties.getPublishers()) {
+            try {
+                read(publisher, settings, ownId, wanted, warnings);
+            } catch (RuntimeException e) {
+                // one broken entry (e.g. a null list element) must not keep the others from being subscribed
+                String publisherId = publisher == null ? null : publisher.getId();
+                warnings.put("Not subscribing to publisher " + publisherId + ": its entry could not be read.", e);
+                if (!isBlank(publisherId)) {
+                    wanted.putIfAbsent(publisherId, Wanted.skip(INVALID_ENTRY_REASON));
+                }
+            }
+        }
+        return new Reading(Optional.empty(), wanted, warnings);
+    }
+
+    private static void read(Publisher publisher, SubscriberSettings settings, String ownId, Map<String, Wanted> wanted,
+                             Map<String, Throwable> warnings) {
         if (isBlank(publisher.getSubscriptionsUrl())) {
             return;
         }
         String publisherId = publisher.getId();
         if (isBlank(publisherId)) {
-            log.warn("Not subscribing at {}: the publisher entry has no id.", publisher.getSubscriptionsUrl());
+            warnings.put("Not subscribing at " + publisher.getSubscriptionsUrl() + ": the publisher entry has no id.", null);
             return;
         }
-        if (!seen.add(publisherId)) {
-            log.warn("Publisher {} is configured more than once; only its first entry is subscribed to.", publisherId);
-            return;
-        }
-        if (store.get(publisherId).isPresent()) {
+        if (wanted.containsKey(publisherId)) {
+            warnings.put("Publisher " + publisherId + " is configured more than once; only its first entry is subscribed to.",
+                    null);
             return;
         }
         Optional<String> skipReason = skipReason(publisher);
         if (skipReason.isPresent()) {
-            log.warn("Not subscribing to publisher {}: {}.", publisherId, skipReason.get());
-            store.put(publisherId, PublisherState.skipped(skipReason.get()));
+            warnings.put("Not subscribing to publisher " + publisherId + ": " + skipReason.get() + ".", null);
+            wanted.put(publisherId, Wanted.skip(skipReason.get()));
             return;
         }
-        PublisherState state = PublisherState.pending(SubscriptionTarget.of(publisher, settings, ownId));
-        store.put(publisherId, state);
-        register(state, state.generation());
+        wanted.put(publisherId, new Wanted(SubscriptionTarget.of(publisher, settings, ownId), null));
+    }
+
+    // the backstop re-reads every minute; a lasting misconfiguration is warned about once, not on every run
+    private void report(Map<String, Throwable> warnings) {
+        warnings.forEach((message, cause) -> {
+            if (!reportedWarnings.contains(message)) {
+                log.warn(message, cause);
+            }
+        });
+        reportedWarnings = Set.copyOf(warnings.keySet());
+    }
+
+    private void reconcilePublisher(String publisherId, Wanted wanted) {
+        Optional<PublisherState> existing = store.get(publisherId);
+        SubscriptionTarget current = existing.map(PublisherState::target).orElse(null);
+        if (wanted.target() == null) {
+            if (current != null) {
+                log.info("Publisher {} can no longer be subscribed to ({}); dropping its subscription.", publisherId,
+                        wanted.skipReason());
+                retire(existing.get());
+            }
+            if (current != null || existing.isEmpty() || !wanted.skipReason().equals(existing.get().status().reason())) {
+                store.put(publisherId, PublisherState.skipped(wanted.skipReason()));
+            }
+            return;
+        }
+        if (current == null) {
+            PublisherState state = PublisherState.pending(wanted.target());
+            store.put(publisherId, state);
+            register(state, state.generation());
+        } else if (!current.equals(wanted.target())) {
+            retarget(existing.get(), current, wanted.target());
+        }
+    }
+
+    private void retarget(PublisherState state, SubscriptionTarget current, SubscriptionTarget changed) {
+        boolean rekeyed = !current.sameKeyAs(changed);
+        String oldId;
+        long generation;
+        synchronized (state) {
+            oldId = state.subscriptionId();
+            generation = state.retarget(changed, rekeyed);
+        }
+        if (!rekeyed) {
+            log.info("Subscription settings for publisher {} changed; renewing in place.", changed.publisherId());
+            register(state, generation);
+            return;
+        }
+        log.info("Subscription key for publisher {} changed; re-registering at {}.", changed.publisherId(),
+                changed.subscriptionsUrl());
+        if (oldId == null) {
+            register(state, generation);
+            return;
+        }
+        // deleting first frees the old subscription's slot under the publisher's per-subscriber cap
+        unsubscribe(current, oldId).then(Mono.fromRunnable(() -> register(state, generation))).subscribe();
+    }
+
+    private void remove(String publisherId) {
+        store.get(publisherId).ifPresent(state -> {
+            store.remove(publisherId);
+            retire(state);
+            if (state.target() != null) {
+                log.info("Publisher {} is no longer configured for subscription; dropped its subscription.", publisherId);
+            }
+        });
+    }
+
+    // stops the loop and removes the subscription at the publisher if its id is known; the lease expires anyway otherwise
+    private void retire(PublisherState state) {
+        SubscriptionTarget target;
+        String subscriptionId;
+        synchronized (state) {
+            state.cancel();
+            target = state.target();
+            subscriptionId = state.subscriptionId();
+        }
+        if (target != null && subscriptionId != null) {
+            unsubscribe(target, subscriptionId).subscribe();
+        }
+    }
+
+    private Mono<Void> unsubscribe(SubscriptionTarget target, String subscriptionId) {
+        return Mono.defer(() -> client.unsubscribe(target, subscriptionId))
+                .doOnSuccess(ignored -> log.info("Removed subscription {} at {}.", subscriptionId, target.subscriptionsUrl()))
+                .onErrorResume(error -> {
+                    log.info("Could not remove subscription {} at {}: {}. It ends when its lease expires.", subscriptionId,
+                            target.subscriptionsUrl(), DownstreamError.reason(error));
+                    return Mono.empty();
+                });
     }
 
     /**
@@ -271,5 +413,32 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
 
     private static boolean isBlank(@Nullable String value) {
         return value == null || value.isBlank();
+    }
+
+    private record Reading(Optional<String> settingsProblem, Map<String, Wanted> wanted, Map<String, Throwable> warnings) {
+    }
+
+    // either the target to subscribe with or why the publisher is skipped
+    private record Wanted(@Nullable SubscriptionTarget target, @Nullable String skipReason) {
+
+        static Wanted skip(String reason) {
+            return new Wanted(null, reason);
+        }
+    }
+
+    /**
+     * Forwards every RefreshEvent to the subscriber; a separate bean, because one class cannot listen to two event types.
+     */
+    @Singleton
+    @Requires(condition = DataSpaceEventsProperties.SubscriberCondition.class)
+    @RequiredArgsConstructor
+    static class RefreshListener implements ApplicationEventListener<RefreshEvent> {
+
+        private final DataSpaceEventSubscriber subscriber;
+
+        @Override
+        public void onApplicationEvent(RefreshEvent event) {
+            subscriber.onRefresh();
+        }
     }
 }

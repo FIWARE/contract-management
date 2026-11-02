@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -74,5 +75,13 @@ public class SubscriptionStateStore {
 
     void put(String publisherId, PublisherState state) {
         states.put(publisherId, state);
+    }
+
+    void remove(String publisherId) {
+        states.remove(publisherId);
+    }
+
+    Set<String> publisherIds() {
+        return Set.copyOf(states.keySet());
     }
 }
