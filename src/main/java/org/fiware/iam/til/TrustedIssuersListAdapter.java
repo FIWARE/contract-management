@@ -90,7 +90,7 @@ public class TrustedIssuersListAdapter {
      * @return the response of the trusted-issuers-list
      */
     public Mono<HttpResponse<?>> denyIssuer(String issuerDid, String orderId) {
-        return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId, ORDER_SCOPE_TYPE))
+        return Mono.defer(() -> apiClient.deleteCredentialsByScope(issuerDid, orderId, ORDER_SCOPE_TYPE, false))
                 .<HttpResponse<?>>map(response -> {
                     log.debug("Order {}: revoked the credentials of issuer {} at the trusted-issuers-list.", orderId, issuerDid);
                     return response;

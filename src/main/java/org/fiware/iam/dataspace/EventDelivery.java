@@ -185,7 +185,7 @@ public class EventDelivery {
         return authHandler.map(handler -> handler.executeWithAuth(request, pacedSend))
                 .orElseGet(() -> pacedSend.apply(request))
                 .switchIfEmpty(Mono.error(() -> new IllegalStateException("No response from " + subscription.sink())))
-                .flatMap(response -> isSuccess(response.code()) ? Mono.<Void>empty()
+                .flatMap(response -> DownstreamStatus.isSuccess(response.code()) ? Mono.<Void>empty()
                         // a returned error response is turned into the exception other paths throw, so one classification fits all
                         : Mono.error(new HttpClientResponseException("Sink answered " + response.code(), response)))
                 // bounds the token fetch a sink's 401 triggers, which no client timeout covers; the slot waits are added,
@@ -225,18 +225,11 @@ public class EventDelivery {
         return queueSize > 0 ? queueSize : DataSpaceEventsProperties.DEFAULT_DELIVERY_QUEUE_SIZE;
     }
 
-    /**
-     * The status a failed attempt was answered with; empty for transport errors, a failed token fetch and anything else.
-     */
-    static Optional<Integer> statusOf(Throwable e) {
-        return e instanceof HttpClientResponseException hcre ? Optional.of(hcre.getResponse().code()) : Optional.empty();
-    }
-
     private static boolean isRetryable(Throwable e) {
         if (e instanceof SubscriptionEnded) {
             return false;
         }
-        return statusOf(e)
+        return DownstreamStatus.statusOf(e)
                 .map(status -> status >= HttpStatus.INTERNAL_SERVER_ERROR.getCode()
                         || status == HttpStatus.REQUEST_TIMEOUT.getCode()
                         || status == HttpStatus.TOO_MANY_REQUESTS.getCode())
@@ -247,12 +240,7 @@ public class EventDelivery {
         if (e instanceof SubscriptionEnded) {
             return Outcome.EXPIRED;
         }
-        return statusOf(e).filter(status -> status == HttpStatus.GONE.getCode()).isPresent() ? Outcome.GONE : Outcome.FAILED;
-    }
-
-    // redirects are not followed, so a 3xx is a failure as well
-    private static boolean isSuccess(int status) {
-        return status >= HttpStatus.OK.getCode() && status < HttpStatus.MULTIPLE_CHOICES.getCode();
+        return DownstreamStatus.statusOf(e).filter(status -> status == HttpStatus.GONE.getCode()).isPresent() ? Outcome.GONE : Outcome.FAILED;
     }
 
     // invalid values (e.g. blanked by a refresh) fall back to the defaults instead of breaking delivery

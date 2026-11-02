@@ -30,8 +30,10 @@ src/main/java/org/fiware/iam/
     DataSpaceEventsProperties.java  # dataspace.events.* (refreshable; read via the bean on every use), startup Conditions
   domain/
     ContractManagement.java         # Core domain interface
-  dataspace/                        # Data space eventing: EventListener (POST/OPTIONS /events), BearerVerifier
-                                    # (verifier JWT -> participant id), EventAuthorizer, EventDeduplicator, refresh/watch
+  dataspace/                        # Data space eventing. Receiving: EventListener (POST/OPTIONS /events), BearerVerifier
+                                    # (verifier JWT -> participant id), EventAuthorizer, EventDeduplicator, refresh/watch.
+                                    # Publishing (CM-2): SubscriptionController (/subscriptions), SubscriptionRegistry,
+                                    # WebhookHandshake, EventDelivery/SubscriptionChannel, PublishEndpoint (POST :9090/events)
   dsp/                              # DSP / Rainbow adapter integration
   http/
     Oid4VpAuthHandler.java          # OID4VP authentication filter
@@ -96,6 +98,10 @@ mvn test -Dtest=TMForumAdapterTest
 - Management endpoints (micronaut-management) listen on port 9090 (cluster-internal, unauthenticated; `/refresh` lives there)
 - Outbound authenticated calls: set `Oid4VpAuthHandler.CLIENT_ID_ATTRIBUTE`/`SCOPE_ATTRIBUTE` (a `Set`) on the request and
   call `Optional<AuthHandler>.executeWithAuth` (see `ContractManagementAdapter`); a 401 triggers one OID4VP token fetch + retry
+- Refresh reactions: a `RefreshEvent` listener may run before Micronaut has rebound the properties; do the work async
+  inside `ConfigurationRefreshLock.exclusively` (released only after the rebind). `dataspace.EventListener` clashes with
+  Micronaut's `@EventListener` annotation in that package; implement `ApplicationEventListener<...>` there instead
+- Time in tests: inject `java.time.Clock` (`bean/ClockFactory`), drive it with `dataspace/MutableClock` in tests
 - Metrics: inject `Optional<MeterRegistry>`, fall back to `CompositeMeterRegistry` (see `EventListener`); bounded tag values
 - Doc-comment density is low: one-line Javadoc on classes/interfaces and interface methods, Javadoc on configuration
   fields; most implementation methods have none. Match that — do not add `@param`/`@return` blocks

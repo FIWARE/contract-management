@@ -123,8 +123,14 @@ oid4vp:
 #        path: "/config"
 #    publishers:
 #      - id: "did:web:consumer.org"
-#        origin: "events.consumer.org"
+#        # must equal the publisher's dataspace.events.publisher.origin, or its handshake fails
+#        origin: "cm.consumer.org"
 #        types: [ "org.fiware.dataspace.example" ]
+#        # subscriber only: the publisher's subscriptions API; without it the entry is listener-only
+#        subscriptions-url: "https://cm.consumer.org/subscriptions"
+#        # optional overrides of subscriber.client-id / subscriber.scopes
+#        client-id: "contract-management"
+#        scopes: [ "default" ]
 #    # sending side: POST /subscriptions, webhook delivery and the internal POST :9090/events
 #    publisher:
 #      enabled: true
@@ -138,6 +144,25 @@ oid4vp:
 #        max-backoff: PT1M
 #        queue-size: 1000
 #        attempt-timeout: PT30S
+#    # subscribing side: registers the own POST /events at every publisher with a subscriptions-url
+#    subscriber:
+#      enabled: true
+#      sink: "https://cm.provider.org/events"
+#      # towards the publishers' subscriptions API
+#      client-id: "contract-management"
+#      scopes: [ "default" ]
+#      # at the own verifier, used by the publishers when the sink answers 401
+#      protocol-settings:
+#        client-id: "contract-management"
+#        scopes: [ "default" ]
+#      initial-delay: PT5S
+#      renewal-fraction: 0.5
+#      min-renewal-delay: PT10S
+#      conflict-renewal-interval: PT1H
+#      reconcile-interval: PT1M
+#      retry:
+#        initial-backoff: PT5S
+#        max-backoff: PT5M
 
 endpoints:
   all:

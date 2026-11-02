@@ -21,10 +21,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 import java.util.Set;
 
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Matchers.isNull;
+import static org.mockito.Matchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -111,18 +108,18 @@ class TrustedIssuersListAdapterTest {
 
     @Test
     void denyIssuer_revokesTheOrdersScopeWithoutResolvingItsConfiguration() {
-        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class)))
+        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class), anyBoolean()))
                 .thenReturn(Mono.just(HttpResponse.noContent()));
 
         HttpResponse<?> response = classUnderTest.denyIssuer(ISSUER_DID, ORDER_ID).block();
 
         Assertions.assertEquals(HttpStatus.NO_CONTENT, response.getStatus(), "The revocation should succeed.");
-        verify(apiClient).deleteCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), isNull(ScopeTypeVO.class));
+        verify(apiClient).deleteCredentialsByScope(eq(ISSUER_DID), eq(ORDER_ID), isNull(ScopeTypeVO.class), eq(false));
     }
 
     @Test
     void denyIssuer_unknownIssuerIsNotAFailure() {
-        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class)))
+        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class),anyBoolean()))
                 .thenReturn(Mono.error(new HttpClientResponseException("not found", HttpResponse.notFound())));
 
         HttpResponse<?> response = classUnderTest.denyIssuer(ISSUER_DID, ORDER_ID).block();
@@ -133,7 +130,7 @@ class TrustedIssuersListAdapterTest {
 
     @Test
     void denyIssuer_fault() {
-        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class)))
+        when(apiClient.deleteCredentialsByScope(anyString(), anyString(), isNull(ScopeTypeVO.class), anyBoolean()))
                 .thenReturn(Mono.error(new HttpClientException("test")));
 
         Assertions.assertThrows(TrustedIssuersException.class,
