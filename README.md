@@ -57,7 +57,7 @@ The following table concentrates on the most important configuration parameters:
 | `dataspace.events.listener.dedup.ttl` | `DATASPACE_EVENTS_LISTENER_DEDUP_TTL` | How long a `(source, id)` pair is remembered | PT1H |
 | `dataspace.events.listener.watch.enabled` | `DATASPACE_EVENTS_LISTENER_WATCH_ENABLED` | Refresh when the config directory changes (startup only, needs a restart) | false |
 | `dataspace.events.listener.watch.path` | `DATASPACE_EVENTS_LISTENER_WATCH_PATH` | Watched configuration directory (e.g. the ConfigMap mount `/config`, not the file) | - |
-| `dataspace.events.publishers` | - | List of `id` (participant id), `origin` (webhook origin) and `types` (allowed event types) | [] |
+| `dataspace.events.publishers` | - | List of `id` (participant id), `origin` (webhook origin) and `types` (allowed event types); for the subscriber also `subscriptions-url` and optional `client-id`/`scopes`, see [Subscribing to publishers](#subscribing-to-publishers) | [] |
 | `dataspace.events.publisher.enabled` | `DATASPACE_EVENTS_PUBLISHER_ENABLED` | Enable subscriptions and event delivery (startup only, needs a restart) | false |
 | `dataspace.events.publisher.origin` | `DATASPACE_EVENTS_PUBLISHER_ORIGIN` | Own DNS name, sent as `WebHook-Request-Origin`; required with the publisher | - |
 | `dataspace.events.publisher.lease-ttl` | `DATASPACE_EVENTS_PUBLISHER_LEASE_TTL` | Lease of a subscription; it expires unless renewed within this time | PT24H |
@@ -72,8 +72,21 @@ The following table concentrates on the most important configuration parameters:
 | `dataspace.events.publisher.delivery.max-backoff` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_MAX_BACKOFF` | Upper bound of the wait between retries | PT1M |
 | `dataspace.events.publisher.delivery.queue-size` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_QUEUE_SIZE` | Pending events per subscription; further events are dropped while it is full | 1000 |
 | `dataspace.events.publisher.delivery.attempt-timeout` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_ATTEMPT_TIMEOUT` | Upper bound of one attempt incl. an OID4VP token fetch, not counting the wait for the rate limit | PT30S |
+| `dataspace.events.subscriber.enabled` | `DATASPACE_EVENTS_SUBSCRIBER_ENABLED` | Register the own listener at every publisher with a `subscriptions-url` (startup only, needs a restart and the listener) | false |
+| `dataspace.events.subscriber.sink` | `DATASPACE_EVENTS_SUBSCRIBER_SINK` | Public absolute http(s) URL of the own `POST /events`; required with the subscriber | - |
+| `dataspace.events.subscriber.client-id` | `DATASPACE_EVENTS_SUBSCRIBER_CLIENT_ID` | OID4VP client id towards the publishers' subscriptions API, unless a publisher overrides it | - |
+| `dataspace.events.subscriber.scopes` | - | OID4VP scopes towards the publishers' subscriptions API, unless a publisher overrides them | [] |
+| `dataspace.events.subscriber.protocol-settings.client-id` | `DATASPACE_EVENTS_SUBSCRIBER_PROTOCOL_SETTINGS_CLIENT_ID` | Client at the own verifier the publishers use when the sink answers `401`; required with the subscriber | - |
+| `dataspace.events.subscriber.protocol-settings.scopes` | - | Scopes at the own verifier, sent along with `protocol-settings.client-id` | [] |
+| `dataspace.events.subscriber.initial-delay` | `DATASPACE_EVENTS_SUBSCRIBER_INITIAL_DELAY` | Wait after startup before the first registrations | PT5S |
+| `dataspace.events.subscriber.retry.initial-backoff` | `DATASPACE_EVENTS_SUBSCRIBER_RETRY_INITIAL_BACKOFF` | Wait before retrying a failed registration, doubled on each further failure | PT5S |
+| `dataspace.events.subscriber.retry.max-backoff` | `DATASPACE_EVENTS_SUBSCRIBER_RETRY_MAX_BACKOFF` | Upper bound of the wait between retries; retried without an attempt limit | PT5M |
+| `dataspace.events.subscriber.renewal-fraction` | `DATASPACE_EVENTS_SUBSCRIBER_RENEWAL_FRACTION` | Renew after this fraction of the remaining lease; values outside `(0, 1)` use the default | 0.5 |
+| `dataspace.events.subscriber.min-renewal-delay` | `DATASPACE_EVENTS_SUBSCRIBER_MIN_RENEWAL_DELAY` | Lower bound of the wait before a renewal | PT10S |
+| `dataspace.events.subscriber.conflict-renewal-interval` | `DATASPACE_EVENTS_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL` | Wait before re-registering after a `409` (or a `201` without `expiresAt`) | PT1H |
+| `dataspace.events.subscriber.reconcile-interval` | `DATASPACE_EVENTS_SUBSCRIBER_RECONCILE_INTERVAL` | Interval of the periodic comparison of the configured publishers with the registrations | PT1M |
 
-All `dataspace.events.*` values except the three `enabled` flags and the two `sink-*-timeout`s are reloaded on a refresh without
+All `dataspace.events.*` values except the four `enabled` flags and the two `sink-*-timeout`s are reloaded on a refresh without
 a restart. A key removed from
 the configuration keeps its previous value until restart; set it to an empty value instead.
 
@@ -236,12 +249,123 @@ never expose it through the ingress. CM refuses to start the publisher when `end
 * A failed handshake is answered only with `handshake failed`; the sink's status or the connection error is logged, never
   returned, so the API cannot be used to probe hosts reachable from CM.
 
+#### Subscribing to publishers
+
+With `dataspace.events.subscriber.enabled`, CM registers its own `POST /events` as webhook `sink` at every configured publisher
+that has a `subscriptions-url`, using the publisher's `POST /subscriptions` (the API described above). This happens shortly after
+startup (`initial-delay`) and whenever a refresh adds or changes a publisher. Each lease is renewed before it expires.
+
+Startup fails unless all of the following hold:
+
+* `dataspace.events.listener.enabled` is `true`, because the publisher's `OPTIONS` handshake is answered by the listener.
+* `subscriber.sink` is the public absolute http(s) URL of the own `POST /events`, as the publishers reach it.
+* `subscriber.protocol-settings.client-id` is set.
+* `own-participant-id` or `general.did` is set. It is sent as `subscriberId` and has to equal the participant id that the
+  publisher's verifier puts into CM's token.
+
+A `publishers[]` entry is only subscribed to if it has a `subscriptions-url`. CM never derives that URL from the publisher id or
+origin, and entries without one are listener-only. A subscribable entry also needs:
+
+* `types`: the event types CM subscribes to at that publisher.
+* `origin`: it must equal the publisher's own `dataspace.events.publisher.origin`. The publisher sends it as
+  `WebHook-Request-Origin` in the handshake, and the listener only grants configured origins.
+
+An entry with a `subscriptions-url` but no `types` or no `origin` is skipped with a WARN and is not contacted. A wrong but
+non-empty `origin` cannot be detected locally; the registration then fails with `400 handshake failed` and is retried.
+
+**Two pairs of client credentials** are used:
+
+* `subscriber.client-id` / `subscriber.scopes` are what CM uses for OID4VP towards the publisher's subscriptions API, i.e. when
+  the publisher answers `401`. A publisher entry can override them with its own `client-id` / `scopes`. A blank `client-id`
+  or an empty `scopes` list counts as "no override".
+* `subscriber.protocol-settings.client-id` / `.scopes` are sent as `protocolsettings` in the subscription. They name the client
+  at **CM's own** verifier that the publisher uses when CM's sink answers a delivery with `401`.
+
+**Retries and renewal:**
+
+* A failed registration (transport error, timeout, any non-`2xx` other than `409`) is retried without an attempt limit, because
+  a publisher may be down for a long time. The wait starts at `retry.initial-backoff` and doubles up to `retry.max-backoff`.
+* After a `201`, the lease is renewed after `renewal-fraction` of the remaining time until `expiresAt`, but never sooner than
+  `min-renewal-delay`. A `renewal-fraction` outside `(0, 1)` falls back to `0.5`. A renewal repeats the `POST` for the same
+  sink, so the publisher keeps the subscription id.
+* A `409` counts as success: it is logged at INFO as "409 treated as existing subscription", and the publisher is registered
+  again after `conflict-renewal-interval`. A CM publisher answers `409` only when its subscription caps are reached; an existing
+  subscription is renewed with `201`. The state `CONFLICT` in the health details therefore keeps that case visible.
+* A `201` without `expiresAt` is also registered again after `conflict-renewal-interval`.
+
+**Configuration changes at runtime** are applied on every refresh and by a periodic check every `reconcile-interval`:
+
+* An added publisher is registered right away, without a restart.
+* A publisher whose `subscriptions-url`, `types`, `origin`, `client-id` or `scopes` changed is registered again immediately.
+  So is every publisher when `sink`, `protocol-settings`, the global `client-id`/`scopes` or the own participant id changed.
+  * A changed `types`, `origin` or credential keeps the subscription key `(subscriberId, sink)`. The publisher renews the
+    subscription in place, and the old lease stays valid until then.
+  * A changed `sink`, participant id or `subscriptions-url` means a different subscription. CM first sends a best-effort
+    `DELETE <old subscriptions-url>/<old id>` with the old credentials, then the new `POST`. This frees the slot in the
+    publisher's cap. Until the new registration succeeds, the publisher counts as `PENDING`.
+* A removed publisher, or one whose `subscriptions-url` was set to `""`, is no longer retried or renewed and leaves the health
+  check. CM sends a best-effort `DELETE <subscriptions-url>/<id>`; a failure is only logged, because the lease expires anyway.
+* An entry that becomes invalid (no `types`, no `origin`) is dropped the same way and shows as `SKIPPED`.
+* Without a known subscription id (never registered, or answered `409`), nothing can be deleted, and the old lease simply expires.
+
+A key removed from the configuration keeps its previous value, see below. To make a publisher listener-only at runtime, set
+`subscriptions-url: ""`. To drop a per-publisher override, set `client-id: ""` or `scopes: []`.
+
+**Health:** the indicator `dataspace-subscriptions` is `UP` when every subscribable publisher holds a registration that has not
+expired; once the first reconcile has run, that includes the case that no publisher is subscribable. Otherwise it reports the
+status `DEGRADED`:
+
+* from startup until the first reconcile (`initial-delay`), and after that until every subscribable publisher is registered;
+* while a renewal keeps failing past `expiresAt` (a failed renewal before that stays `UP`, because the publisher still delivers);
+* after a `sink`, participant id or `subscriptions-url` change, until the new registration succeeds;
+* while the subscriber settings are invalid after a refresh (detail `subscriber-settings`).
+
+It never reports `DOWN`. The publisher's handshake reaches CM through its Service or ingress. A pod that fails readiness would
+never receive it, so registration could never succeed, and a failing liveness probe would restart the pod in a loop. `/health`
+and `/health/readiness` include the indicator and keep answering `200` with `DEGRADED`; `/health/liveness` does not include it.
+A `DOWN` of another indicator still wins. `SKIPPED` publishers do not affect the status.
+
+The details map each publisher id to its `state` (`PENDING`, `REGISTERED`, `CONFLICT`, `EXPIRED` or `SKIPPED`), `expiresAt`,
+and for `SKIPPED` the `reason`. Error responses of the publishers are only logged. An anonymous `/health` only shows the overall
+status. The default `endpoints.health.details-visible` is `AUTHENTICATED`; to see the per-publisher details on the
+cluster-internal port 9090, set it to `ANONYMOUS`.
+
+```yaml
+dataspace:
+  events:
+    own-participant-id: "did:web:consumer.org"
+    listener:
+      enabled: true
+      verifier:
+        jwks-url: "http://verifier:8080/.well-known/jwks"
+        audience: "contract-management"
+    publishers:
+      - id: "did:web:provider.org"
+        # must equal the provider's dataspace.events.publisher.origin
+        origin: "cm.provider.org"
+        types: [ "org.fiware.dataspace.example" ]
+        subscriptions-url: "https://cm.provider.org/subscriptions"
+        # optional, overrides subscriber.client-id / subscriber.scopes for this publisher
+        client-id: "contract-management-provider"
+        scopes: [ "events" ]
+    subscriber:
+      enabled: true
+      sink: "https://cm.consumer.org/events"
+      client-id: "contract-management"
+      scopes: [ "default" ]
+      protocol-settings:
+        client-id: "contract-management"
+        scopes: [ "default" ]
+```
+
 #### Changing the configuration without a restart
 
-All `dataspace.events.*` values except `listener.enabled`, `listener.watch.enabled`, `publisher.enabled` (startup-time
-conditions) and `publisher.sink-connect-timeout`/`publisher.sink-read-timeout` (used to build the sink client) are refreshable;
-these need a restart. All other `publisher.*` values, e.g. the caps, the lease and the delivery settings, apply to the next
-request or delivery attempt (`delivery.queue-size` only to subscriptions that receive their first event afterwards).
+All `dataspace.events.*` values except `listener.enabled`, `listener.watch.enabled`, `publisher.enabled`, `subscriber.enabled`
+(startup-time conditions) and `publisher.sink-connect-timeout`/`publisher.sink-read-timeout` (used to build the sink client) are
+refreshable; these need a restart. All other `publisher.*` values, e.g. the caps, the lease and the delivery settings, apply to
+the next request or delivery attempt (`delivery.queue-size` only to subscriptions that receive their first event afterwards).
+All other `subscriber.*` values and the publishers' `subscriptions-url`, `client-id` and `scopes` are refreshable as well; see
+[Subscribing to publishers](#subscribing-to-publishers) for how the subscriber reacts.
 A refresh is triggered by:
 
 * `POST :9090/refresh` reloads the configuration. The management port is not authenticated, keep port 9090 cluster-internal.
