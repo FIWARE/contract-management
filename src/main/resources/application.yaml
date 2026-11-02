@@ -123,7 +123,8 @@ oid4vp:
 #        path: "/config"
 #    publishers:
 #      - id: "did:web:consumer.org"
-#        origin: "events.consumer.org"
+#        # must equal the publisher's dataspace.events.publisher.origin, or its handshake fails
+#        origin: "cm.consumer.org"
 #        types: [ "org.fiware.dataspace.example" ]
 #        # subscriber only: the publisher's subscriptions API; without it the entry is listener-only
 #        subscriptions-url: "https://cm.consumer.org/subscriptions"

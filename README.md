@@ -312,9 +312,10 @@ A key removed from the configuration keeps its previous value, see below. To mak
 `subscriptions-url: ""`. To drop a per-publisher override, set `client-id: ""` or `scopes: []`.
 
 **Health:** the indicator `dataspace-subscriptions` is `UP` when every subscribable publisher holds a registration that has not
-expired, or when no publisher is subscribable. Otherwise it reports the status `DEGRADED`:
+expired; once the first reconcile has run, that includes the case that no publisher is subscribable. Otherwise it reports the
+status `DEGRADED`:
 
-* from startup until the first successful registration;
+* from startup until the first reconcile (`initial-delay`), and after that until every subscribable publisher is registered;
 * while a renewal keeps failing past `expiresAt` (a failed renewal before that stays `UP`, because the publisher still delivers);
 * after a `sink`, participant id or `subscriptions-url` change, until the new registration succeeds;
 * while the subscriber settings are invalid after a refresh (detail `subscriber-settings`).
