@@ -15,11 +15,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.api.EventsApi;
 import org.fiware.iam.events.model.DataSpaceEventVO;
-import org.fiware.iam.exception.VerifierUnavailableException;
 import org.fiware.iam.logging.DownstreamError;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.List;
@@ -43,22 +41,21 @@ public class EventListener implements EventsApi {
     static final String IN_FLIGHT = "in_flight";
     static final String INVALID = "invalid";
     static final String HANDLER_FAILED = "handler_failed";
-    static final String VERIFIER_UNAVAILABLE = "verifier_unavailable";
     static final Duration RETRY_AFTER = Duration.ofSeconds(5);
 
     private final List<DataSpaceEventHandler> handlers;
-    private final BearerVerifier bearerVerifier;
+    private final ParticipantResolver participantResolver;
     private final EventAuthorizer authorizer;
     private final EventDeduplicator deduplicator;
     private final MeterRegistry meterRegistry;
     private final DataSpaceEventsProperties properties;
 
-    public EventListener(List<DataSpaceEventHandler> handlers, BearerVerifier bearerVerifier, EventAuthorizer authorizer,
+    public EventListener(List<DataSpaceEventHandler> handlers, ParticipantResolver participantResolver, EventAuthorizer authorizer,
                          EventDeduplicator deduplicator, Optional<MeterRegistry> meterRegistry,
                          DataSpaceEventsProperties properties) {
         this.handlers = handlers;
         this.properties = properties;
-        this.bearerVerifier = bearerVerifier;
+        this.participantResolver = participantResolver;
         this.authorizer = authorizer;
         this.deduplicator = deduplicator;
         // without micronaut.metrics.enabled there is no registry; an empty composite counts nothing
@@ -67,10 +64,10 @@ public class EventListener implements EventsApi {
 
     @Override
     public Mono<HttpResponse<Object>> receiveEvent(DataSpaceEventVO event) {
-        String authorization = ServerRequestContext.currentRequest()
-                .flatMap(request -> request.getHeaders().getAuthorization())
+        String identity = ServerRequestContext.currentRequest()
+                .map(request -> request.getHeaders().get(participantResolver.headerName()))
                 .orElse(null);
-        return receive(authorization, event);
+        return receive(identity, event);
     }
 
     @Override
@@ -82,17 +79,9 @@ public class EventListener implements EventsApi {
         return Mono.just(response);
     }
 
-    Mono<HttpResponse<Object>> receive(@Nullable String authorization, DataSpaceEventVO event) {
+    Mono<HttpResponse<Object>> receive(@Nullable String identity, DataSpaceEventVO event) {
         String metricType = isKnownType(event.getType()) ? event.getType() : OTHER_TYPE;
-        // the JWKS fetch blocks, so it must not run on the event loop
-        return Mono.fromCallable(() -> bearerVerifier.participantIdOf(authorization))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(participantId -> process(participantId, event, metricType))
-                .onErrorResume(VerifierUnavailableException.class, e -> {
-                    log.warn("Data space event {} from {} of type {} cannot be verified: {}",
-                            event.getId(), event.getSource(), event.getType(), DownstreamError.reason(e), e);
-                    return retryLater(metricType, VERIFIER_UNAVAILABLE);
-                });
+        return process(participantResolver.participantIdOf(identity), event, metricType);
     }
 
     private Mono<HttpResponse<Object>> process(Optional<String> participantId, DataSpaceEventVO event, String metricType) {

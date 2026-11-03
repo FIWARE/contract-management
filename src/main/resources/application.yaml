@@ -109,12 +109,10 @@ oid4vp:
 #    own-participant-id: "did:web:provider.org"
 #    listener:
 #      enabled: true
-#      verifier:
-#        jwks-url: "http://verifier:8080/.well-known/jwks"
-#        issuer: "http://verifier:8080"
-#        audience: "contract-management"
+#      # the caller is identified by the header the API gateway sets from the token it verified; CM does not verify it
+#      identity:
+#        header: "X-Userinfo"
 #        participant-claim: "participantId"
-#        algorithms: [ "ES256", "RS256" ]
 #      dedup:
 #        max-entries: 10000
 #        ttl: PT1H

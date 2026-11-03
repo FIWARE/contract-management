@@ -10,7 +10,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Configuration of the data space event channel. Micronaut's refresh scope rebinds this singleton in place on a refresh.
@@ -22,7 +21,7 @@ import java.util.Set;
 @ConfigurationProperties("dataspace.events")
 public class DataSpaceEventsProperties {
 
-    public static final Set<String> DEFAULT_ALGORITHMS = Set.of("ES256", "RS256");
+    public static final String DEFAULT_IDENTITY_HEADER = "X-Userinfo";
     public static final String DEFAULT_PARTICIPANT_CLAIM = "participantId";
     public static final int DEFAULT_DEDUP_MAX_ENTRIES = 10_000;
     public static final Duration DEFAULT_DEDUP_TTL = Duration.ofHours(1);
@@ -129,9 +128,9 @@ public class DataSpaceEventsProperties {
         private boolean enabled = false;
 
         /**
-         * Verification of the bearer tokens issued by the verifier.
+         * The caller identity the API gateway passes on.
          */
-        private Verifier verifier = new Verifier();
+        private Identity identity = new Identity();
 
         /**
          * Deduplication of retried deliveries.
@@ -144,36 +143,18 @@ public class DataSpaceEventsProperties {
         private Watch watch = new Watch();
 
         @Data
-        @ConfigurationProperties("verifier")
-        public static class Verifier {
+        @ConfigurationProperties("identity")
+        public static class Identity {
 
             /**
-             * URL of the verifier's JWKS. Required when the listener or the publisher is enabled.
+             * Request header the API gateway sets with the claims of the token it verified, base64-encoded or plain JSON.
              */
-            @Nullable
-            private String jwksUrl;
+            private String header = DEFAULT_IDENTITY_HEADER;
 
             /**
-             * Expected issuer of the tokens. Not checked if unset.
-             */
-            @Nullable
-            private String issuer;
-
-            /**
-             * Audience the tokens have to be issued for. Required when the listener or the publisher is enabled.
-             */
-            @Nullable
-            private String audience;
-
-            /**
-             * Top-level token claim carrying the participant id of the caller.
+             * Top-level claim carrying the participant id of the caller.
              */
             private String participantClaim = DEFAULT_PARTICIPANT_CLAIM;
-
-            /**
-             * JWS algorithms accepted on the tokens.
-             */
-            private Set<String> algorithms = DEFAULT_ALGORITHMS;
         }
 
         @Data
@@ -462,9 +443,9 @@ public class DataSpaceEventsProperties {
     }
 
     /**
-     * Enables the bearer token verification, shared by the receiving endpoint and the subscriptions API.
+     * Enables the resolution of the caller identity, shared by the receiving endpoint and the subscriptions API.
      */
-    public static class VerifierCondition implements Condition {
+    public static class IdentityCondition implements Condition {
 
         @Override
         public boolean matches(ConditionContext context) {

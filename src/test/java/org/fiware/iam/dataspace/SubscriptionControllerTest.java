@@ -1,7 +1,7 @@
 package org.fiware.iam.dataspace;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micronaut.core.annotation.Nullable;
-import io.micronaut.http.HttpHeaders;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
@@ -9,7 +9,6 @@ import org.fiware.iam.events.model.HttpProtocolSettingsVO;
 import org.fiware.iam.events.model.SubscriptionErrorVO;
 import org.fiware.iam.events.model.SubscriptionRequestVO;
 import org.fiware.iam.events.model.SubscriptionVO;
-import org.fiware.iam.exception.VerifierUnavailableException;
 import org.fiware.iam.exception.WebhookHandshakeException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,9 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.fiware.iam.dataspace.TestEventFixtures.userinfo;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,7 +42,6 @@ import static org.mockito.Mockito.when;
 
 class SubscriptionControllerTest {
 
-    private static final String BEARER_PREFIX = "Bearer ";
     private static final Instant START = Instant.parse("2026-10-30T12:00:00Z");
     private static final Duration LEASE_TTL = Duration.ofHours(1);
     private static final Duration BEFORE_RENEWAL = Duration.ofMinutes(10);
@@ -63,7 +60,6 @@ class SubscriptionControllerTest {
     private static final String UNKNOWN_ID = "unknown";
 
     private DataSpaceEventsProperties properties;
-    private BearerVerifier bearerVerifier;
     private WebhookHandshake handshake;
     private Clock clock;
     private SubscriptionRegistry registry;
@@ -75,16 +71,13 @@ class SubscriptionControllerTest {
         properties.getPublisher().setEnabled(true);
         properties.getPublisher().setOrigin(ORIGIN);
         properties.getPublisher().setLeaseTtl(LEASE_TTL);
-        bearerVerifier = mock(BearerVerifier.class);
-        // the stand-in token is the participant id itself
-        when(bearerVerifier.participantIdOf(any())).thenAnswer(invocation -> Optional.ofNullable((String) invocation.getArguments()[0])
-                .map(authorization -> authorization.substring(BEARER_PREFIX.length())));
         handshake = mock(WebhookHandshake.class);
         when(handshake.validate(any())).thenReturn(Mono.just(Optional.of(RATE)));
         clock = mock(Clock.class);
         when(clock.instant()).thenReturn(START);
         registry = new SubscriptionRegistry(properties, clock);
-        controller = new SubscriptionController(bearerVerifier, handshake, registry, properties);
+        controller = new SubscriptionController(new ParticipantResolver(properties, new ObjectMapper()), handshake,
+                registry, properties);
     }
 
     @Test
@@ -142,11 +135,11 @@ class SubscriptionControllerTest {
         Consumer<SubscriptionRequestVO> unchanged = request -> {
         };
         return Stream.of(
-                Arguments.of("no bearer token", null, unchanged, HttpStatus.UNAUTHORIZED, null),
+                Arguments.of("no identity header", null, unchanged, HttpStatus.UNAUTHORIZED, null),
                 Arguments.of("subscriberId differs from the participant", OTHER_SUBSCRIBER, unchanged, HttpStatus.FORBIDDEN, null),
                 Arguments.of("missing subscriberId", SUBSCRIBER, change(request -> request.subscriberId(null)),
                         HttpStatus.BAD_REQUEST, SubscriptionController.MISSING_SUBSCRIBER_ID),
-                Arguments.of("missing subscriberId without bearer token", null, change(request -> request.subscriberId(null)),
+                Arguments.of("missing subscriberId without identity header", null, change(request -> request.subscriberId(null)),
                         HttpStatus.UNAUTHORIZED, null),
                 Arguments.of("insecure sink", SUBSCRIBER, change(request -> request.sink(INSECURE_SINK)),
                         HttpStatus.BAD_REQUEST, SubscriptionController.INVALID_SINK),
@@ -275,30 +268,13 @@ class SubscriptionControllerTest {
         assertEquals(1, registry.active(TYPE).size());
     }
 
-    @Test
-    void asksToRetryWhenTheVerifierIsDownOnCreate() {
-        verifierDown();
-
-        assertRetryLater(create(SUBSCRIBER, request()));
-        verify(handshake, never()).validate(any());
-    }
-
-    @Test
-    void asksToRetryWhenTheVerifierIsDownOnDelete() {
-        String id = create(SUBSCRIBER, request()).body().getId();
-        verifierDown();
-
-        assertRetryLater(controller.delete(BEARER_PREFIX + SUBSCRIBER, id).block());
-        assertTrue(registry.get(id).isPresent());
-    }
-
     @ParameterizedTest(name = "{0}")
     @MethodSource("deletions")
     void deletesOnlyOwnSubscriptions(String description, @Nullable String participant, boolean unknownId, HttpStatus expectedStatus,
                                      boolean expectedRemoved) {
         String id = create(SUBSCRIBER, request()).body().getId();
 
-        HttpResponse<Object> response = controller.delete(authorization(participant), unknownId ? UNKNOWN_ID : id).block();
+        HttpResponse<Object> response = controller.delete(identity(participant), unknownId ? UNKNOWN_ID : id).block();
 
         assertNotNull(response);
         assertEquals(expectedStatus, response.getStatus(), description);
@@ -310,7 +286,7 @@ class SubscriptionControllerTest {
                 Arguments.of("owner", SUBSCRIBER, false, HttpStatus.NO_CONTENT, true),
                 Arguments.of("other participant", OTHER_SUBSCRIBER, false, HttpStatus.NOT_FOUND, false),
                 Arguments.of("unknown id", SUBSCRIBER, true, HttpStatus.NOT_FOUND, false),
-                Arguments.of("no bearer token", null, false, HttpStatus.UNAUTHORIZED, false));
+                Arguments.of("no identity header", null, false, HttpStatus.UNAUTHORIZED, false));
     }
 
     private static void assertGenericHandshakeFailure(HttpResponse<SubscriptionVO> response, String description) {
@@ -323,26 +299,15 @@ class SubscriptionControllerTest {
         return response.getBody(SubscriptionErrorVO.class).map(SubscriptionErrorVO::getReason);
     }
 
-    private static void assertRetryLater(@Nullable HttpResponse<?> response) {
-        assertNotNull(response);
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatus());
-        assertEquals(String.valueOf(EventListener.RETRY_AFTER.toSeconds()), response.getHeaders().get(HttpHeaders.RETRY_AFTER));
-    }
-
-    private void verifierDown() {
-        doThrow(new VerifierUnavailableException("JWKS unreachable", new ConnectException("refused")))
-                .when(bearerVerifier).participantIdOf(anyString());
-    }
-
     private HttpResponse<SubscriptionVO> create(@Nullable String participant, SubscriptionRequestVO request) {
-        HttpResponse<SubscriptionVO> response = controller.create(authorization(participant), request).block();
+        HttpResponse<SubscriptionVO> response = controller.create(identity(participant), request).block();
         assertNotNull(response);
         return response;
     }
 
     @Nullable
-    private static String authorization(@Nullable String participant) {
-        return participant == null ? null : BEARER_PREFIX + participant;
+    private static String identity(@Nullable String participant) {
+        return participant == null ? null : userinfo(participant);
     }
 
     private static Consumer<SubscriptionRequestVO> change(Consumer<SubscriptionRequestVO> change) {

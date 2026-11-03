@@ -12,6 +12,7 @@ import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import io.micronaut.test.support.TestPropertyProvider;
 import jakarta.inject.Inject;
+import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.SubscriptionErrorVO;
 import org.fiware.iam.events.model.SubscriptionVO;
 import org.fiware.iam.exception.WebhookHandshakeException;
@@ -45,7 +46,7 @@ import static org.mockito.Mockito.when;
 class SubscriptionControllerHttpTest implements TestPropertyProvider {
 
     private static final String SUBSCRIPTIONS_PATH = "/subscriptions";
-    private static final String AUDIENCE = "contract-management";
+    private static final String IDENTITY_HEADER = DataSpaceEventsProperties.DEFAULT_IDENTITY_HEADER;
     private static final String SUBSCRIBER = "did:web:consumer.org";
     private static final String OTHER_PARTICIPANT = "did:web:someone.org";
     private static final String CLIENT_ID = "consumer-events";
@@ -70,8 +71,6 @@ class SubscriptionControllerHttpTest implements TestPropertyProvider {
         properties.put(TestEventFixtures.ENABLED_PROPERTY, "true");
         properties.put("dataspace.events.publisher.enabled", "true");
         properties.put("dataspace.events.publisher.origin", "cm.provider.org");
-        properties.put("dataspace.events.listener.verifier.audience", AUDIENCE);
-        properties.put("dataspace.events.listener.verifier.jwks-url", "http://localhost:" + port + TestEventFixtures.JWKS_PATH);
         properties.put("dataspace.events.own-participant-id", "did:web:provider.org");
         return properties;
     }
@@ -98,11 +97,11 @@ class SubscriptionControllerHttpTest implements TestPropertyProvider {
         assertNotNull(subscription.getExpiresAt());
 
         HttpRequest<?> foreignDelete = HttpRequest.DELETE(SUBSCRIPTIONS_PATH + "/" + subscription.getId())
-                .bearerAuth(TestEventFixtures.token(OTHER_PARTICIPANT, AUDIENCE));
+                .header(IDENTITY_HEADER, TestEventFixtures.userinfo(OTHER_PARTICIPANT));
         assertEquals(HttpStatus.NOT_FOUND, exchange(foreignDelete, Object.class).getStatus());
 
         HttpRequest<?> delete = HttpRequest.DELETE(SUBSCRIPTIONS_PATH + "/" + subscription.getId())
-                .bearerAuth(TestEventFixtures.token(SUBSCRIBER, AUDIENCE));
+                .header(IDENTITY_HEADER, TestEventFixtures.userinfo(SUBSCRIBER));
         assertEquals(HttpStatus.NO_CONTENT, exchange(delete, Object.class).getStatus());
     }
 
@@ -112,7 +111,7 @@ class SubscriptionControllerHttpTest implements TestPropertyProvider {
     }
 
     @Test
-    void refusesWithoutBearer() {
+    void refusesWithoutAnIdentityHeader() {
         assertEquals(HttpStatus.UNAUTHORIZED, exchange(post(null, SINK), Object.class).getStatus());
     }
 
@@ -138,7 +137,7 @@ class SubscriptionControllerHttpTest implements TestPropertyProvider {
                 "protocol", "HTTP",
                 "protocolsettings", Map.of("clientId", CLIENT_ID));
         MutableHttpRequest<Map<String, Object>> request = HttpRequest.POST(SUBSCRIPTIONS_PATH, body);
-        return participant == null ? request : request.bearerAuth(TestEventFixtures.token(participant, AUDIENCE));
+        return participant == null ? request : request.header(IDENTITY_HEADER, TestEventFixtures.userinfo(participant));
     }
 
     private <T> HttpResponse<T> exchange(HttpRequest<?> request, Class<T> bodyType) {

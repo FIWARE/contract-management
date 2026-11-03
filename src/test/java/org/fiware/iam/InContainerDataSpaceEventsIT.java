@@ -1,12 +1,5 @@
 package org.fiware.iam;
 
-import com.nimbusds.jose.JOSEException;
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.JWSHeader;
-import com.nimbusds.jose.crypto.ECDSASigner;
-import com.nimbusds.jose.jwk.ECKey;
-import com.nimbusds.jwt.JWTClaimsSet;
-import com.nimbusds.jwt.SignedJWT;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -21,7 +14,6 @@ import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -30,12 +22,10 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.ParseException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Publishers added to the contract-management-provider ConfigMap are accepted without a restart, through the file watch.
+ * The deployment has no gateway in front, so the identity header is set directly, as APISIX would from a verified token.
  * The deployed CM has no event handler, so whether a publisher is configured is observed through the OPTIONS origin grant.
  * The watch is enabled here, so /refresh is only checked for reachability; DataSpaceEventsRefreshTest proves it applies changes.
  */
@@ -60,8 +51,7 @@ class InContainerDataSpaceEventsIT {
     private static final List<String> PUBLISHERS_PATH = List.of("dataspace", "events", "publishers");
     private static final String EVENTS_URL = "http://localhost:8089/events";
     private static final String REFRESH_URL = "http://localhost:9090/refresh";
-    private static final String VERIFIER_KEY = "dataspace/events-verifier-key.json";
-    private static final String AUDIENCE = "contract-management";
+    private static final String IDENTITY_HEADER = DataSpaceEventsProperties.DEFAULT_IDENTITY_HEADER;
     private static final String TYPE = "org.fiware.dataspace.test";
     private static final String CLOUDEVENTS_JSON = "application/cloudevents+json";
     private static final String REQUEST_ORIGIN_HEADER = "WebHook-Request-Origin";
@@ -72,7 +62,6 @@ class InContainerDataSpaceEventsIT {
     private static final int HTTP_OK = 200;
     private static final int HTTP_ACCEPTED = 202;
     private static final int HTTP_UNAUTHORIZED = 401;
-    private static final Duration TOKEN_LIFETIME = Duration.ofMinutes(5);
     // kubelet propagates ConfigMap changes after its sync period (1 min) plus the ConfigMap cache TTL
     private static final Duration KUBELET_PROPAGATION = Duration.ofMinutes(3);
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
@@ -114,9 +103,9 @@ class InContainerDataSpaceEventsIT {
     }
 
     @Test
-    void listenerVerifiesParticipantTokens() {
+    void listenerTakesTheParticipantFromTheGatewayHeader() {
         assertEquals(HTTP_UNAUTHORIZED, postEvent(CONFIGURED_PUBLISHER, null));
-        assertEquals(HTTP_ACCEPTED, postEvent(CONFIGURED_PUBLISHER, token(CONFIGURED_PUBLISHER)));
+        assertEquals(HTTP_ACCEPTED, postEvent(CONFIGURED_PUBLISHER, userinfo(CONFIGURED_PUBLISHER)));
     }
 
     @Test
@@ -174,14 +163,14 @@ class InContainerDataSpaceEventsIT {
         });
     }
 
-    private int postEvent(String participant, String token) {
+    private int postEvent(String participant, String identity) {
         String event = """
                 {"specversion": "1.0", "id": "%s", "source": "%s", "type": "%s"}
                 """.formatted(UUID.randomUUID(), participant, TYPE);
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(EVENTS_URL))
                 .header("Content-Type", CLOUDEVENTS_JSON);
-        if (token != null) {
-            request.header("Authorization", "Bearer " + token);
+        if (identity != null) {
+            request.header(IDENTITY_HEADER, identity);
         }
         return send(request.POST(HttpRequest.BodyPublishers.ofString(event))).statusCode();
     }
@@ -208,32 +197,12 @@ class InContainerDataSpaceEventsIT {
         }
     }
 
-    private static String token(String participant) {
-        Instant now = Instant.now();
-        JWTClaimsSet claims = new JWTClaimsSet.Builder()
-                .audience(AUDIENCE)
-                .issueTime(Date.from(now))
-                .expirationTime(Date.from(now.plus(TOKEN_LIFETIME)))
-                .claim(DataSpaceEventsProperties.DEFAULT_PARTICIPANT_CLAIM, participant)
-                .build();
-        ECKey key = verifierKey();
-        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.ES256).keyID(key.getKeyID()).build(), claims);
-        try {
-            jwt.sign(new ECDSASigner(key));
-        } catch (JOSEException e) {
-            throw new IllegalStateException(e);
-        }
-        return jwt.serialize();
-    }
-
-    private static ECKey verifierKey() {
-        try (InputStream in = InContainerDataSpaceEventsIT.class.getClassLoader().getResourceAsStream(VERIFIER_KEY)) {
-            return ECKey.parse(new String(in.readAllBytes(), StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        } catch (ParseException e) {
-            throw new IllegalStateException(e);
-        }
+    /**
+     * The identity header an API gateway sets in front of CM: base64 of the claims of the token it verified.
+     */
+    private static String userinfo(String participant) {
+        String claims = "{\"%s\": \"%s\"}".formatted(DataSpaceEventsProperties.DEFAULT_PARTICIPANT_CLAIM, participant);
+        return Base64.getEncoder().encodeToString(claims.getBytes(StandardCharsets.UTF_8));
     }
 
     private record Publisher(String id, String origin) {
