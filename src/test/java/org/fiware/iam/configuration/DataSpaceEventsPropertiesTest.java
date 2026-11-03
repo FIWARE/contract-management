@@ -37,8 +37,8 @@ class DataSpaceEventsPropertiesTest {
     private static final String TYPE_B = "org.fiware.dataspace.b";
     private static final String GENERAL_DID = "did:web:general.org";
     private static final String OWN_ID = "did:web:own.org";
-    private static final String AUDIENCE = "contract-management";
-    private static final String JWKS_URL = "http://verifier/.well-known/jwks";
+    private static final String IDENTITY_HEADER = "X-Participant";
+    private static final String PARTICIPANT_CLAIM = "sub";
     private static final int MAX_ENTRIES = 42;
     private static final Duration TTL = Duration.ofMinutes(5);
     private static final String OWN_ORIGIN = "cm.own.org";
@@ -77,8 +77,7 @@ class DataSpaceEventsPropertiesTest {
                 PREFIX + "publishers", List.of(
                         Map.of("id", PROVIDER_ID, "origin", PROVIDER_ORIGIN, "types", List.of(TYPE_A, TYPE_B)),
                         Map.of("id", CONSUMER_ID, "origin", CONSUMER_ORIGIN, "types", List.of(TYPE_A))),
-                PREFIX + "listener.verifier.audience", AUDIENCE,
-                PREFIX + "listener.verifier.jwks-url", JWKS_URL,
+                PREFIX + "listener.identity.header", IDENTITY_HEADER,
                 PREFIX + "listener.dedup.max-entries", MAX_ENTRIES,
                 PREFIX + "listener.dedup.ttl", TTL.toString()));
         context = ApplicationContext.builder()
@@ -106,11 +105,8 @@ class DataSpaceEventsPropertiesTest {
         DataSpaceEventsProperties.Listener listener = properties().getListener();
 
         assertFalse(listener.isEnabled());
-        assertEquals(AUDIENCE, listener.getVerifier().getAudience());
-        assertEquals(JWKS_URL, listener.getVerifier().getJwksUrl());
-        assertNull(listener.getVerifier().getIssuer());
-        assertEquals(DataSpaceEventsProperties.DEFAULT_PARTICIPANT_CLAIM, listener.getVerifier().getParticipantClaim());
-        assertEquals(DataSpaceEventsProperties.DEFAULT_ALGORITHMS, listener.getVerifier().getAlgorithms());
+        assertEquals(IDENTITY_HEADER, listener.getIdentity().getHeader());
+        assertEquals(DataSpaceEventsProperties.DEFAULT_PARTICIPANT_CLAIM, listener.getIdentity().getParticipantClaim());
         assertEquals(MAX_ENTRIES, listener.getDedup().getMaxEntries());
         assertEquals(TTL, listener.getDedup().getTtl());
         assertFalse(listener.getWatch().isEnabled());
@@ -136,8 +132,6 @@ class DataSpaceEventsPropertiesTest {
                                 Duration attemptTimeout) {
         try (ApplicationContext ctx = ApplicationContext.builder()
                 .properties(ISOLATED)
-                // an enabled publisher starts the bearer verifier, which needs its configuration
-                .properties(Map.of(PREFIX + "listener.verifier.audience", AUDIENCE, PREFIX + "listener.verifier.jwks-url", JWKS_URL))
                 .propertySources(PropertySource.of("test", publisherConfig))
                 .start()) {
             DataSpaceEventsProperties.PublisherSettings publisher = ctx.getBean(DataSpaceEventsProperties.class).getPublisher();
@@ -193,8 +187,6 @@ class DataSpaceEventsPropertiesTest {
                                  Duration reconcileInterval, Duration retryInitialBackoff, Duration retryMaxBackoff) {
         try (ApplicationContext ctx = ApplicationContext.builder()
                 .properties(ISOLATED)
-                // an enabled subscriber needs the listener, which starts the bearer verifier
-                .properties(Map.of(PREFIX + "listener.verifier.audience", AUDIENCE, PREFIX + "listener.verifier.jwks-url", JWKS_URL))
                 .propertySources(PropertySource.of("test", subscriberConfig))
                 .start()) {
             DataSpaceEventsProperties.SubscriberSettings subscriber = ctx.getBean(DataSpaceEventsProperties.class).getSubscriber();
@@ -283,16 +275,16 @@ class DataSpaceEventsPropertiesTest {
         return Stream.of(false, true);
     }
 
-    @ParameterizedTest(name = "listener {0}, publisher {1} -> verifier {2}, publisher beans {3}")
+    @ParameterizedTest(name = "listener {0}, publisher {1} -> identity {2}, publisher beans {3}")
     @MethodSource("conditions")
-    void conditions(boolean listenerEnabled, boolean publisherEnabled, boolean verifierExpected, boolean publisherExpected) {
+    void conditions(boolean listenerEnabled, boolean publisherEnabled, boolean identityExpected, boolean publisherExpected) {
         DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
         properties.getListener().setEnabled(listenerEnabled);
         properties.getPublisher().setEnabled(publisherEnabled);
         ConditionContext conditionContext = mock(ConditionContext.class);
         when(conditionContext.getBean(DataSpaceEventsProperties.class)).thenReturn(properties);
 
-        assertEquals(verifierExpected, new DataSpaceEventsProperties.VerifierCondition().matches(conditionContext));
+        assertEquals(identityExpected, new DataSpaceEventsProperties.IdentityCondition().matches(conditionContext));
         assertEquals(publisherExpected, new DataSpaceEventsProperties.PublisherCondition().matches(conditionContext));
         assertEquals(listenerEnabled, new DataSpaceEventsProperties.ListenerCondition().matches(conditionContext));
     }
@@ -386,15 +378,15 @@ class DataSpaceEventsPropertiesTest {
 
         config.put(PREFIX + "publishers", List.of(Map.of("id", CONSUMER_ID, "origin", CONSUMER_ORIGIN, "types", List.of(TYPE_B))));
         config.put(PREFIX + "listener.dedup.max-entries", MAX_ENTRIES + 1);
-        config.put(PREFIX + "listener.verifier.algorithms", List.of("ES384"));
-        config.put(PREFIX + "listener.verifier.audience", "");
+        config.put(PREFIX + "listener.identity.participant-claim", PARTICIPANT_CLAIM);
+        config.put(PREFIX + "listener.identity.header", "");
         refresh();
 
         assertTrue(properties.isAuthorized(CONSUMER_ID, TYPE_B));
         assertFalse(properties.isAuthorized(PROVIDER_ID, TYPE_A));
         assertEquals(Optional.empty(), properties.allowedOrigin(PROVIDER_ORIGIN));
         assertEquals(MAX_ENTRIES + 1, properties.getListener().getDedup().getMaxEntries());
-        assertEquals(Set.of("ES384"), properties.getListener().getVerifier().getAlgorithms());
-        assertTrue(properties.getListener().getVerifier().getAudience().isBlank());
+        assertEquals(PARTICIPANT_CLAIM, properties.getListener().getIdentity().getParticipantClaim());
+        assertTrue(properties.getListener().getIdentity().getHeader().isBlank());
     }
 }

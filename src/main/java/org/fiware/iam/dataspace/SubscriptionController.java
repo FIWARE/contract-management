@@ -2,7 +2,6 @@ package org.fiware.iam.dataspace;
 
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.Nullable;
-import io.micronaut.http.HttpHeaders;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.Controller;
@@ -16,11 +15,9 @@ import org.fiware.iam.events.model.SubscriptionErrorVO;
 import org.fiware.iam.events.model.SubscriptionRequestVO;
 import org.fiware.iam.events.model.SubscriptionVO;
 import org.fiware.iam.exception.SubscriptionLimitException;
-import org.fiware.iam.exception.VerifierUnavailableException;
 import org.fiware.iam.exception.WebhookHandshakeException;
 import org.fiware.iam.logging.DownstreamError;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -31,8 +28,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Lets authenticated participants subscribe their webhook to data space events; a subscription is only activated after its
- * sink passed the webhook handshake. Refusals carry generic reasons only, so the API cannot probe hosts reachable from CM.
+ * Lets participants the gateway identified subscribe their webhook to data space events; a subscription is only activated
+ * after its sink passed the webhook handshake. Refusals carry generic reasons only, so the API cannot probe hosts reachable from CM.
  */
 @Slf4j
 @Controller("${general.basepath:/}")
@@ -46,66 +43,55 @@ public class SubscriptionController implements SubscriptionsApi {
     static final String INVALID_TYPES = "types must not be empty";
     static final String UNSUPPORTED_PROTOCOL = "unsupported protocol";
     static final String MISSING_CLIENT_ID = "protocolsettings.clientId is required";
+    static final String UNIDENTIFIED_CALLER = "the caller carries no participant identity";
     private static final String HTTPS = "https";
     private static final String HTTP = "http";
 
-    private final BearerVerifier bearerVerifier;
+    private final ParticipantResolver participantResolver;
     private final WebhookHandshake handshake;
     private final SubscriptionRegistry registry;
     private final DataSpaceEventsProperties properties;
 
     @Override
     public Mono<HttpResponse<SubscriptionVO>> createSubscription(SubscriptionRequestVO subscriptionRequestVO) {
-        return create(currentAuthorization(), subscriptionRequestVO);
+        return create(currentIdentity(), subscriptionRequestVO);
     }
 
     @Override
     public Mono<HttpResponse<Object>> deleteSubscription(String subscriptionId) {
-        return delete(currentAuthorization(), subscriptionId);
+        return delete(currentIdentity(), subscriptionId);
     }
 
-    Mono<HttpResponse<SubscriptionVO>> create(@Nullable String authorization, SubscriptionRequestVO request) {
-        return participantIdOf(authorization)
-                .flatMap(participantId -> create(participantId, request))
-                .onErrorResume(VerifierUnavailableException.class, e -> {
-                    log.warn("Subscription of {} to {} cannot be verified: {}",
-                            request.getSubscriberId(), request.getSink(), DownstreamError.reason(e), e);
-                    return Mono.just(retryLater());
-                });
+    Mono<HttpResponse<SubscriptionVO>> create(@Nullable String identity, SubscriptionRequestVO request) {
+        return create(participantResolver.participantIdOf(identity), request);
     }
 
-    Mono<HttpResponse<Object>> delete(@Nullable String authorization, String subscriptionId) {
-        return participantIdOf(authorization)
-                .<HttpResponse<Object>>map(participantId -> {
-                    if (participantId.isEmpty()) {
-                        log.info("Refused removal of subscription {}: no valid bearer token.", subscriptionId);
-                        return HttpResponse.status(HttpStatus.UNAUTHORIZED);
-                    }
-                    if (!registry.remove(subscriptionId, participantId.get())) {
-                        log.info("Refused removal of subscription {} by {}: no such active subscription of it.",
-                                subscriptionId, participantId.get());
-                        return HttpResponse.status(HttpStatus.NOT_FOUND);
-                    }
-                    log.info("Subscription {} of {} removed by its subscriber.", subscriptionId, participantId.get());
-                    return HttpResponse.noContent();
-                })
-                .onErrorResume(VerifierUnavailableException.class, e -> {
-                    log.warn("Removal of subscription {} cannot be verified: {}", subscriptionId, DownstreamError.reason(e), e);
-                    return Mono.just(retryLater());
-                });
+    Mono<HttpResponse<Object>> delete(@Nullable String identity, String subscriptionId) {
+        Optional<String> participantId = participantResolver.participantIdOf(identity);
+        if (participantId.isEmpty()) {
+            log.info("Refused removal of subscription {}: {}.", subscriptionId, UNIDENTIFIED_CALLER);
+            return Mono.just(HttpResponse.status(HttpStatus.UNAUTHORIZED));
+        }
+        if (!registry.remove(subscriptionId, participantId.get())) {
+            log.info("Refused removal of subscription {} by {}: no such active subscription of it.",
+                    subscriptionId, participantId.get());
+            return Mono.just(HttpResponse.status(HttpStatus.NOT_FOUND));
+        }
+        log.info("Subscription {} of {} removed by its subscriber.", subscriptionId, participantId.get());
+        return Mono.just(HttpResponse.noContent());
     }
 
     private Mono<HttpResponse<SubscriptionVO>> create(Optional<String> participantId, SubscriptionRequestVO request) {
         String subscriberId = request.getSubscriberId();
         URI sink = request.getSink();
         if (participantId.isEmpty()) {
-            return refuse(HttpStatus.UNAUTHORIZED, subscriberId, sink, "no valid bearer token");
+            return refuse(HttpStatus.UNAUTHORIZED, subscriberId, sink, UNIDENTIFIED_CALLER);
         }
         if (subscriberId == null || subscriberId.isBlank()) {
             return refuse(HttpStatus.BAD_REQUEST, subscriberId, sink, MISSING_SUBSCRIBER_ID);
         }
         if (!participantId.get().equals(subscriberId)) {
-            return refuse(HttpStatus.FORBIDDEN, subscriberId, sink, "the bearer token identifies " + participantId.get());
+            return refuse(HttpStatus.FORBIDDEN, subscriberId, sink, "the gateway identifies the caller as " + participantId.get());
         }
         Optional<String> invalid = invalidReason(request);
         if (invalid.isPresent()) {
@@ -172,12 +158,6 @@ public class SubscriptionController implements SubscriptionsApi {
                 || (HTTP.equalsIgnoreCase(sink.getScheme()) && properties.getPublisher().isAllowInsecureSinks());
     }
 
-    private Mono<Optional<String>> participantIdOf(@Nullable String authorization) {
-        // the JWKS fetch blocks, so it must not run on the event loop
-        return Mono.fromCallable(() -> bearerVerifier.participantIdOf(authorization))
-                .subscribeOn(Schedulers.boundedElastic());
-    }
-
     private static <T> Mono<HttpResponse<T>> refuse(HttpStatus status, @Nullable String subscriberId, @Nullable URI sink,
                                                     String reason) {
         log.info("Refused subscription of {} to {}: {}", subscriberId, sink, reason);
@@ -188,11 +168,6 @@ public class SubscriptionController implements SubscriptionsApi {
     @SuppressWarnings("unchecked")
     private static <T> HttpResponse<T> badRequest(String reason) {
         return (HttpResponse<T>) (HttpResponse<?>) HttpResponse.badRequest(new SubscriptionErrorVO().reason(reason));
-    }
-
-    private static <T> HttpResponse<T> retryLater() {
-        return HttpResponse.<T>status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, String.valueOf(EventListener.RETRY_AFTER.toSeconds()));
     }
 
     // the handshake exception only names the failure; a transport cause (refused, timed out) is what an operator needs
@@ -215,9 +190,9 @@ public class SubscriptionController implements SubscriptionsApi {
     }
 
     @Nullable
-    private static String currentAuthorization() {
+    private String currentIdentity() {
         return ServerRequestContext.currentRequest()
-                .flatMap(request -> request.getHeaders().getAuthorization())
+                .map(request -> request.getHeaders().get(participantResolver.headerName()))
                 .orElse(null);
     }
 }

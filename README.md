@@ -48,11 +48,8 @@ The following table concentrates on the most important configuration parameters:
 | `dataspace.events.dataspace-id` | `DATASPACE_EVENTS_DATASPACE_ID` | Id of the data space; events carrying a different `dataspaceid` are rejected | - |
 | `dataspace.events.own-participant-id` | `DATASPACE_EVENTS_OWN_PARTICIPANT_ID` | Participant id of this instance, events about it are not dispatched | `general.did` |
 | `dataspace.events.listener.enabled` | `DATASPACE_EVENTS_LISTENER_ENABLED` | Enable the data space event endpoint (startup only, needs a restart) | false |
-| `dataspace.events.listener.verifier.jwks-url` | `DATASPACE_EVENTS_LISTENER_VERIFIER_JWKS_URL` | JWKS of the verifier issuing the bearer tokens, required with the listener | - |
-| `dataspace.events.listener.verifier.issuer` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ISSUER` | Expected token issuer, not checked if unset | - |
-| `dataspace.events.listener.verifier.audience` | `DATASPACE_EVENTS_LISTENER_VERIFIER_AUDIENCE` | Expected token audience, required with the listener | - |
-| `dataspace.events.listener.verifier.participant-claim` | `DATASPACE_EVENTS_LISTENER_VERIFIER_PARTICIPANT_CLAIM` | Top-level token claim carrying the caller's participant id | participantId |
-| `dataspace.events.listener.verifier.algorithms` | `DATASPACE_EVENTS_LISTENER_VERIFIER_ALGORITHMS` | Accepted JWS signature algorithms (RSA or EC family, exact names, e.g. `ES256`, `ES384`, `PS256`; EdDSA, ES256K and anything else fail startup) | ES256,RS256 |
+| `dataspace.events.listener.identity.header` | `DATASPACE_EVENTS_LISTENER_IDENTITY_HEADER` | Request header the API gateway sets with the claims of the token it verified | X-Userinfo |
+| `dataspace.events.listener.identity.participant-claim` | `DATASPACE_EVENTS_LISTENER_IDENTITY_PARTICIPANT_CLAIM` | Top-level claim carrying the caller's participant id | participantId |
 | `dataspace.events.listener.dedup.max-entries` | `DATASPACE_EVENTS_LISTENER_DEDUP_MAX_ENTRIES` | Number of remembered `(source, id)` pairs | 10000 |
 | `dataspace.events.listener.dedup.ttl` | `DATASPACE_EVENTS_LISTENER_DEDUP_TTL` | How long a `(source, id)` pair is remembered | PT1H |
 | `dataspace.events.listener.watch.enabled` | `DATASPACE_EVENTS_LISTENER_WATCH_ENABLED` | Refresh when the config directory changes (startup only, needs a restart) | false |
@@ -127,8 +124,8 @@ configured publisher. Event types are dispatched to `DataSpaceEventHandler` bean
 
 A `POST` is checked in this order:
 
-1. The bearer token must be a valid JWT of the verifier (`jwks-url`, `audience`, optional `issuer`), else `401`.
-2. The token must carry the participant id claim (`participant-claim`), else `401`.
+1. The request must carry the identity header the gateway sets (`identity.header`, by default `X-Userinfo`), else `401`.
+2. Its claims must contain the participant id claim (`identity.participant-claim`), else `401`.
 3. The event `source` must equal that participant id, else `403`.
 4. If both the event and `dataspace-id` name a data space, they must match, else `403`.
 5. A type no handler supports is answered with `202` and ignored.
@@ -140,16 +137,50 @@ A `POST` is checked in this order:
 
 The counter `dataspace.events.received` (tags `type`, `outcome`) counts every request; `type` is `other` for types without a handler.
 
-The verifier has to issue tokens with the CM audience and the participant id as a top-level `participantId` claim (or the claim
-configured in `participant-claim`).
+#### Who the caller is
+
+CM does not verify the bearer token of an incoming request. Like every other ingress path of CM, `POST /events` and the
+subscriptions API expect an API gateway in front that verified the token and passes its claims on in a request header. CM only
+reads the participant id out of that header.
+
+The header is `identity.header`, by default `X-Userinfo`, the header APISIX' `openid-connect` plugin sets. Its value is the
+claims of the verified token, either base64-encoded (standard or URL alphabet, padded or not) or as plain JSON. The participant
+id is the top-level claim named in `identity.participant-claim`, by default `participantId`. A request without the header, with
+an undecodable one, or without a usable claim is answered with `401`; nothing else about the token is looked at, so an expired
+or wrongly-addressed token is accepted if the gateway let it through.
+
+A matching route for APISIX, whose `openid-connect` plugin verifies the token against the verifier's JWKS and clears a
+client-supplied `X-Userinfo` before setting its own:
+
+```yaml
+plugins:
+  openid-connect:
+    discovery: https://verifier.provider.org/.well-known/openid-configuration
+    client_id: contract-management
+    bearer_only: true
+    use_jwks: true
+    set_userinfo_header: true
+    claim_validator:
+      issuer:
+        valid_issuers: [ "https://verifier.provider.org" ]
+      audience:
+        claim: aud
+        required: true
+        match_with_client_id: true
+```
+
+**This only holds as long as the gateway is the only way to reach CM.** The header is not signed, so anyone who can open a
+connection to CM's HTTP port can claim to be any participant: publish events in their name, subscribe for them, or delete their
+subscriptions. Restrict the port to the gateway (NetworkPolicy, service mesh) and make sure the gateway strips the header from
+incoming requests. The same holds for the management port, see [Publishing events](#publishing-events).
 
 #### Publishing events
 
 With `dataspace.events.publisher.enabled`, other participants subscribe a webhook (`sink`) to event types, and CM delivers
 matching events to it. Events are published through the internal `POST :9090/events`. `publisher.origin` (CM's own DNS name) is
 required, and so is `own-participant-id` or `general.did`, which becomes the `source` of every published event.
-Subscribers authenticate with a bearer token of the verifier; the `dataspace.events.listener.verifier.*` configuration is
-shared with the listener and also applies when only the publisher is enabled.
+Subscribers are identified by the gateway, like the callers of the listener; the `dataspace.events.listener.identity.*`
+configuration is shared with the listener and also applies when only the publisher is enabled.
 
 A subscription follows the [CloudEvents Subscriptions API](https://github.com/cloudevents/spec/blob/main/subscriptions/spec.md),
 only the protocol `HTTP` is supported:
@@ -181,7 +212,7 @@ curl -X POST https://cm.provider.org/subscriptions \
 `clientId` and `scopes` are used for the OID4VP flow when the sink answers a delivery with `401` (only with `oid4vp.enabled`).
 A `POST` is checked in this order:
 
-1. The bearer token must be a valid JWT of the verifier carrying the participant id claim, else `401`.
+1. The identity header must carry a participant id, else `401`.
 2. `subscriberId` is required (`400`) and must equal that participant id, else `403`.
 3. `sink` must be an absolute `https` URI (`http` too with `allow-insecure-sinks`), `types` must not be empty, `protocol` must
    be `HTTP` and `protocolsettings.clientId` is required, else `400` with a `reason`.
@@ -191,8 +222,8 @@ A `POST` is checked in this order:
 6. The sink must pass the webhook handshake, else `400` with the reason `handshake failed`.
 7. Otherwise the subscription is activated and answered with `201`.
 
-If the verifier's JWKS cannot be fetched, the request gets `503` with `Retry-After`. `DELETE /subscriptions/{id}` removes a
-subscription of the caller (`204`); an unknown id or one owned by another participant gets `404`.
+`DELETE /subscriptions/{id}` removes a subscription of the caller (`204`); an unknown id or one owned by another participant
+gets `404`.
 
 **Handshake:** CM sends `OPTIONS <sink>` with `WebHook-Request-Origin: <publisher.origin>`. The sink has to answer with a `2xx`
 and a `WebHook-Allowed-Origin` equal to that origin (case-insensitive) or `*`. An optional `WebHook-Allowed-Rate` (requests per
@@ -261,7 +292,7 @@ Startup fails unless all of the following hold:
 * `subscriber.sink` is the public absolute http(s) URL of the own `POST /events`, as the publishers reach it.
 * `subscriber.protocol-settings.client-id` is set.
 * `own-participant-id` or `general.did` is set. It is sent as `subscriberId` and has to equal the participant id that the
-  publisher's verifier puts into CM's token.
+  publisher's gateway reads out of CM's token.
 
 A `publishers[]` entry is only subscribed to if it has a `subscriptions-url`. CM never derives that URL from the publisher id or
 origin, and entries without one are listener-only. A subscribable entry also needs:
@@ -336,9 +367,6 @@ dataspace:
     own-participant-id: "did:web:consumer.org"
     listener:
       enabled: true
-      verifier:
-        jwks-url: "http://verifier:8080/.well-known/jwks"
-        audience: "contract-management"
     publishers:
       - id: "did:web:provider.org"
         # must equal the provider's dataspace.events.publisher.origin

@@ -41,9 +41,6 @@ data:
       events:
         listener:
           enabled: true
-          verifier:
-            jwks-url: http://events-jwks/jwks.json
-            audience: contract-management
           watch:
             enabled: true
             path: /config

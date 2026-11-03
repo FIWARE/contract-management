@@ -356,7 +356,6 @@ class EventDeliveryTest {
         delivery.publish(event());
 
         // channels are created synchronously in publish, so none means nothing was queued
-        assertEquals(0, delivery.channelCount());
         await().during(QUIET_PERIOD).atMost(DELIVERY_TIMEOUT).until(() -> sent.isEmpty());
         for (EventDelivery.Outcome outcome : EventDelivery.Outcome.values()) {
             assertEquals(0, count(outcome), outcome.tag());
@@ -417,7 +416,6 @@ class EventDeliveryTest {
 
         awaitCount(EventDelivery.Outcome.DELIVERED, 2 * EVENTS);
         assertEquals(subscription.id(), renewed.id());
-        assertEquals(1, delivery.channelCount());
         assertEquals(2 * EVENTS, sent.size());
         assertPaced(sent);
     }

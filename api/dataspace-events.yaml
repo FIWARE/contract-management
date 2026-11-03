@@ -15,8 +15,8 @@ paths:
         - events
       operationId: receiveEvent
       summary: Receive a data space event
-      description: Accepts a CloudEvent from an authorized data space participant. The bearer token issued by the verifier
-        identifies the participant, which has to match the event source.
+      description: Accepts a CloudEvent from an authorized data space participant. The bearer token is verified by the API
+        gateway in front, which passes the participant id on; it has to match the event source.
       security:
         - bearerAuth: [ ]
       requestBody:
@@ -31,7 +31,7 @@ paths:
         '400':
           description: The event is malformed.
         '401':
-          description: No valid bearer token was presented.
+          description: The caller was not identified by the gateway.
         '403':
           description: The participant is not allowed to publish this event.
         '415':
@@ -101,18 +101,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/SubscriptionError'
         '401':
-          description: No valid bearer token was presented.
+          description: The caller was not identified by the gateway.
         '403':
-          description: The subscriberId does not match the participant identified by the bearer token.
+          description: The subscriberId does not match the participant the gateway identified.
         '409':
           description: The maximum number of subscriptions is reached.
         '503':
-          description: The verifier is unavailable. The subscriber should retry later.
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying.
-              schema:
-                type: integer
+          description: The publisher origin is not configured, so no sink can be validated.
   /subscriptions/{subscriptionId}:
     delete:
       tags:
@@ -132,18 +127,12 @@ paths:
         '204':
           description: The subscription was removed.
         '401':
-          description: No valid bearer token was presented.
+          description: The caller was not identified by the gateway.
         '404':
           description: No subscription with this id is owned by the participant.
-        '503':
-          description: The verifier is unavailable. The subscriber should retry later.
-          headers:
-            Retry-After:
-              description: Seconds to wait before retrying.
-              schema:
-                type: integer
 components:
   securitySchemes:
+    # verified by the API gateway in front of contract-management, which passes the claims on in a request header
     bearerAuth:
       type: http
       scheme: bearer
@@ -193,13 +182,13 @@ components:
         - type
     SubscriptionRequest:
       type: object
-      description: Subscription to data space events, shaped after CloudEvents Subscriptions. The bearer token is checked
-        first (401). A missing subscriberId is rejected with 400, one that differs from the token with 403; the other
+      description: Subscription to data space events, shaped after CloudEvents Subscriptions. The caller identity is checked
+        first (401). A missing subscriberId is rejected with 400, one that differs from the caller with 403; the other
         missing or invalid fields, including empty types, are then rejected with 400.
       properties:
         subscriberId:
           type: string
-          description: Participant id of the subscriber. Has to match the bearer token.
+          description: Participant id of the subscriber. Has to match the participant the gateway identified.
           example: did:web:consumer.org
         sink:
           type: string

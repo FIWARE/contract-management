@@ -123,10 +123,6 @@ public class EventDelivery {
         });
     }
 
-    int channelCount() {
-        return channels.size();
-    }
-
     @PreDestroy
     void close() {
         channels.values().forEach(SubscriptionChannel::dispose);

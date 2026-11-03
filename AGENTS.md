@@ -30,8 +30,8 @@ src/main/java/org/fiware/iam/
     DataSpaceEventsProperties.java  # dataspace.events.* (refreshable; read via the bean on every use), startup Conditions
   domain/
     ContractManagement.java         # Core domain interface
-  dataspace/                        # Data space eventing. Receiving: EventListener (POST/OPTIONS /events), BearerVerifier
-                                    # (verifier JWT -> participant id), EventAuthorizer, EventDeduplicator, refresh/watch.
+  dataspace/                        # Data space eventing. Receiving: EventListener (POST/OPTIONS /events), ParticipantResolver
+                                    # (gateway identity header -> participant id), EventAuthorizer, EventDeduplicator, refresh/watch.
                                     # Publishing (CM-2): SubscriptionController (/subscriptions), SubscriptionRegistry,
                                     # WebhookHandshake, EventDelivery/SubscriptionChannel, PublishEndpoint (POST :9090/events)
   dsp/                              # DSP / Rainbow adapter integration

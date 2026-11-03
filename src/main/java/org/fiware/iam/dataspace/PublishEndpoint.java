@@ -17,8 +17,10 @@ import org.fiware.iam.events.model.DataSpaceEventVO;
 import java.time.Clock;
 import java.util.UUID;
 
+import static io.micronaut.http.MediaType.APPLICATION_JSON;
+
 /**
- * Internal {@code POST :9090/events}: lets in-cluster callers publish an event to the matching subscriptions.
+ * Internal {@code POST :9090/events}: Allows to send events to external subscribers.
  * Unauthenticated, so it relies on the management port being cluster-internal (see {@link ManagementPortGuard}).
  */
 @Slf4j
@@ -28,7 +30,6 @@ import java.util.UUID;
 public class PublishEndpoint {
 
     static final String ID = "events";
-    static final String CONTENT_TYPE = "application/json";
 
     private final EventDelivery eventDelivery;
     private final DataSpaceEventsProperties properties;
@@ -55,7 +56,7 @@ public class PublishEndpoint {
                 .subject(subject)
                 .time(clock.instant())
                 .dataspaceid(properties.getDataspaceId())
-                .datacontenttype(CONTENT_TYPE)
+                .datacontenttype(APPLICATION_JSON)
                 .data(plain(data));
         int subscriptions = eventDelivery.publish(event);
         log.info("Published event {} of type {} to {} subscriptions.", event.getId(), type, subscriptions);

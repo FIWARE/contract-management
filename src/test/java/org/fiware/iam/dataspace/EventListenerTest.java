@@ -36,7 +36,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import static org.awaitility.Awaitility.await;
+import static org.fiware.iam.configuration.DataSpaceEventsProperties.DEFAULT_IDENTITY_HEADER;
 import static org.fiware.iam.dataspace.TestEventFixtures.KNOWN_TYPE;
+import static org.fiware.iam.dataspace.TestEventFixtures.userinfo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -45,9 +47,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class EventListenerTest implements TestPropertyProvider {
 
     private static final String EVENTS_PATH = "/events";
+    private static final String IDENTITY_HEADER = DEFAULT_IDENTITY_HEADER;
     private static final String CLOUDEVENTS_JSON = "application/cloudevents+json";
     private static final String SPEC_VERSION = "1.0";
-    private static final String AUDIENCE = "contract-management";
     private static final String PUBLISHER = "did:web:provider.org";
     private static final String UNCONFIGURED_PUBLISHER = "did:web:stranger.org";
     private static final String OWN_ID = "did:web:own.org";
@@ -87,8 +89,6 @@ class EventListenerTest implements TestPropertyProvider {
         properties.put("general.enable-rainbow", "false");
         properties.put(TestEventFixtures.ENABLED_PROPERTY, "true");
         properties.put("dataspace.events.listener.enabled", "true");
-        properties.put("dataspace.events.listener.verifier.audience", AUDIENCE);
-        properties.put("dataspace.events.listener.verifier.jwks-url", "http://localhost:" + port + TestEventFixtures.JWKS_PATH);
         properties.put("dataspace.events.own-participant-id", OWN_ID);
         properties.put("dataspace.events.dataspace-id", DATASPACE);
         properties.put("dataspace.events.publishers[0].id", PUBLISHER);
@@ -130,7 +130,7 @@ class EventListenerTest implements TestPropertyProvider {
                         HttpStatus.FORBIDDEN, 0, KNOWN_TYPE, "dataspace_mismatch"),
                 Arguments.of("same data space is handled", PUBLISHER, Event.of(PUBLISHER, KNOWN_TYPE).withDataspace(DATASPACE),
                         HttpStatus.ACCEPTED, 1, KNOWN_TYPE, "accepted"),
-                Arguments.of("no bearer", null, Event.of(PUBLISHER, KNOWN_TYPE),
+                Arguments.of("no identity header", null, Event.of(PUBLISHER, KNOWN_TYPE),
                         HttpStatus.UNAUTHORIZED, 0, KNOWN_TYPE, "unauthenticated"),
                 Arguments.of("event about this participant is not handled", PUBLISHER,
                         Event.of(PUBLISHER, KNOWN_TYPE).withSubject(OWN_ID), HttpStatus.ACCEPTED, 0, KNOWN_TYPE, "self"));
@@ -199,7 +199,7 @@ class EventListenerTest implements TestPropertyProvider {
     void cancelledEventIsHandledOnRetry() {
         Event event = Event.of(PUBLISHER, KNOWN_TYPE);
         handler.hold();
-        Disposable request = listener.receive("Bearer " + token(PUBLISHER), event.toVO(jsonMapper)).subscribe();
+        Disposable request = listener.receive(userinfo(PUBLISHER), event.toVO(jsonMapper)).subscribe();
         await().atMost(AWAIT).until(() -> handler.started() == 1);
 
         request.dispose();
@@ -248,7 +248,7 @@ class EventListenerTest implements TestPropertyProvider {
 
     private MutableHttpRequest<String> request(@Nullable String participant, Event event) {
         MutableHttpRequest<String> request = HttpRequest.POST(EVENTS_PATH, event.toJson(jsonMapper)).contentType(CLOUDEVENTS_JSON);
-        return participant == null ? request : request.bearerAuth(token(participant));
+        return participant == null ? request : request.header(IDENTITY_HEADER, userinfo(participant));
     }
 
     private HttpResponse<?> exchange(HttpRequest<?> request) {
@@ -264,10 +264,6 @@ class EventListenerTest implements TestPropertyProvider {
                 .tags(EventListener.TYPE_TAG, type, EventListener.OUTCOME_TAG, outcome)
                 .counter();
         return counter == null ? 0 : counter.count();
-    }
-
-    private static String token(String participant) {
-        return TestEventFixtures.token(participant, AUDIENCE);
     }
 
     private static int freePort() {

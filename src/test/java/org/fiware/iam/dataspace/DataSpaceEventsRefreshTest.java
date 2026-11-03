@@ -16,6 +16,7 @@ import io.micronaut.runtime.context.scope.refresh.RefreshEvent;
 import io.micronaut.runtime.server.EmbeddedServer;
 import io.micronaut.scheduling.io.watch.event.FileChangedEvent;
 import jakarta.inject.Singleton;
+import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,7 +61,6 @@ class DataSpaceEventsRefreshTest {
     private static final String EVENTS_PATH = "/events";
     private static final String REFRESH_PATH = "/refresh";
     private static final String CLOUDEVENTS_JSON = "application/cloudevents+json";
-    private static final String AUDIENCE = "contract-management";
     private static final Publisher PUBLISHER_A = new Publisher("did:web:a.org", "events.a.org");
     private static final Publisher PUBLISHER_B = new Publisher("did:web:b.org", "events.b.org");
     private static final Publisher PUBLISHER_C = new Publisher("did:web:c.org", "events.c.org");
@@ -90,8 +90,6 @@ class DataSpaceEventsRefreshTest {
         properties.put("general.enable-rainbow", false);
         properties.put(TestEventFixtures.ENABLED_PROPERTY, true);
         properties.put("dataspace.events.listener.enabled", true);
-        properties.put("dataspace.events.listener.verifier.audience", AUDIENCE);
-        properties.put("dataspace.events.listener.verifier.jwks-url", "http://localhost:" + port + TestEventFixtures.JWKS_PATH);
         properties.put("dataspace.events.listener.watch.enabled", true);
         properties.put("dataspace.events.listener.watch.path", configDir.toString());
 
@@ -202,7 +200,7 @@ class DataSpaceEventsRefreshTest {
         try {
             HttpRequest<String> request = HttpRequest.POST(EVENTS_PATH, jsonMapper.writeValueAsString(event))
                     .contentType(CLOUDEVENTS_JSON)
-                    .bearerAuth(TestEventFixtures.token(publisher.id(), AUDIENCE));
+                    .header(DataSpaceEventsProperties.DEFAULT_IDENTITY_HEADER, TestEventFixtures.userinfo(publisher.id()));
             return exchange(client, request);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
