@@ -3,6 +3,7 @@ package org.fiware.iam.dataspace;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
+import io.micronaut.http.MediaType;
 import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.test.annotation.MockBean;
@@ -145,7 +146,7 @@ class PublishEndpointTest implements TestPropertyProvider {
         assertEquals(SUBJECT, event.getSubject());
         assertEquals(NOW, event.getTime());
         assertEquals(DATASPACE_ID, event.getDataspaceid());
-        assertEquals(PublishEndpoint.CONTENT_TYPE, event.getDatacontenttype());
+        assertEquals(MediaType.APPLICATION_JSON, event.getDatacontenttype());
         assertEquals(payload.data(), event.getData());
         assertEquals(new PublishEndpoint.PublishedEvent(event.getId(), MATCHING_SUBSCRIPTIONS), response.body());
     }
