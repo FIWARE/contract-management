@@ -85,6 +85,9 @@
         <!-- Contract Management API -->
         <cm.api.url>${project.basedir}/api/contract-management.yaml</cm.api.url>
 
+        <!-- Data Space Events API -->
+        <events.api.url>${project.basedir}/api/dataspace-events.yaml</events.api.url>
+
         <!-- oci -->
         <exec.mainClass>org.fiware.iam.Application</exec.mainClass>
         <image.registry>quay.io</image.registry>
@@ -104,6 +107,7 @@
         <!-- test -->
         <version.org.mockito.mocktio-all>1.10.19</version.org.mockito.mocktio-all>
         <version.io.kokuwa.maven.k3s-plugin>2.0.1</version.io.kokuwa.maven.k3s-plugin>
+        <version.io.fabric8.kubernetes-client>6.13.4</version.io.fabric8.kubernetes-client>
         <version.org.awaitility>4.2.0</version.org.awaitility>
 
         <!-- OID4VP -->
@@ -182,6 +186,22 @@
         <dependency>
             <groupId>io.micronaut.reactor</groupId>
             <artifactId>micronaut-reactor</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micronaut.micrometer</groupId>
+            <artifactId>micronaut-micrometer-core</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micronaut.micrometer</groupId>
+            <artifactId>micronaut-micrometer-registry-prometheus</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <!-- dedup cache of received data space events -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
             <scope>compile</scope>
         </dependency>
         <!-- required for config micronaut > 4.x -->
@@ -270,6 +290,25 @@
             <version>${version.org.awaitility}</version>
             <scope>test</scope>
         </dependency>
+        <!-- InContainerDataSpaceEventsIT patches the CM ConfigMap; the JDK http client avoids a second netty on the classpath -->
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>kubernetes-client</artifactId>
+            <version>${version.io.fabric8.kubernetes-client}</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.fabric8</groupId>
+                    <artifactId>kubernetes-httpclient-vertx</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>kubernetes-httpclient-jdk</artifactId>
+            <version>${version.io.fabric8.kubernetes-client}</version>
+            <scope>test</scope>
+        </dependency>
         <!-- https://mvnrepository.com/artifact/org.hamcrest/hamcrest -->
         <dependency>
             <groupId>org.hamcrest</groupId>
@@ -351,6 +390,8 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <!-- the upstream spec marks fields nullable; keep plain types instead of JsonNullable -->
+                                <openApiNullable>false</openApiNullable>
                                 <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
                                 <modelBaseClass>org.fiware.iam.tmforum.UnknownPreservingBase
@@ -386,6 +427,41 @@
                                 <useBeanValidation>false</useBeanValidation>
                                 <supportAsync>true</supportAsync>
                                 <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <serdeable>false</serdeable>
+                                <generateExamples>true</generateExamples>
+                            </configOptions>
+                            <typeMappings>
+                                <typeMapping>java.util.Date=java.time.Instant</typeMapping>
+                            </typeMappings>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>events</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <configuration>
+                            <inputSpec>${events.api.url}</inputSpec>
+                            <apiPackage>org.fiware.iam.events.api</apiPackage>
+                            <strictSpec>true</strictSpec>
+                            <modelPackage>org.fiware.iam.events.model</modelPackage>
+                            <generateAliasAsModel>true</generateAliasAsModel>
+                            <generateApiTests>false</generateApiTests>
+                            <generatorName>micronaut</generatorName>
+                            <modelNameSuffix>VO</modelNameSuffix>
+                            <output>${project.build.directory}</output>
+                            <configOptions>
+                                <fullJavaUtil>true</fullJavaUtil>
+                                <useOptional>false</useOptional>
+                                <useGenericResponse>true</useGenericResponse>
+                                <useLombokGenerated>true</useLombokGenerated>
+                                <introspected>true</introspected>
+                                <useBeanValidation>false</useBeanValidation>
+                                <supportAsync>true</supportAsync>
+                                <jacksonDatabindNullable>false</jacksonDatabindNullable>
+                                <!-- CloudEvents data is untyped; keep it a plain Object instead of JsonNullable -->
+                                <openApiNullable>false</openApiNullable>
                                 <serdeable>false</serdeable>
                                 <generateExamples>true</generateExamples>
                             </configOptions>
@@ -936,6 +1012,8 @@
                                 <portBinding>8087:8087</portBinding>
                                 <!-- contract management provider -->
                                 <portBinding>8089:8089</portBinding>
+                                <!-- contract management provider, management (/refresh) -->
+                                <portBinding>9090:9090</portBinding>
                                 <!-- odrl-pap -->
                                 <portBinding>8088:8088</portBinding>
                                 <!-- orion -->
@@ -1173,6 +1251,8 @@
                             <skip>false</skip>
                             <systemPropertyVariables>
                                 <inContainer>true</inContainer>
+                                <!-- written by the k3s plugin, used by InContainerDataSpaceEventsIT to patch ConfigMaps -->
+                                <k3s.kubeconfig>${project.build.directory}/k3s.yaml</k3s.kubeconfig>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>

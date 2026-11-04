@@ -8,6 +8,7 @@ import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import lombok.extern.slf4j.Slf4j;
 import org.awaitility.Awaitility;
 import org.fiware.iam.tmforum.notification.SubscriptionHealthIndicator;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
 import reactor.core.publisher.Mono;
 
 import java.util.concurrent.TimeUnit;
@@ -18,6 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Integration Test running against the local service instance, spun up by the test. Do not forget to properly set the
  * local.ip property inside the pom.xml, to receive events in the local service.
  */
+// Micronaut's @Requires is only evaluated after the embedded server has been started, so it cannot keep the
+// local setup from claiming ports that k3s already binds in the in-container profile.
+@DisabledIfSystemProperty(named = TestConfiguration.IN_CONTAINER_PROPERTY, matches = TestConfiguration.IN_CONTAINER_ENABLED, disabledReason = "contract-management runs inside k3s, the local setup is not started.")
 @Requires(condition = TestConfiguration.LocalCondition.class)
 @MicronautTest
 @Slf4j
