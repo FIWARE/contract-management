@@ -4,6 +4,7 @@ import io.github.wistefan.oid4vp.OID4VPClient;
 import io.github.wistefan.oid4vp.config.RequestParameters;
 import io.github.wistefan.oid4vp.exception.BadGatewayException;
 import io.github.wistefan.oid4vp.model.TokenResponse;
+import io.micronaut.context.annotation.Primary;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
@@ -22,7 +23,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 
+/**
+ * OID4VP authentication for calls to configured downstream services; the default {@link AuthHandler} of the application.
+ * Calls to participant-chosen sinks use {@link Oid4VpSinkAuthHandler} instead.
+ */
 @Requires(condition = Oid4VpConfiguration.Oid4VpCondition.class)
+@Primary
 @Slf4j
 @Singleton
 @RequiredArgsConstructor

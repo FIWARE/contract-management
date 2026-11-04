@@ -152,9 +152,6 @@ spec:
       targetPort: 8080
       protocol: TCP
       name: http
-    - port: 9090
-      targetPort: 9090
-      protocol: TCP
-      name: health
+    # no 9090: a LoadBalancer port is a host port, and contract-management-provider exposes its management port there
   selector:
     app.kubernetes.io/name: contract-management

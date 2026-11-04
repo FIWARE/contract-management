@@ -21,7 +21,9 @@ import io.github.wistefan.oid4vp.mapping.CredentialFormatDeserializer;
 import io.github.wistefan.oid4vp.mapping.TrustedAuthorityTypeDeserializer;
 import io.micronaut.context.annotation.Bean;
 import io.micronaut.context.annotation.Factory;
+import io.micronaut.context.annotation.Primary;
 import io.micronaut.context.annotation.Requires;
+import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fiware.iam.cert.CertReader;
 import org.fiware.iam.configuration.Oid4VpConfiguration;
 import org.fiware.iam.did.DidKeyGenerator;
+import org.fiware.iam.http.SinkAuthHandler;
 
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
@@ -51,11 +54,30 @@ public class Oid4VpBeanFactory {
         this.certReader = certReader;
     }
 
+    /**
+     * Client for the OID4VP flows towards the configured downstream services.
+     */
     @Requires(bean = Oid4VpConfiguration.class)
+    @Primary
     @Singleton
     public HttpClient httpClient(Oid4VpConfiguration.ProxyConfig proxyConfig) {
+        return buildHttpClient(proxyConfig, HttpClient.Redirect.NORMAL);
+    }
+
+    /**
+     * Client for the OID4VP flow a participant-chosen sink triggers with a 401: like the general one, but never following
+     * a redirect, so such a sink cannot move the token fetch to another (e.g. internal) host.
+     */
+    @Requires(bean = Oid4VpConfiguration.class)
+    @Singleton
+    @Named(SinkAuthHandler.SINK_QUALIFIER)
+    public HttpClient sinkHttpClient(Oid4VpConfiguration.ProxyConfig proxyConfig) {
+        return buildHttpClient(proxyConfig, HttpClient.Redirect.NEVER);
+    }
+
+    private HttpClient buildHttpClient(Oid4VpConfiguration.ProxyConfig proxyConfig, HttpClient.Redirect redirectPolicy) {
         HttpClient.Builder httpClientBuilder = HttpClient.newBuilder();
-        httpClientBuilder.followRedirects(HttpClient.Redirect.NORMAL);
+        httpClientBuilder.followRedirects(redirectPolicy);
         if (proxyConfig.useProxy()) {
             ProxySelector proxySelector = ProxySelector.of(new InetSocketAddress(proxyConfig.proxyHost(), proxyConfig.proxyPort()));
             httpClientBuilder.proxy(proxySelector);
@@ -70,8 +92,24 @@ public class Oid4VpBeanFactory {
     }
 
     @Requires(bean = Oid4VpConfiguration.class)
+    @Primary
     @Bean
     public OID4VPClient oid4VPClient(HttpClient httpClient, ObjectMapper objectMapper, Oid4VpConfiguration oid4VpConfiguration, CredentialsRepository credentialsRepository) {
+        return buildOid4VpClient(httpClient, objectMapper, oid4VpConfiguration, credentialsRepository);
+    }
+
+    /**
+     * The same client, but on the non-redirecting {@link #sinkHttpClient}; used by {@code Oid4VpSinkAuthHandler}.
+     */
+    @Requires(bean = Oid4VpConfiguration.class)
+    @Bean
+    @Named(SinkAuthHandler.SINK_QUALIFIER)
+    public OID4VPClient sinkOid4VPClient(@Named(SinkAuthHandler.SINK_QUALIFIER) HttpClient httpClient, ObjectMapper objectMapper,
+                                         Oid4VpConfiguration oid4VpConfiguration, CredentialsRepository credentialsRepository) {
+        return buildOid4VpClient(httpClient, objectMapper, oid4VpConfiguration, credentialsRepository);
+    }
+
+    private OID4VPClient buildOid4VpClient(HttpClient httpClient, ObjectMapper objectMapper, Oid4VpConfiguration oid4VpConfiguration, CredentialsRepository credentialsRepository) {
         Security.addProvider(new BouncyCastleProvider());
 
         ObjectMapper authObjectMapper = objectMapper.copy();

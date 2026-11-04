@@ -45,6 +45,47 @@ The following table concentrates on the most important configuration parameters:
 | `micronaut.http.services.party.path`   | `MICRONAUT_HTTP_SERVICES_PARTY_PATH`   | Subpath of the TM Forum Party Endpoint                             | "party"                          |
 | `general.name`                         | `GENERAL_NAME`                         | Name of the service, used for the callback/listener subscription   | contract-management              |
 | `general.basepath`                     | `GENERAL_BASEPATH`                     | Basepath used for the provided listener endpoint                   | ""                               |
+| `dataspace.events.dataspace-id` | `DATASPACE_EVENTS_DATASPACE_ID` | Id of the data space; events carrying a different `dataspaceid` are rejected | - |
+| `dataspace.events.own-participant-id` | `DATASPACE_EVENTS_OWN_PARTICIPANT_ID` | Participant id of this instance, events about it are not dispatched | `general.did` |
+| `dataspace.events.listener.enabled` | `DATASPACE_EVENTS_LISTENER_ENABLED` | Enable the data space event endpoint (startup only, needs a restart) | false |
+| `dataspace.events.listener.identity.header` | `DATASPACE_EVENTS_LISTENER_IDENTITY_HEADER` | Request header the API gateway sets with the claims of the token it verified | X-Userinfo |
+| `dataspace.events.listener.identity.participant-claim` | `DATASPACE_EVENTS_LISTENER_IDENTITY_PARTICIPANT_CLAIM` | Top-level claim carrying the caller's participant id | participantId |
+| `dataspace.events.listener.dedup.max-entries` | `DATASPACE_EVENTS_LISTENER_DEDUP_MAX_ENTRIES` | Number of remembered `(source, id)` pairs | 10000 |
+| `dataspace.events.listener.dedup.ttl` | `DATASPACE_EVENTS_LISTENER_DEDUP_TTL` | How long a `(source, id)` pair is remembered | PT1H |
+| `dataspace.events.listener.watch.enabled` | `DATASPACE_EVENTS_LISTENER_WATCH_ENABLED` | Refresh when the config directory changes (startup only, needs a restart) | false |
+| `dataspace.events.listener.watch.path` | `DATASPACE_EVENTS_LISTENER_WATCH_PATH` | Watched configuration directory (e.g. the ConfigMap mount `/config`, not the file) | - |
+| `dataspace.events.publishers` | - | List of `id` (participant id), `origin` (webhook origin) and `types` (allowed event types); for the subscriber also `subscriptions-url` and optional `client-id`/`scopes`, see [Subscribing to publishers](#subscribing-to-publishers) | [] |
+| `dataspace.events.publisher.enabled` | `DATASPACE_EVENTS_PUBLISHER_ENABLED` | Enable subscriptions and event delivery (startup only, needs a restart) | false |
+| `dataspace.events.publisher.origin` | `DATASPACE_EVENTS_PUBLISHER_ORIGIN` | Own DNS name, sent as `WebHook-Request-Origin`; required with the publisher | - |
+| `dataspace.events.publisher.lease-ttl` | `DATASPACE_EVENTS_PUBLISHER_LEASE_TTL` | Lease of a subscription; it expires unless renewed within this time | PT24H |
+| `dataspace.events.publisher.max-subscriptions-per-subscriber` | `DATASPACE_EVENTS_PUBLISHER_MAX_SUBSCRIPTIONS_PER_SUBSCRIBER` | Subscriptions a single subscriber may hold | 10 |
+| `dataspace.events.publisher.max-subscriptions` | `DATASPACE_EVENTS_PUBLISHER_MAX_SUBSCRIPTIONS` | Subscriptions in total | 1000 |
+| `dataspace.events.publisher.allow-insecure-sinks` | `DATASPACE_EVENTS_PUBLISHER_ALLOW_INSECURE_SINKS` | Accept `http` sinks as well; otherwise only `https` | false |
+| `dataspace.events.publisher.sink-connect-timeout` | `DATASPACE_EVENTS_PUBLISHER_SINK_CONNECT_TIMEOUT` | Connect timeout of handshake and delivery requests (startup only) | PT5S |
+| `dataspace.events.publisher.sink-read-timeout` | `DATASPACE_EVENTS_PUBLISHER_SINK_READ_TIMEOUT` | Read timeout of handshake and delivery requests (startup only) | PT10S |
+| `dataspace.events.publisher.handshake-timeout` | `DATASPACE_EVENTS_PUBLISHER_HANDSHAKE_TIMEOUT` | Upper bound of a whole handshake | PT15S |
+| `dataspace.events.publisher.delivery.max-attempts` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_MAX_ATTEMPTS` | Attempts per event, including the first one | 5 |
+| `dataspace.events.publisher.delivery.initial-backoff` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_INITIAL_BACKOFF` | Wait before the first retry, doubled on each further one | PT1S |
+| `dataspace.events.publisher.delivery.max-backoff` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_MAX_BACKOFF` | Upper bound of the wait between retries | PT1M |
+| `dataspace.events.publisher.delivery.queue-size` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_QUEUE_SIZE` | Pending events per subscription; further events are dropped while it is full | 1000 |
+| `dataspace.events.publisher.delivery.attempt-timeout` | `DATASPACE_EVENTS_PUBLISHER_DELIVERY_ATTEMPT_TIMEOUT` | Upper bound of one attempt incl. an OID4VP token fetch, not counting the wait for the rate limit | PT30S |
+| `dataspace.events.subscriber.enabled` | `DATASPACE_EVENTS_SUBSCRIBER_ENABLED` | Register the own listener at every publisher with a `subscriptions-url` (startup only, needs a restart and the listener) | false |
+| `dataspace.events.subscriber.sink` | `DATASPACE_EVENTS_SUBSCRIBER_SINK` | Public absolute http(s) URL of the own `POST /events`; required with the subscriber | - |
+| `dataspace.events.subscriber.client-id` | `DATASPACE_EVENTS_SUBSCRIBER_CLIENT_ID` | OID4VP client id towards the publishers' subscriptions API, unless a publisher overrides it | - |
+| `dataspace.events.subscriber.scopes` | - | OID4VP scopes towards the publishers' subscriptions API, unless a publisher overrides them | [] |
+| `dataspace.events.subscriber.protocol-settings.client-id` | `DATASPACE_EVENTS_SUBSCRIBER_PROTOCOL_SETTINGS_CLIENT_ID` | Client at the own verifier the publishers use when the sink answers `401`; required with the subscriber | - |
+| `dataspace.events.subscriber.protocol-settings.scopes` | - | Scopes at the own verifier, sent along with `protocol-settings.client-id` | [] |
+| `dataspace.events.subscriber.initial-delay` | `DATASPACE_EVENTS_SUBSCRIBER_INITIAL_DELAY` | Wait after startup before the first registrations | PT5S |
+| `dataspace.events.subscriber.retry.initial-backoff` | `DATASPACE_EVENTS_SUBSCRIBER_RETRY_INITIAL_BACKOFF` | Wait before retrying a failed registration, doubled on each further failure | PT5S |
+| `dataspace.events.subscriber.retry.max-backoff` | `DATASPACE_EVENTS_SUBSCRIBER_RETRY_MAX_BACKOFF` | Upper bound of the wait between retries; retried without an attempt limit | PT5M |
+| `dataspace.events.subscriber.renewal-fraction` | `DATASPACE_EVENTS_SUBSCRIBER_RENEWAL_FRACTION` | Renew after this fraction of the remaining lease; values outside `(0, 1)` use the default | 0.5 |
+| `dataspace.events.subscriber.min-renewal-delay` | `DATASPACE_EVENTS_SUBSCRIBER_MIN_RENEWAL_DELAY` | Lower bound of the wait before a renewal | PT10S |
+| `dataspace.events.subscriber.conflict-renewal-interval` | `DATASPACE_EVENTS_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL` | Wait before re-registering after a `409` (or a `201` without `expiresAt`) | PT1H |
+| `dataspace.events.subscriber.reconcile-interval` | `DATASPACE_EVENTS_SUBSCRIBER_RECONCILE_INTERVAL` | Interval of the periodic comparison of the configured publishers with the registrations | PT1M |
+
+All `dataspace.events.*` values except the four `enabled` flags and the two `sink-*-timeout`s are reloaded on a refresh without
+a restart. A key removed from
+the configuration keeps its previous value until restart; set it to an empty value instead.
 
 ### Logging
 
@@ -73,6 +114,308 @@ WARN  ProductOrderEventHandler - Order urn:ngsi-ld:product-order:1: completion f
 ```
 
 Failures carry a machine-readable code in brackets (`[organization_did_missing]`, `[specification_not_resolvable]`, `[til_rejected_issuer]`, ...), see `org.fiware.iam.exception.FailureReason`.
+
+### Data space events
+
+With `dataspace.events.listener.enabled`, CM receives [CloudEvents](https://cloudevents.io/) (structured mode,
+`application/cloudevents+json`) from other participants of the data space on `POST /events` (below `general.basepath`).
+`OPTIONS /events` answers the CloudEvents webhook validation and grants a `WebHook-Request-Origin` only if it is the `origin` of a
+configured publisher. Event types are dispatched to `DataSpaceEventHandler` beans; this release ships none.
+
+A `POST` is checked in this order:
+
+1. The request must carry the identity header the gateway sets (`identity.header`, by default `X-Userinfo`), else `401`.
+2. Its claims must contain the participant id claim (`identity.participant-claim`), else `401`.
+3. The event `source` must equal that participant id, else `403`.
+4. If both the event and `dataspace-id` name a data space, they must match, else `403`.
+5. A type no handler supports is answered with `202` and ignored.
+6. The `(source, type)` pair must be configured in `dataspace.events.publishers`, else `403`.
+7. A `(source, id)` seen before is answered with `202` and not dispatched again; while the first delivery is still being processed,
+   the retry gets `503` with `Retry-After`.
+8. An event whose `subject` is this participant (`own-participant-id`) is answered with `202` and not dispatched.
+9. Otherwise the event is dispatched and answered with `202`.
+
+The counter `dataspace.events.received` (tags `type`, `outcome`) counts every request; `type` is `other` for types without a handler.
+
+#### Who the caller is
+
+CM does not verify the bearer token of an incoming request. Like every other ingress path of CM, `POST /events` and the
+subscriptions API expect an API gateway in front that verified the token and passes its claims on in a request header. CM only
+reads the participant id out of that header.
+
+The header is `identity.header`, by default `X-Userinfo`, the header APISIX' `openid-connect` plugin sets. Its value is the
+claims of the verified token, either base64-encoded (standard or URL alphabet, padded or not) or as plain JSON. The participant
+id is the top-level claim named in `identity.participant-claim`, by default `participantId`. A request without the header, with
+an undecodable one, or without a usable claim is answered with `401`; nothing else about the token is looked at, so an expired
+or wrongly-addressed token is accepted if the gateway let it through.
+
+A matching route for APISIX, whose `openid-connect` plugin verifies the token against the verifier's JWKS and clears a
+client-supplied `X-Userinfo` before setting its own:
+
+```yaml
+plugins:
+  openid-connect:
+    discovery: https://verifier.provider.org/.well-known/openid-configuration
+    client_id: contract-management
+    bearer_only: true
+    use_jwks: true
+    set_userinfo_header: true
+    claim_validator:
+      issuer:
+        valid_issuers: [ "https://verifier.provider.org" ]
+      audience:
+        claim: aud
+        required: true
+        match_with_client_id: true
+```
+
+**This only holds as long as the gateway is the only way to reach CM.** The header is not signed, so anyone who can open a
+connection to CM's HTTP port can claim to be any participant: publish events in their name, subscribe for them, or delete their
+subscriptions. Restrict the port to the gateway (NetworkPolicy, service mesh) and make sure the gateway strips the header from
+incoming requests. The same holds for the management port, see [Publishing events](#publishing-events).
+
+#### Publishing events
+
+With `dataspace.events.publisher.enabled`, other participants subscribe a webhook (`sink`) to event types, and CM delivers
+matching events to it. Events are published through the internal `POST :9090/events`. `publisher.origin` (CM's own DNS name) is
+required, and so is `own-participant-id` or `general.did`, which becomes the `source` of every published event.
+Subscribers are identified by the gateway, like the callers of the listener; the `dataspace.events.listener.identity.*`
+configuration is shared with the listener and also applies when only the publisher is enabled.
+
+A subscription follows the [CloudEvents Subscriptions API](https://github.com/cloudevents/spec/blob/main/subscriptions/spec.md),
+only the protocol `HTTP` is supported:
+
+```shell
+curl -X POST https://cm.provider.org/subscriptions \
+  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  -d '{
+        "subscriberId": "did:web:consumer.org",
+        "sink": "https://events.consumer.org/events",
+        "types": [ "org.fiware.dataspace.example" ],
+        "protocol": "HTTP",
+        "protocolsettings": { "clientId": "contract-management", "scopes": [ "default" ] }
+      }'
+```
+
+```json
+{
+  "id": "0f6a3c1e-8a52-4a3b-9a59-3f0c1f3f3a59",
+  "subscriberId": "did:web:consumer.org",
+  "sink": "https://events.consumer.org/events",
+  "types": [ "org.fiware.dataspace.example" ],
+  "protocol": "HTTP",
+  "protocolsettings": { "clientId": "contract-management", "scopes": [ "default" ] },
+  "expiresAt": "2026-10-31T09:00:00Z"
+}
+```
+
+`clientId` and `scopes` are used for the OID4VP flow when the sink answers a delivery with `401` (only with `oid4vp.enabled`).
+A `POST` is checked in this order:
+
+1. The identity header must carry a participant id, else `401`.
+2. `subscriberId` is required (`400`) and must equal that participant id, else `403`.
+3. `sink` must be an absolute `https` URI (`http` too with `allow-insecure-sinks`), `types` must not be empty, `protocol` must
+   be `HTTP` and `protocolsettings.clientId` is required, else `400` with a `reason`.
+4. Without a configured `publisher.origin`, the request gets `503`.
+5. Neither `max-subscriptions-per-subscriber` nor `max-subscriptions` may be reached, else `503`. Expired leases are evicted
+   first, and a renewal does not count twice. A reached cap is a temporary refusal the subscriber retries; CM never answers
+   `409`, which a subscriber reads as "the subscription already exists".
+6. The sink must pass the webhook handshake, else `400` with the reason `handshake failed`.
+7. Otherwise the subscription is activated and answered with `201`.
+
+`DELETE /subscriptions/{id}` removes a subscription of the caller (`204`); an unknown id or one owned by another participant
+gets `404`.
+
+**Handshake:** CM sends `OPTIONS <sink>` with `WebHook-Request-Origin: <publisher.origin>`. The sink has to answer with a `2xx`
+and a `WebHook-Allowed-Origin` equal to that origin (case-insensitive) or `*`. An optional `WebHook-Allowed-Rate` (requests per
+minute, a positive integer or `*`) limits the deliveries to the sink. The handshake is bounded by `handshake-timeout`, single
+requests by `sink-connect-timeout` and `sink-read-timeout`. CM only ever contacts the `sink` given in the request; no host is
+derived from the subscriber id.
+
+**Leases:** every subscription expires after `lease-ttl`; `expiresAt` tells when. To renew, the subscriber repeats the `POST`
+for the same `sink`: the subscription keeps its id and pending events, and gets a new lease and the new types and protocol
+settings. The handshake runs again; if it fails, the request gets `400` and the existing subscription stays unchanged until its
+old lease expires.
+
+**Delivery** is best-effort. Each event is `POST`ed in structured mode (`application/cloudevents+json`) to every active
+subscription of its type, through a queue per subscription, so a slow or failing sink does not delay others. A full queue
+drops further events until the sink catches up.
+
+* A `2xx` is delivered. Redirects are never followed, so a `3xx` is a failure.
+* Transport errors, timeouts, `408`, `429` and `5xx` are retried with exponential backoff (`initial-backoff`, doubled up to
+  `max-backoff`) for at most `max-attempts` attempts in total; afterwards the event is dropped and logged.
+* With `oid4vp.enabled`, a `401` makes CM run OID4VP against the sink host with the subscription's `clientId` and `scopes`,
+  and retry once with the token. A `401` after that is not retried. Without OID4VP, a `401` drops the event like any other
+  `4xx`.
+* A `410 Gone` removes the subscription. Other `4xx` drop the event without a retry.
+* The rate granted in the handshake counts HTTP requests, not events: an OID4VP-protected sink sees two requests per
+  event (CM caches no OID4VP token), so grant twice the intended event rate.
+
+The counter `dataspace.events.delivered` (tags `type`, `outcome` = `delivered`, `failed`, `gone`, `expired`, `overflow`) counts
+the final result of every event at every subscription.
+
+Subscriptions are kept in memory on a single replica: run the publisher with one replica. A restart loses all subscriptions
+and their pending events, and subscribers recover by renewing.
+
+**Publishing** is done on the management port, e.g. by the marketplace or operator scripts inside the cluster:
+
+```shell
+curl -X POST http://contract-management:9090/events -H "Content-Type: application/json" \
+  -d '{ "type": "org.fiware.dataspace.example", "subject": "did:web:consumer.org", "data": { "offer": "urn:offer:1" } }'
+```
+
+`type` is required (`400`), `subject`, `data` and `id` are optional. CM fills `specversion` (`1.0`), `id` (a random UUID when
+absent), `source` (`own-participant-id`), `time`, `dataspaceid` and `datacontenttype` (`application/json`), queues the event and
+answers `202` with the event id and the number of matching subscriptions, e.g. `{"id": "...", "subscriptions": 2}`. Without
+`own-participant-id` and `general.did` it answers `503`. The endpoint is not authenticated: keep port 9090 cluster-internal and
+never expose it through the ingress. CM refuses to start the publisher when `endpoints.all.port` is unset or equal to
+`micronaut.server.port`, since `POST /events` would then be public and collide with the listener.
+
+**Security notes:**
+
+* The subscriber chooses `sink`, `clientId` and `scopes`. With `oid4vp.enabled`, when the sink answers `401`, CM presents the
+  credentials the sink host's OID4VP request asks for. The resulting token is bound to that host, which limits replay, but the
+  credentials are disclosed to it. Sinks are not restricted to the `origin`s in `dataspace.events.publishers`, so only hold
+  credentials in CM you are willing to present to any authenticated participant's host.
+* Handshake and delivery never follow redirects, so a sink cannot redirect CM to an internal address. The OID4VP token
+  fetch a sink's `401` triggers uses its own non-redirecting client as well, so a redirect cannot move it to another host
+  either. It still goes to the OID4VP endpoints the sink host itself advertises, which is inherent to the flow: run CM
+  where it cannot reach hosts you would not let a participant name as `sink`.
+* Events are broadcast: every participant the gateway identifies may subscribe to every type and then receives every event
+  of that type, including events whose `subject` is another participant. There is no per-subscriber type allowlist and no
+  filtering by `subject`, unlike the `publishers[].types` of the listener. Only publish events through `POST :9090/events`
+  that every authenticated participant of the data space may see.
+* A failed handshake is answered only with `handshake failed`; the sink's status or the connection error is logged, never
+  returned, so the API cannot be used to probe hosts reachable from CM.
+
+#### Subscribing to publishers
+
+With `dataspace.events.subscriber.enabled`, CM registers its own `POST /events` as webhook `sink` at every configured publisher
+that has a `subscriptions-url`, using the publisher's `POST /subscriptions` (the API described above). This happens shortly after
+startup (`initial-delay`) and whenever a refresh adds or changes a publisher. Each lease is renewed before it expires.
+
+Startup fails unless all of the following hold:
+
+* `dataspace.events.listener.enabled` is `true`, because the publisher's `OPTIONS` handshake is answered by the listener.
+* `subscriber.sink` is the public absolute http(s) URL of the own `POST /events`, as the publishers reach it.
+* `subscriber.protocol-settings.client-id` is set.
+* `own-participant-id` or `general.did` is set. It is sent as `subscriberId` and has to equal the participant id that the
+  publisher's gateway reads out of CM's token.
+
+A `publishers[]` entry is only subscribed to if it has a `subscriptions-url`. CM never derives that URL from the publisher id or
+origin, and entries without one are listener-only. A subscribable entry also needs:
+
+* `types`: the event types CM subscribes to at that publisher.
+* `origin`: it must equal the publisher's own `dataspace.events.publisher.origin`. The publisher sends it as
+  `WebHook-Request-Origin` in the handshake, and the listener only grants configured origins.
+
+An entry with a `subscriptions-url` but no `types` or no `origin` is skipped with a WARN and is not contacted. A wrong but
+non-empty `origin` cannot be detected locally; the registration then fails with `400 handshake failed` and is retried.
+
+**Two pairs of client credentials** are used:
+
+* `subscriber.client-id` / `subscriber.scopes` are what CM uses for OID4VP towards the publisher's subscriptions API, i.e. when
+  the publisher answers `401`. A publisher entry can override them with its own `client-id` / `scopes`. A blank `client-id`
+  or an empty `scopes` list counts as "no override".
+* `subscriber.protocol-settings.client-id` / `.scopes` are sent as `protocolsettings` in the subscription. They name the client
+  at **CM's own** verifier that the publisher uses when CM's sink answers a delivery with `401`.
+
+**Retries and renewal:**
+
+* A failed registration (transport error, timeout, any non-`2xx` other than `409`, e.g. the `503` of a publisher at its cap)
+  is retried without an attempt limit, because a publisher may be down for a long time. The wait starts at
+  `retry.initial-backoff` and doubles up to `retry.max-backoff`. Until such a registration succeeds the publisher counts as
+  `PENDING` and, once `validUntil` has passed, makes the health check `DOWN`.
+* After a `201`, the lease is renewed after `renewal-fraction` of the remaining time until `expiresAt`, but never sooner than
+  `min-renewal-delay`. A `renewal-fraction` outside `(0, 1)` falls back to `0.5`. A renewal repeats the `POST` for the same
+  sink, so the publisher keeps the subscription id.
+* A `409` counts as success: it is logged at INFO as "409 treated as existing subscription", and the publisher is registered
+  again after `conflict-renewal-interval`. It is kept for publishers that report an existing subscription that way; a CM
+  publisher never answers `409` (it renews with `201` and refuses a reached cap with `503`). The state `CONFLICT` in the
+  health details keeps that case visible.
+* A `201` without `expiresAt` is also registered again after `conflict-renewal-interval`.
+
+**Configuration changes at runtime** are applied on every refresh and by a periodic check every `reconcile-interval`:
+
+* An added publisher is registered right away, without a restart.
+* A publisher whose `subscriptions-url`, `types`, `origin`, `client-id` or `scopes` changed is registered again immediately.
+  So is every publisher when `sink`, `protocol-settings`, the global `client-id`/`scopes` or the own participant id changed.
+  * A changed `types`, `origin` or credential keeps the subscription key `(subscriberId, sink)`. The publisher renews the
+    subscription in place, and the old lease stays valid until then.
+  * A changed `sink`, participant id or `subscriptions-url` means a different subscription. CM first sends a best-effort
+    `DELETE <old subscriptions-url>/<old id>` with the old credentials, then the new `POST`. This frees the slot in the
+    publisher's cap. Until the new registration succeeds, the publisher counts as `PENDING`.
+* A removed publisher, or one whose `subscriptions-url` was set to `""`, is no longer retried or renewed and leaves the health
+  check. CM sends a best-effort `DELETE <subscriptions-url>/<id>`; a failure is only logged, because the lease expires anyway.
+* An entry that becomes invalid (no `types`, no `origin`) is dropped the same way and shows as `SKIPPED`.
+* Without a known subscription id (never registered, or answered `409`), nothing can be deleted, and the old lease simply expires.
+
+A key removed from the configuration keeps its previous value, see below. To make a publisher listener-only at runtime, set
+`subscriptions-url: ""`. To drop a per-publisher override, set `client-id: ""` or `scopes: []`.
+
+**Health:** the indicator `dataspace-subscriptions` is `UP` when every subscribable publisher holds a registration that has not
+expired; once the first reconcile has run, that includes the case that no publisher is subscribable. Otherwise it reports the
+status `DEGRADED`:
+
+* from startup until the first reconcile (`initial-delay`), and after that until every subscribable publisher is registered;
+* while a renewal keeps failing past `expiresAt` (a failed renewal before that stays `UP`, because the publisher still delivers);
+* after a `sink`, participant id or `subscriptions-url` change, until the new registration succeeds;
+* while the subscriber settings are invalid after a refresh (detail `subscriber-settings`).
+
+It never reports `DOWN`. The publisher's handshake reaches CM through its Service or ingress. A pod that fails readiness would
+never receive it, so registration could never succeed, and a failing liveness probe would restart the pod in a loop. `/health`
+and `/health/readiness` include the indicator and keep answering `200` with `DEGRADED`; `/health/liveness` does not include it.
+A `DOWN` of another indicator still wins. `SKIPPED` publishers do not affect the status.
+
+The details map each publisher id to its `state` (`PENDING`, `REGISTERED`, `CONFLICT`, `EXPIRED` or `SKIPPED`), `expiresAt`,
+and for `SKIPPED` the `reason`. Error responses of the publishers are only logged. An anonymous `/health` only shows the overall
+status. The default `endpoints.health.details-visible` is `AUTHENTICATED`; to see the per-publisher details on the
+cluster-internal port 9090, set it to `ANONYMOUS`.
+
+```yaml
+dataspace:
+  events:
+    own-participant-id: "did:web:consumer.org"
+    listener:
+      enabled: true
+    publishers:
+      - id: "did:web:provider.org"
+        # must equal the provider's dataspace.events.publisher.origin
+        origin: "cm.provider.org"
+        types: [ "org.fiware.dataspace.example" ]
+        subscriptions-url: "https://cm.provider.org/subscriptions"
+        # optional, overrides subscriber.client-id / subscriber.scopes for this publisher
+        client-id: "contract-management-provider"
+        scopes: [ "events" ]
+    subscriber:
+      enabled: true
+      sink: "https://cm.consumer.org/events"
+      client-id: "contract-management"
+      scopes: [ "default" ]
+      protocol-settings:
+        client-id: "contract-management"
+        scopes: [ "default" ]
+```
+
+#### Changing the configuration without a restart
+
+All `dataspace.events.*` values except `listener.enabled`, `listener.watch.enabled`, `publisher.enabled`, `subscriber.enabled`
+(startup-time conditions) and `publisher.sink-connect-timeout`/`publisher.sink-read-timeout` (used to build the sink client) are
+refreshable; these need a restart. All other `publisher.*` values, e.g. the caps, the lease and the delivery settings, apply to
+the next request or delivery attempt (`delivery.queue-size` only to subscriptions that receive their first event afterwards).
+All other `subscriber.*` values and the publishers' `subscriptions-url`, `client-id` and `scopes` are refreshable as well; see
+[Subscribing to publishers](#subscribing-to-publishers) for how the subscriber reacts.
+A refresh is triggered by:
+
+* `POST :9090/refresh` reloads the configuration. The management port is not authenticated, keep port 9090 cluster-internal.
+* With `listener.watch.enabled` and `listener.watch.path`, CM watches the configuration directory and refreshes on any change in it.
+
+A `/refresh` call and a watch-triggered refresh never run at the same time; the later one waits for the running one.
+
+When the configuration comes from a Kubernetes ConfigMap, mount it as a directory (e.g. `mountPath: /config` with
+`MICRONAUT_CONFIG_FILES=/config/application.yaml` and `watch.path: /config`), **not** with `subPath`: kubelet never updates
+`subPath` mounts, so neither `/refresh` nor the watch would ever see a change. Kubelet propagates an update with a delay of up to
+about a minute.
 
 ### Development
 
