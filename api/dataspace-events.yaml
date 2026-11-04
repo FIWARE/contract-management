@@ -104,10 +104,10 @@ paths:
           description: The caller was not identified by the gateway.
         '403':
           description: The subscriberId does not match the participant the gateway identified.
-        '409':
-          description: The maximum number of subscriptions is reached.
         '503':
-          description: The publisher origin is not configured, so no sink can be validated.
+          description: The subscription cannot be accepted at the moment, either because the publisher origin is not
+            configured, so no sink can be validated, or because the maximum number of subscriptions is reached. The
+            subscriber should retry.
   /subscriptions/{subscriptionId}:
     delete:
       tags:

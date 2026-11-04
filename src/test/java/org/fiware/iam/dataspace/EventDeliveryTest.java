@@ -16,8 +16,9 @@ import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import io.micronaut.json.JsonMapper;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.DataSpaceEventVO;
-import org.fiware.iam.http.AuthHandler;
 import org.fiware.iam.http.Oid4VpAuthHandler;
+import org.fiware.iam.http.Oid4VpSinkAuthHandler;
+import org.fiware.iam.http.SinkAuthHandler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -522,14 +523,14 @@ class EventDeliveryTest {
     }
 
     private void withOid4Vp() {
-        createDelivery(Optional.of(new Oid4VpAuthHandler(oid4VPClient)));
+        createDelivery(Optional.of(new Oid4VpSinkAuthHandler(oid4VPClient)));
     }
 
     private void withoutAuthHandler() {
         createDelivery(Optional.empty());
     }
 
-    private void createDelivery(Optional<AuthHandler> authHandler) {
+    private void createDelivery(Optional<SinkAuthHandler> authHandler) {
         delivery = new EventDelivery(httpClient, authHandler, registry, properties, Optional.of(meterRegistry));
     }
 

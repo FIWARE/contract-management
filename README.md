@@ -217,8 +217,9 @@ A `POST` is checked in this order:
 3. `sink` must be an absolute `https` URI (`http` too with `allow-insecure-sinks`), `types` must not be empty, `protocol` must
    be `HTTP` and `protocolsettings.clientId` is required, else `400` with a `reason`.
 4. Without a configured `publisher.origin`, the request gets `503`.
-5. Neither `max-subscriptions-per-subscriber` nor `max-subscriptions` may be reached, else `409`. Expired leases are evicted
-   first, and a renewal does not count twice.
+5. Neither `max-subscriptions-per-subscriber` nor `max-subscriptions` may be reached, else `503`. Expired leases are evicted
+   first, and a renewal does not count twice. A reached cap is a temporary refusal the subscriber retries; CM never answers
+   `409`, which a subscriber reads as "the subscription already exists".
 6. The sink must pass the webhook handshake, else `400` with the reason `handshake failed`.
 7. Otherwise the subscription is activated and answered with `201`.
 
@@ -276,7 +277,14 @@ never expose it through the ingress. CM refuses to start the publisher when `end
   credentials the sink host's OID4VP request asks for. The resulting token is bound to that host, which limits replay, but the
   credentials are disclosed to it. Sinks are not restricted to the `origin`s in `dataspace.events.publishers`, so only hold
   credentials in CM you are willing to present to any authenticated participant's host.
-* Handshake and delivery never follow redirects, so a sink cannot redirect CM to an internal address.
+* Handshake and delivery never follow redirects, so a sink cannot redirect CM to an internal address. The OID4VP token
+  fetch a sink's `401` triggers uses its own non-redirecting client as well, so a redirect cannot move it to another host
+  either. It still goes to the OID4VP endpoints the sink host itself advertises, which is inherent to the flow: run CM
+  where it cannot reach hosts you would not let a participant name as `sink`.
+* Events are broadcast: every participant the gateway identifies may subscribe to every type and then receives every event
+  of that type, including events whose `subject` is another participant. There is no per-subscriber type allowlist and no
+  filtering by `subject`, unlike the `publishers[].types` of the listener. Only publish events through `POST :9090/events`
+  that every authenticated participant of the data space may see.
 * A failed handshake is answered only with `handshake failed`; the sink's status or the connection error is logged, never
   returned, so the API cannot be used to probe hosts reachable from CM.
 
@@ -314,14 +322,17 @@ non-empty `origin` cannot be detected locally; the registration then fails with 
 
 **Retries and renewal:**
 
-* A failed registration (transport error, timeout, any non-`2xx` other than `409`) is retried without an attempt limit, because
-  a publisher may be down for a long time. The wait starts at `retry.initial-backoff` and doubles up to `retry.max-backoff`.
+* A failed registration (transport error, timeout, any non-`2xx` other than `409`, e.g. the `503` of a publisher at its cap)
+  is retried without an attempt limit, because a publisher may be down for a long time. The wait starts at
+  `retry.initial-backoff` and doubles up to `retry.max-backoff`. Until such a registration succeeds the publisher counts as
+  `PENDING` and, once `validUntil` has passed, makes the health check `DOWN`.
 * After a `201`, the lease is renewed after `renewal-fraction` of the remaining time until `expiresAt`, but never sooner than
   `min-renewal-delay`. A `renewal-fraction` outside `(0, 1)` falls back to `0.5`. A renewal repeats the `POST` for the same
   sink, so the publisher keeps the subscription id.
 * A `409` counts as success: it is logged at INFO as "409 treated as existing subscription", and the publisher is registered
-  again after `conflict-renewal-interval`. A CM publisher answers `409` only when its subscription caps are reached; an existing
-  subscription is renewed with `201`. The state `CONFLICT` in the health details therefore keeps that case visible.
+  again after `conflict-renewal-interval`. It is kept for publishers that report an existing subscription that way; a CM
+  publisher never answers `409` (it renews with `201` and refuses a reached cap with `503`). The state `CONFLICT` in the
+  health details keeps that case visible.
 * A `201` without `expiresAt` is also registered again after `conflict-renewal-interval`.
 
 **Configuration changes at runtime** are applied on every refresh and by a periodic check every `reconcile-interval`:

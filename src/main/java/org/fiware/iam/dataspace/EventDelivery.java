@@ -18,7 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.model.DataSpaceEventVO;
 import org.fiware.iam.exception.EventDeliveryException;
-import org.fiware.iam.http.AuthHandler;
+import org.fiware.iam.http.SinkAuthHandler;
 import org.fiware.iam.logging.DownstreamError;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -38,7 +38,7 @@ import static org.fiware.iam.http.Oid4VpAuthHandler.SCOPE_ATTRIBUTE;
 
 /**
  * Best-effort delivery of events to the sinks of the matching subscriptions, each through its own {@link SubscriptionChannel}.
- * Retries with exponential backoff, answers a 401 with OID4VP, and counts every dropped or delivered event in {@value #METRIC_NAME}.
+ * Retries with exponential backoff, answers a 401 with OID4VP through a non-redirecting client, and counts every dropped or delivered event in {@value #METRIC_NAME}.
  */
 @Slf4j
 @Singleton
@@ -64,15 +64,15 @@ public class EventDelivery {
     }
 
     private final HttpClient httpClient;
-    // only use authentication if a handler is provided
-    private final Optional<AuthHandler> authHandler;
+    // only use authentication if a handler is provided; towards a sink it never follows a redirect
+    private final Optional<SinkAuthHandler> authHandler;
     private final SubscriptionRegistry registry;
     private final DataSpaceEventsProperties properties;
     private final MeterRegistry meterRegistry;
     private final Map<String, SubscriptionChannel> channels = new ConcurrentHashMap<>();
 
     public EventDelivery(@Client(configuration = PublisherHttpClientConfiguration.class) HttpClient httpClient,
-                         Optional<AuthHandler> authHandler, SubscriptionRegistry registry,
+                         Optional<SinkAuthHandler> authHandler, SubscriptionRegistry registry,
                          DataSpaceEventsProperties properties, Optional<MeterRegistry> meterRegistry) {
         this.httpClient = httpClient;
         this.authHandler = authHandler;

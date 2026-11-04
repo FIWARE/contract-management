@@ -325,7 +325,8 @@ public class DataSpaceEventSubscriber implements ApplicationEventListener<Server
                             DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL));
                     // a max-backoff of grace: a failing re-registration is retried before the publisher counts as expired
                     Instant validUntil = now.plus(delay).plus(capped(backoff(Integer.MAX_VALUE)));
-                    // CONFLICT stays reserved for a real 409 (e.g. the publisher's cap), only the timing is shared
+                    // CONFLICT stays reserved for a real 409, i.e. a publisher reporting an existing subscription;
+                    // a CM publisher never answers 409 (a reached cap is a 503 and retried), only the timing is shared
                     if (registration.conflict()) {
                         state.conflict(registration.id(), validUntil);
                     } else {

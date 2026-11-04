@@ -30,6 +30,8 @@ import java.util.stream.Collectors;
 /**
  * Lets participants the gateway identified subscribe their webhook to data space events; a subscription is only activated
  * after its sink passed the webhook handshake. Refusals carry generic reasons only, so the API cannot probe hosts reachable from CM.
+ * Every identified participant may subscribe to every type, and events are broadcast to all subscriptions of their type;
+ * there is no per-subscriber authorization (see the security notes in the README).
  */
 @Slf4j
 @Controller("${general.basepath:/}")
@@ -105,7 +107,8 @@ public class SubscriptionController implements SubscriptionsApi {
         try {
             registry.checkCapacity(subscriberId, sink);
         } catch (SubscriptionLimitException e) {
-            return refuse(HttpStatus.CONFLICT, subscriberId, sink, e.getMessage());
+            // 503, not 409: a cap is a temporary refusal the subscriber has to retry, while 409 means "already subscribed"
+            return refuse(HttpStatus.SERVICE_UNAVAILABLE, subscriberId, sink, e.getMessage());
         }
         return handshake.validate(sink)
                 .map(allowedRate -> register(request, allowedRate.orElse(null)))
@@ -116,7 +119,7 @@ public class SubscriptionController implements SubscriptionsApi {
                 })
                 // a concurrent registration may have taken the last slot during the handshake
                 .onErrorResume(SubscriptionLimitException.class,
-                        e -> refuse(HttpStatus.CONFLICT, subscriberId, sink, e.getMessage()));
+                        e -> refuse(HttpStatus.SERVICE_UNAVAILABLE, subscriberId, sink, e.getMessage()));
     }
 
     private HttpResponse<SubscriptionVO> register(SubscriptionRequestVO request, @Nullable Integer allowedRate) {

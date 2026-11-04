@@ -232,7 +232,7 @@ class SubscriptionControllerTest {
 
         HttpResponse<SubscriptionVO> response = create(participant, request().subscriberId(participant).sink(OTHER_SINK));
 
-        assertEquals(HttpStatus.CONFLICT, response.getStatus(), description);
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatus(), description);
         verify(handshake, never()).validate(OTHER_SINK);
         assertEquals(1, registry.active(TYPE).size(), description);
     }
@@ -264,7 +264,7 @@ class SubscriptionControllerTest {
             return Optional.of(RATE);
         }));
 
-        assertEquals(HttpStatus.CONFLICT, create(SUBSCRIBER, request().sink(OTHER_SINK)).getStatus());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, create(SUBSCRIBER, request().sink(OTHER_SINK)).getStatus());
         assertEquals(1, registry.active(TYPE).size());
     }
 

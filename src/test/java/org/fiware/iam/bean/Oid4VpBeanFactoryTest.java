@@ -12,10 +12,12 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Security;
 import java.security.spec.ECGenParameterSpec;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,6 +59,9 @@ class Oid4VpBeanFactoryTest {
     /** Key path string used in Holder records for testing. */
     private static final String TEST_KEY_PATH = "oid4vp/test-key.pem";
 
+    /** Proxy configuration without a proxy, used for the http client tests. */
+    private static final Oid4VpConfiguration.ProxyConfig NO_PROXY = new Oid4VpConfiguration.ProxyConfig(false, null, null);
+
     /** The factory instance under test, constructed with a mocked {@link CertReader}. */
     private static Oid4VpBeanFactory factory;
 
@@ -76,6 +81,25 @@ class Oid4VpBeanFactoryTest {
                 Arguments.of(CURVE_P256),
                 Arguments.of(CURVE_P384)
         );
+    }
+
+    /**
+     * Provides the two http clients the factory creates and the redirect policy each of them has to use.
+     */
+    static Stream<Arguments> httpClients() {
+        return Stream.of(
+                Arguments.of("downstream services", (Function<Oid4VpBeanFactory, HttpClient>) f -> f.httpClient(NO_PROXY),
+                        HttpClient.Redirect.NORMAL),
+                Arguments.of("participant-chosen sinks", (Function<Oid4VpBeanFactory, HttpClient>) f -> f.sinkHttpClient(NO_PROXY),
+                        HttpClient.Redirect.NEVER));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("httpClients")
+    @DisplayName("the sink client never follows a redirect, the general one does")
+    void appliesTheRedirectPolicyOfTheClient(String description, Function<Oid4VpBeanFactory, HttpClient> client,
+                                             HttpClient.Redirect expectedPolicy) {
+        assertEquals(expectedPolicy, client.apply(factory).followRedirects(), description);
     }
 
     @Test
