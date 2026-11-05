@@ -3,7 +3,7 @@ package org.fiware.iam.dataspace;
 import io.micronaut.http.MediaType;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.GeneralProperties;
-import org.fiware.iam.dataspace.PublishEndpoint.PublishedEvent;
+import org.fiware.iam.dataspace.OwnEventPublisher.PublishedEvent;
 import org.fiware.iam.events.model.DataSpaceEventVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

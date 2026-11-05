@@ -1,7 +1,6 @@
 package org.fiware.iam.dataspace;
 
 import io.micronaut.context.annotation.Requires;
-import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
@@ -11,6 +10,7 @@ import io.micronaut.management.endpoint.annotation.Write;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
+import org.fiware.iam.dataspace.OwnEventPublisher.PublishedEvent;
 
 import java.util.Optional;
 
@@ -49,12 +49,5 @@ public class PublishEndpoint {
     @Nullable
     private static Object plain(@Nullable Object data) {
         return data instanceof JsonNode node ? node.getValue() : data;
-    }
-
-    /**
-     * Answer to a publish: the event id and how many subscriptions it was queued for.
-     */
-    @Introspected
-    public record PublishedEvent(String id, int subscriptions) {
     }
 }

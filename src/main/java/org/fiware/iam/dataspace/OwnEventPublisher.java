@@ -1,12 +1,12 @@
 package org.fiware.iam.dataspace;
 
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import lombok.RequiredArgsConstructor;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.GeneralProperties;
-import org.fiware.iam.dataspace.PublishEndpoint.PublishedEvent;
 import org.fiware.iam.events.model.DataSpaceEventVO;
 
 import java.time.Clock;
@@ -46,5 +46,12 @@ public class OwnEventPublisher {
                 .datacontenttype(APPLICATION_JSON)
                 .data(data);
         return Optional.of(new PublishedEvent(event.getId(), eventDelivery.publish(event)));
+    }
+
+    /**
+     * Answer to a publish: the event id and how many subscriptions it was queued for.
+     */
+    @Introspected
+    public record PublishedEvent(String id, int subscriptions) {
     }
 }
