@@ -30,7 +30,10 @@ public enum FailureReason {
 	SUBSCRIPTION_LIMIT_REACHED("subscription_limit_reached"),
 	WEBHOOK_HANDSHAKE_FAILED("webhook_handshake_failed"),
 	EVENT_DELIVERY_FAILED("event_delivery_failed"),
-	EVENT_SUBSCRIPTION_FAILED("event_subscription_failed");
+	EVENT_SUBSCRIPTION_FAILED("event_subscription_failed"),
+	TIR_ENUMERATION_FAILED("tir_enumeration_failed"),
+	TIR_EMPTY("tir_empty"),
+	TIR_MASS_REMOVAL("tir_mass_removal");
 
 	private final String code;
 
