@@ -33,7 +33,8 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   registry may cap the page size. The enumeration is complete only if every page answered 2xx, every **non-empty**
   page reports the first page's `total`, no DID is blank, every `links.next` carries a parseable `page[after]` that has
   not been requested before in this enumeration, the number of distinct DIDs collected equals the first page's
-  `total`, and the page count stayed below `max-pages`. Anything else is incomplete and throws. The count check also
+  `total`, and no further page was still needed after `max-pages` pages had been fetched (fetching exactly
+  `max-pages` pages is fine, so `max-pages: 1` works for a single-page registry). Anything else is incomplete and throws. The count check also
   catches entries skipped by offset pagination, a cursor that repeats a page (duplicate DIDs leave the count below
   `total`), and a registry that shrank mid-enumeration (an early end leaves the count below `total`). A registry that
   gives no `links.next` before `total` is reached therefore never yields a complete enumeration; this fails safe
@@ -131,9 +132,15 @@ Lay the foundation: no behaviour yet.
   - `confirmations` to `>= 1`.
   - `maxRemovalsPerCycle` to `>= 0`. `0` is allowed on purpose and documented: every removal trips the breaker, so
     nothing is announced without an operator raising the cap (a manual-approval mode).
-  The startup guard (step 5) rejects out-of-range values at startup with a `ConfigurationException` naming the key, so
-  a misconfiguration fails loudly at first. A refresh that sets one is clamped instead, and the Javadoc and README
-  say so.
+  - `interval` and `initialDelay` (`effectiveInterval()`, `effectiveInitialDelay()`): a null (key emptied) or
+    non-positive value falls back to its `DEFAULT_*`, like `DataSpaceEventSubscriber.positiveOrDefault`. Otherwise a
+    refresh to `PT0S` would re-run the enumeration back-to-back, `3 × interval` in the health indicator would be
+    <= 0, and a null would throw in the rescheduling itself and end the chain. The scheduler, the health indicator
+    and `Status` (first-cycle-due instant) use only these two.
+  These getters are the **single range definition**. The startup guard (step 5) rejects every field whose raw value
+  differs from its `effective*()` value, with a `ConfigurationException` naming the key, so the guard and the clamps
+  cannot drift apart and a misconfiguration fails loudly at first. A refresh that sets one is clamped instead, and
+  the Javadoc and README say so.
 
   Add `public static class TirWatcherCondition implements Condition`, true iff `publisher.enabled && tirWatcher.enabled`.
 - `bean/TirWatcherBeanFactory.java` (`@Factory`): a `@Named("tir-watcher") TaskScheduler` built from
@@ -144,8 +151,8 @@ Lay the foundation: no behaviour yet.
   (reason `TIR_ENUMERATION_FAILED`; fields `page`, nullable `status`; keeps the cause).
 - Tests: extend `configuration/DataSpaceEventsPropertiesTest` with a parameterized test of the `tir-watcher.*` defaults
   and binding, a test of `TirWatcherCondition`, which needs both flags, and a parameterized test of the `effective*()`
-  clamping (e.g. page size 0 → 1 and 500 → 100, max pages 0 → 1, confirmations 0 → 1, cap -1 → 0 and 0 → 0, and
-  in-range values unchanged).
+  clamping (e.g. page size 0 → 1 and 500 → 100, max pages 0 → 1, confirmations 0 → 1, cap -1 → 0 and 0 → 0,
+  interval and initial delay null / `PT0S` / `-PT1S` → their defaults, and in-range values unchanged).
 - Acceptance: `mvn clean package -DskipTests` generates the `org.fiware.iam.tir.*` sources, and `mvn test` is green.
 
 ### Step 2: Complete-enumeration reader for the TIR
@@ -158,7 +165,8 @@ Lay the foundation: no behaviour yet.
   enumeration*. It throws `TirEnumerationException` on an `HttpClientResponseException` (keep the status), a transport
   error, a missing/null body or items, a non-empty page whose `total` differs from the first page, a blank DID, a
   `links.next` without a parseable `page[after]` or with one already requested, a distinct count ≠ first-page `total`,
-  or `maxPages` being reached. An empty registry is **not** an error: it returns an empty set, and the watcher decides
+  or another page still being needed after `maxPages` pages were fetched (the limit is checked before requesting
+  page `maxPages + 1`, never after the last page). An empty registry is **not** an error: it returns an empty set, and the watcher decides
   what that means.
 - Unit test `dataspace/TrustedIssuersRegistryReaderTest`, with the client mocked and parameterized via `@MethodSource`:
   - single page, multi-page, empty registry (no `links`)
@@ -176,7 +184,9 @@ Lay the foundation: no behaviour yet.
   - empty first page: `{items:[], total:0}` and `{items:[]}` without `total` → empty set; `{items:[], total:5}` →
     incomplete
   - 5xx on page 2, connection error, `total` changing between non-empty pages, count ≠ total, duplicate DID across
-    pages, blank DID, max-pages exceeded
+    pages, blank DID
+  - `max-pages` boundary: a registry of exactly `max-pages` pages → complete (also `max-pages: 1` with a single
+    page); one page more → incomplete, and page `max-pages + 1` is never requested
 - HTTP test `dataspace/TrustedIssuersRegistryReaderHttpTest` (`@MicronautTest`, a fake TIR `@Controller` guarded by
   `@Requires(property = "spec.name", …)`, in the style of `SubscriptionControllerHttpTest`). It checks that the generated
   client sends `page[size]`/`page[after]` correctly and deserializes a real multi-page response and the
@@ -246,20 +256,20 @@ Lay the foundation: no behaviour yet.
 - Scheduling: `TirWatcher` (or a small `TirWatcherScheduler` in `dataspace/`) implements
   `ApplicationEventListener<ServerStartupEvent>`. Do not use Micronaut's `@EventListener`: it clashes with
   `dataspace.EventListener`. It schedules the first cycle on the `@Named("tir-watcher") TaskScheduler` after
-  `initialDelay`, then self-reschedules each next cycle after the **current** `interval` (one-shot chain, so a refreshed
-  interval applies; cap the delay like `DataSpaceEventSubscriber.capped`). Any `Throwable` from a cycle is logged and
+  `effectiveInitialDelay()`, then self-reschedules each next cycle after the **current** `effectiveInterval()` (one-shot
+  chain, so a refreshed interval applies; cap the delay like `DataSpaceEventSubscriber.capped`). Any `Throwable` from a cycle is logged and
   the chain continues. Stop on `@PreDestroy`.
 - Startup guard: `dataspace/TirWatcherStartupGuard` (`@Context`). When `tir-watcher.enabled` is true but
-  `publisher.enabled` is false, or no own participant id / `general.did` is set, or a bounded `tir-watcher.*` value is
-  outside its range (see step 1), fail startup with a clear `ConfigurationException` naming the key. It follows `SubscriberStartupGuard`, **but** is conditioned on `tir-watcher.enabled`
+  `publisher.enabled` is false, or no own participant id / `general.did` is set, or a `tir-watcher.*` value differs
+  from its `effective*()` value (out of range, or a non-positive / empty duration; see step 1), fail startup with a clear `ConfigurationException` naming the key. It follows `SubscriberStartupGuard`, **but** is conditioned on `tir-watcher.enabled`
   alone (`@Requires(property = "dataspace.events.tir-watcher.enabled", value = "true")`), not on
   `TirWatcherCondition`: that condition needs `publisher.enabled`, so the guard would not exist in exactly the case it
   must reject.
 - Health: `dataspace/TirWatcherHealthIndicator` (`@Requires(condition = TirWatcherCondition.class)`), in the style of
   `DataSpaceSubscriptionHealthIndicator`. It reports DEGRADED while an alert is active, or when there has been no
-  successful cycle (outcome `complete` or `initial`) for `3 × interval` (named constant). Before the first successful
+  successful cycle (outcome `complete` or `initial`) for `3 × effectiveInterval()` (named constant). Before the first successful
   cycle the baseline is the instant the first cycle is due: the `Clock` instant when it is scheduled plus the
-  `initialDelay` used for that scheduling. So the initial delay never reports DEGRADED, even when `initial-delay` is
+  `effectiveInitialDelay()` used for that scheduling. So the initial delay never reports DEGRADED, even when `initial-delay` is
   longer than `3 × interval`. `TirWatcher.Status` carries that first-cycle-due instant. It is UP otherwise,
   and the details come from `TirWatcher.Status`, plus a `reason` detail (`tir_empty`, `tir_mass_removal` or
   `no_successful_cycle`). DEGRADED is a **shared constant** with a neutral description, so the aggregate never sees
@@ -272,14 +282,17 @@ Lay the foundation: no behaviour yet.
   `DataSpaceSubscriptionHealthProbeTest`).
 - Tests:
   - scheduler tests with `RecordingTaskScheduler`: first cycle after the initial delay; rescheduling after success
-    and after an exception; a changed interval is applied
+    and after an exception; a changed interval is applied; a refresh to `PT0S` or an emptied interval reschedules
+    after the default interval and the chain continues
   - parameterized startup-guard test over (tir-watcher enabled, publisher enabled, own id set): fails for
     watcher on + publisher off, and for watcher on + no own id; starts otherwise (including watcher off + publisher off)
   - health-indicator test over UP/DEGRADED, including UP during the initial delay, UP during an initial delay longer
     than `3 × interval` (e.g. `initial-delay` 5m, interval 1m, checked at 4m), and DEGRADED after `3 × interval`
-    past the first-cycle-due instant without a successful cycle
+    past the first-cycle-due instant without a successful cycle; with a refreshed `interval: PT0S` the default
+    interval is used (no immediate DEGRADED)
   - the parameterized startup-guard test also covers an out-of-range `page-size`, `max-pages`, `confirmations` and
-    `max-removals-per-cycle` (fails) and `max-removals-per-cycle: 0` (starts)
+    `max-removals-per-cycle`, and an `interval` / `initial-delay` of `PT0S` or negative (fails), and
+    `max-removals-per-cycle: 0` (starts)
 - Docs:
   - `README.md`: a new `#### Watching the trust anchor registry` section under `### Data space events`. It covers
     what is detected, latency ≈ `confirmations × interval`, every safeguard and its config key, the alerts (log
@@ -293,7 +306,8 @@ Lay the foundation: no behaviour yet.
     do not get it), and the cursor format (`page[after]` from `links.next` must be an integer; a registry with string
     cursors never completes an enumeration and logs WARN every cycle), and the value ranges (`page-size` 1..100,
     `max-pages` >= 1, `confirmations` >= 1, `max-removals-per-cycle` >= 0 where 0 holds back every removal for
-    the operator; out of range fails startup, and is clamped after a refresh).
+    the operator, `interval` and `initial-delay` positive; out of range fails startup, and after a refresh is
+    clamped, or for the durations falls back to the default).
   - Commented `tir-watcher:` block in the `dataspace.events` example of `src/main/resources/application.yaml`.
   - `AGENTS.md`: list `TirWatcher`/`TrustedIssuersRegistryReader` and `api` → `org.fiware.iam.tir.*`.
 - Acceptance: `mvn test` is green. A k3s IT is out of scope: the k3s CM deployment is
