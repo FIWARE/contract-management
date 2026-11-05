@@ -28,6 +28,9 @@ micronaut:
     notification-subscriber:
       type: scheduled
       core-pool-size: 1
+    tir-watcher:
+      type: scheduled
+      core-pool-size: 1
 
   http:
     services:
@@ -52,6 +55,10 @@ micronaut:
         url: http://localhost:8084
         read-timeout: 30
       trusted-issuers-list:
+        path: "/"
+        url: http://localhost:8085
+        read-timeout: 30
+      trusted-issuers-registry:
         path: "/"
         url: http://localhost:8085
         read-timeout: 30
@@ -161,6 +168,15 @@ oid4vp:
 #      retry:
 #        initial-backoff: PT5S
 #        max-backoff: PT5M
+#    # trust anchor only (requires the publisher): announces participants that left the TIR as participant.removed
+#    tir-watcher:
+#      enabled: true
+#      initial-delay: PT30S
+#      interval: PT1M
+#      page-size: 100
+#      max-pages: 1000
+#      confirmations: 2
+#      max-removals-per-cycle: 5
 
 endpoints:
   all:

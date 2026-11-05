@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +67,12 @@ class DataSpaceEventsPropertiesTest {
     private static final String SUBSCRIPTIONS_URL = "https://provider.org/subscriptions";
     private static final String PUBLISHER_CLIENT_ID = "provider-client";
     private static final List<String> PUBLISHER_SCOPES = List.of("provider-subscriptions");
+    private static final Duration TIR_INITIAL_DELAY = Duration.ofSeconds(10);
+    private static final Duration TIR_INTERVAL = Duration.ofMinutes(5);
+    private static final int TIR_PAGE_SIZE = 25;
+    private static final int TIR_MAX_PAGES = 50;
+    private static final int TIR_CONFIRMATIONS = 3;
+    private static final int TIR_MAX_REMOVALS = 7;
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -236,6 +244,125 @@ class DataSpaceEventsPropertiesTest {
                         true, SINK, SUBSCRIBER_CLIENT_ID, SUBSCRIBER_SCOPES, PROTOCOL_CLIENT_ID, PROTOCOL_SCOPES, INITIAL_DELAY,
                         RENEWAL_FRACTION, MIN_RENEWAL_DELAY, CONFLICT_RENEWAL_INTERVAL, RECONCILE_INTERVAL,
                         RETRY_INITIAL_BACKOFF, RETRY_MAX_BACKOFF));
+    }
+
+    @ParameterizedTest(name = "tir-watcher settings {0}")
+    @MethodSource("tirWatcherSettings")
+    void bindsTirWatcherSettings(String name, Map<String, Object> tirWatcherConfig, boolean enabled, Duration initialDelay,
+                                 Duration interval, int pageSize, int maxPages, int confirmations, int maxRemovalsPerCycle) {
+        try (ApplicationContext ctx = ApplicationContext.builder()
+                .properties(ISOLATED)
+                .propertySources(PropertySource.of("test", tirWatcherConfig))
+                .start()) {
+            DataSpaceEventsProperties.TirWatcherSettings tirWatcher = ctx.getBean(DataSpaceEventsProperties.class).getTirWatcher();
+
+            assertEquals(enabled, tirWatcher.isEnabled());
+            assertEquals(initialDelay, tirWatcher.getInitialDelay());
+            assertEquals(interval, tirWatcher.getInterval());
+            assertEquals(pageSize, tirWatcher.getPageSize());
+            assertEquals(maxPages, tirWatcher.getMaxPages());
+            assertEquals(confirmations, tirWatcher.getConfirmations());
+            assertEquals(maxRemovalsPerCycle, tirWatcher.getMaxRemovalsPerCycle());
+        }
+    }
+
+    static Stream<Arguments> tirWatcherSettings() {
+        String tirWatcher = PREFIX + "tir-watcher.";
+        return Stream.of(
+                Arguments.of("defaults", Map.of(), false,
+                        DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_INITIAL_DELAY,
+                        DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_INTERVAL,
+                        DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_PAGE_SIZE,
+                        DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_MAX_PAGES,
+                        DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_CONFIRMATIONS,
+                        DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_MAX_REMOVALS_PER_CYCLE),
+                Arguments.of("configured", Map.of(
+                                tirWatcher + "enabled", true,
+                                tirWatcher + "initial-delay", TIR_INITIAL_DELAY.toString(),
+                                tirWatcher + "interval", TIR_INTERVAL.toString(),
+                                tirWatcher + "page-size", TIR_PAGE_SIZE,
+                                tirWatcher + "max-pages", TIR_MAX_PAGES,
+                                tirWatcher + "confirmations", TIR_CONFIRMATIONS,
+                                tirWatcher + "max-removals-per-cycle", TIR_MAX_REMOVALS),
+                        true, TIR_INITIAL_DELAY, TIR_INTERVAL, TIR_PAGE_SIZE, TIR_MAX_PAGES, TIR_CONFIRMATIONS,
+                        TIR_MAX_REMOVALS));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("tirWatcherClamps")
+    void clampsTirWatcherSettings(String name, Consumer<DataSpaceEventsProperties.TirWatcherSettings> configure,
+                                  Function<DataSpaceEventsProperties.TirWatcherSettings, Object> effective, Object expected) {
+        DataSpaceEventsProperties.TirWatcherSettings settings = new DataSpaceEventsProperties.TirWatcherSettings();
+        configure.accept(settings);
+
+        assertEquals(expected, effective.apply(settings));
+    }
+
+    static Stream<Arguments> tirWatcherClamps() {
+        Function<DataSpaceEventsProperties.TirWatcherSettings, Object> pageSize =
+                DataSpaceEventsProperties.TirWatcherSettings::effectivePageSize;
+        Function<DataSpaceEventsProperties.TirWatcherSettings, Object> maxPages =
+                DataSpaceEventsProperties.TirWatcherSettings::effectiveMaxPages;
+        Function<DataSpaceEventsProperties.TirWatcherSettings, Object> confirmations =
+                DataSpaceEventsProperties.TirWatcherSettings::effectiveConfirmations;
+        Function<DataSpaceEventsProperties.TirWatcherSettings, Object> maxRemovals =
+                DataSpaceEventsProperties.TirWatcherSettings::effectiveMaxRemovalsPerCycle;
+        Function<DataSpaceEventsProperties.TirWatcherSettings, Object> interval =
+                DataSpaceEventsProperties.TirWatcherSettings::effectiveInterval;
+        Function<DataSpaceEventsProperties.TirWatcherSettings, Object> initialDelay =
+                DataSpaceEventsProperties.TirWatcherSettings::effectiveInitialDelay;
+        Duration defaultInterval = DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_INTERVAL;
+        Duration defaultInitialDelay = DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_INITIAL_DELAY;
+        return Stream.of(
+                clamp("page size 0 -> 1", s -> s.setPageSize(0), pageSize,
+                        DataSpaceEventsProperties.TirWatcherSettings.MIN_PAGE_SIZE),
+                clamp("page size 500 -> 100", s -> s.setPageSize(500), pageSize,
+                        DataSpaceEventsProperties.TirWatcherSettings.MAX_PAGE_SIZE),
+                clamp("page size in range", s -> s.setPageSize(TIR_PAGE_SIZE), pageSize, TIR_PAGE_SIZE),
+                clamp("max pages 0 -> 1", s -> s.setMaxPages(0), maxPages,
+                        DataSpaceEventsProperties.TirWatcherSettings.MIN_MAX_PAGES),
+                clamp("max pages in range", s -> s.setMaxPages(TIR_MAX_PAGES), maxPages, TIR_MAX_PAGES),
+                clamp("confirmations 0 -> 1", s -> s.setConfirmations(0), confirmations,
+                        DataSpaceEventsProperties.TirWatcherSettings.MIN_CONFIRMATIONS),
+                clamp("confirmations in range", s -> s.setConfirmations(TIR_CONFIRMATIONS), confirmations, TIR_CONFIRMATIONS),
+                clamp("cap -1 -> 0", s -> s.setMaxRemovalsPerCycle(-1), maxRemovals,
+                        DataSpaceEventsProperties.TirWatcherSettings.MIN_MAX_REMOVALS_PER_CYCLE),
+                clamp("cap 0 stays 0", s -> s.setMaxRemovalsPerCycle(0), maxRemovals, 0),
+                clamp("cap in range", s -> s.setMaxRemovalsPerCycle(TIR_MAX_REMOVALS), maxRemovals, TIR_MAX_REMOVALS),
+                clamp("interval null -> default", s -> s.setInterval(null), interval, defaultInterval),
+                clamp("interval PT0S -> default", s -> s.setInterval(Duration.ZERO), interval, defaultInterval),
+                clamp("interval -PT1S -> default", s -> s.setInterval(Duration.ofSeconds(-1)), interval, defaultInterval),
+                clamp("interval in range", s -> s.setInterval(TIR_INTERVAL), interval, TIR_INTERVAL),
+                clamp("initial delay null -> default", s -> s.setInitialDelay(null), initialDelay, defaultInitialDelay),
+                clamp("initial delay PT0S -> default", s -> s.setInitialDelay(Duration.ZERO), initialDelay, defaultInitialDelay),
+                clamp("initial delay -PT1S -> default", s -> s.setInitialDelay(Duration.ofSeconds(-1)), initialDelay,
+                        defaultInitialDelay),
+                clamp("initial delay in range", s -> s.setInitialDelay(TIR_INITIAL_DELAY), initialDelay, TIR_INITIAL_DELAY));
+    }
+
+    private static Arguments clamp(String name, Consumer<DataSpaceEventsProperties.TirWatcherSettings> configure,
+                                   Function<DataSpaceEventsProperties.TirWatcherSettings, Object> effective, Object expected) {
+        return Arguments.of(name, configure, effective, expected);
+    }
+
+    @ParameterizedTest(name = "publisher {0}, tir-watcher {1} -> tir-watcher beans {2}")
+    @MethodSource("tirWatcherConditions")
+    void tirWatcherCondition(boolean publisherEnabled, boolean tirWatcherEnabled, boolean expected) {
+        DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
+        properties.getPublisher().setEnabled(publisherEnabled);
+        properties.getTirWatcher().setEnabled(tirWatcherEnabled);
+        ConditionContext conditionContext = mock(ConditionContext.class);
+        when(conditionContext.getBean(DataSpaceEventsProperties.class)).thenReturn(properties);
+
+        assertEquals(expected, new DataSpaceEventsProperties.TirWatcherCondition().matches(conditionContext));
+    }
+
+    static Stream<Arguments> tirWatcherConditions() {
+        return Stream.of(
+                Arguments.of(false, false, false),
+                Arguments.of(true, false, false),
+                Arguments.of(false, true, false),
+                Arguments.of(true, true, true));
     }
 
     @ParameterizedTest(name = "publisher entry {0}")
