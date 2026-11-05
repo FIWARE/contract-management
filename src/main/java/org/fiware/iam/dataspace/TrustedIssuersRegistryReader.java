@@ -56,7 +56,8 @@ public class TrustedIssuersRegistryReader {
         Set<String> dids = new HashSet<>();
         int total = 0;
 
-        for (int page = FIRST_PAGE; ; page++) {
+        int page = FIRST_PAGE;
+        for (; ; page++) {
             IssuersResponseVO response = fetch(page, pageSize, cursor);
             List<IssuerEntryVO> items = response.getItems();
             if (items == null) {
@@ -113,9 +114,8 @@ public class TrustedIssuersRegistryReader {
         }
 
         if (dids.size() != total) {
-            throw new TirEnumerationException(
-                    "The trusted issuers registry listed %s distinct DIDs but a total of %s.".formatted(dids.size(), total),
-                    FIRST_PAGE, null, null);
+            // reported at the last page fetched, where the list ended short or repeated a DID
+            throw incomplete(page, "ended the list with %s distinct DIDs instead of the total of %s".formatted(dids.size(), total));
         }
         log.debug("Enumerated {} DIDs of the trusted issuers registry.", dids.size());
         return Set.copyOf(dids);

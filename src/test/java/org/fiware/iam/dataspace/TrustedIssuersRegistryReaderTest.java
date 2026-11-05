@@ -155,7 +155,8 @@ class TrustedIssuersRegistryReaderTest {
     static Stream<Arguments> incompleteEnumerations() {
         return Stream.of(
                 Arguments.of("registry shrank mid-enumeration", UNLIMITED_PAGES,
-                        Registry.of(FIRST, page(4, next(PAGE_SIZE, 1), "did:a", "did:b"), 1, pastTheEnd()), 1, null),
+                        Registry.of(FIRST, page(4, next(PAGE_SIZE, 1), "did:a", "did:b"), 1, pastTheEnd()),
+                        SECOND_PAGE, null),
                 Arguments.of("links.next missing before the total", UNLIMITED_PAGES,
                         Registry.of(FIRST, page(4, null, "did:a", "did:b")), 1, null),
                 Arguments.of("links.next without page[after]", UNLIMITED_PAGES,
@@ -176,6 +177,9 @@ class TrustedIssuersRegistryReaderTest {
                                 1, Mono.error(new HttpClientResponseException("unavailable",
                                         HttpResponse.status(HttpStatus.SERVICE_UNAVAILABLE)))),
                         SECOND_PAGE, HttpStatus.SERVICE_UNAVAILABLE.getCode()),
+                Arguments.of("non-2xx returned as a response", UNLIMITED_PAGES,
+                        Registry.of(FIRST, Mono.just(HttpResponse.status(HttpStatus.NOT_FOUND))),
+                        1, HttpStatus.NOT_FOUND.getCode()),
                 Arguments.of("connection error", UNLIMITED_PAGES,
                         Registry.of(FIRST, Mono.error(new HttpClientException("Connect Error"))), 1, null),
                 Arguments.of("no response", UNLIMITED_PAGES, Registry.of(FIRST, Mono.empty()), 1, null),
@@ -190,7 +194,7 @@ class TrustedIssuersRegistryReaderTest {
                         Registry.of(FIRST, page(1, null, "did:a", "did:b")), 1, null),
                 Arguments.of("duplicate DID across pages", UNLIMITED_PAGES,
                         Registry.of(FIRST, page(4, next(PAGE_SIZE, 1), "did:a", "did:b"),
-                                1, page(4, null, "did:b", "did:c")), 1, null),
+                                1, page(4, null, "did:b", "did:c")), SECOND_PAGE, null),
                 Arguments.of("blank DID", UNLIMITED_PAGES, Registry.of(FIRST, page(2, null, "did:a", " ")), 1, null),
                 Arguments.of("one page more than max-pages", MAX_PAGES,
                         Registry.of(FIRST, page(5, next(PAGE_SIZE, 1), "did:a", "did:b"),
