@@ -122,6 +122,19 @@ Lay the foundation: no behaviour yet.
   - `maxRemovalsPerCycle` (`5`; Javadoc states it counts all DIDs missing from the snapshot at once, including those
     still awaiting confirmation)
 
+  All of these except `enabled` can be refreshed, so a bad value cannot be rejected after startup. Each bounded field
+  therefore gets an `effective*()` method on `TirWatcherSettings`. The reader and the watcher use only these, and read
+  them on every cycle. They clamp the value to its range, using named constants:
+  - `pageSize` to `1..100` (`MIN_PAGE_SIZE`, `MAX_PAGE_SIZE` = the spec's `page[size]` range). A strict registry would
+    answer 400 to an out-of-range value, and every cycle would end `incomplete`.
+  - `maxPages` to `>= 1`.
+  - `confirmations` to `>= 1`.
+  - `maxRemovalsPerCycle` to `>= 0`. `0` is allowed on purpose and documented: every removal trips the breaker, so
+    nothing is announced without an operator raising the cap (a manual-approval mode).
+  The startup guard (step 5) rejects out-of-range values at startup with a `ConfigurationException` naming the key, so
+  a misconfiguration fails loudly at first. A refresh that sets one is clamped instead, and the Javadoc and README
+  say so.
+
   Add `public static class TirWatcherCondition implements Condition`, true iff `publisher.enabled && tirWatcher.enabled`.
 - `bean/TirWatcherBeanFactory.java` (`@Factory`): a `@Named("tir-watcher") TaskScheduler` built from
   `@Named("tir-watcher") ScheduledExecutorService`, mirroring `NotificationBeanFactory`. Annotate the bean with
@@ -130,7 +143,9 @@ Lay the foundation: no behaviour yet.
   `TIR_MASS_REMOVAL("tir_mass_removal")`. Add `exception/TirEnumerationException extends ContractManagementException`
   (reason `TIR_ENUMERATION_FAILED`; fields `page`, nullable `status`; keeps the cause).
 - Tests: extend `configuration/DataSpaceEventsPropertiesTest` with a parameterized test of the `tir-watcher.*` defaults
-  and binding, and a test of `TirWatcherCondition`, which needs both flags.
+  and binding, a test of `TirWatcherCondition`, which needs both flags, and a parameterized test of the `effective*()`
+  clamping (e.g. page size 0 → 1 and 500 → 100, max pages 0 → 1, confirmations 0 → 1, cap -1 → 0 and 0 → 0, and
+  in-range values unchanged).
 - Acceptance: `mvn clean package -DskipTests` generates the `org.fiware.iam.tir.*` sources, and `mvn test` is green.
 
 ### Step 2: Complete-enumeration reader for the TIR
@@ -186,8 +201,8 @@ Lay the foundation: no behaviour yet.
 - New `dataspace/TirWatcher.java` (`@Slf4j @Singleton`, `@Requires(condition = TirWatcherCondition.class)`; injects
   `TrustedIssuersRegistryReader`, `OwnEventPublisher`, `DataSpaceEventsProperties`, `Clock`, `Optional<MeterRegistry>`).
   It defines `PARTICIPANT_REMOVED_TYPE`, the metric/tag name constants and an `enum Outcome` (lower-case name = tag
-  value). `Outcome cycle()` implements the *Cycle algorithm* above. It reads `confirmations` (values < 1 are treated as
-  1) and `maxRemovalsPerCycle` from the bean at the start of each cycle. It is `synchronized`, or guarded by a single
+  value). `Outcome cycle()` implements the *Cycle algorithm* above. It reads `effectiveConfirmations()` and
+  `effectiveMaxRemovalsPerCycle()` (clamped, see step 1) from the bean at the start of each cycle. It is `synchronized`, or guarded by a single
   thread, so that a cycle never overlaps another. It also exposes a read-only `Status` record (last outcome, last
   complete cycle `Instant`, snapshot size, pending size, undelivered size, alert active) for the health indicator.
   - Logging: INFO for each announced removal (`Participant <did> removed from the trust anchor registry, published to N matching subscriptions.`).
@@ -235,16 +250,17 @@ Lay the foundation: no behaviour yet.
   interval applies; cap the delay like `DataSpaceEventSubscriber.capped`). Any `Throwable` from a cycle is logged and
   the chain continues. Stop on `@PreDestroy`.
 - Startup guard: `dataspace/TirWatcherStartupGuard` (`@Context`). When `tir-watcher.enabled` is true but
-  `publisher.enabled` is false, or no own participant id / `general.did` is set, fail startup with a clear
-  `ConfigurationException`. It follows `SubscriberStartupGuard`, **but** is conditioned on `tir-watcher.enabled`
+  `publisher.enabled` is false, or no own participant id / `general.did` is set, or a bounded `tir-watcher.*` value is
+  outside its range (see step 1), fail startup with a clear `ConfigurationException` naming the key. It follows `SubscriberStartupGuard`, **but** is conditioned on `tir-watcher.enabled`
   alone (`@Requires(property = "dataspace.events.tir-watcher.enabled", value = "true")`), not on
   `TirWatcherCondition`: that condition needs `publisher.enabled`, so the guard would not exist in exactly the case it
   must reject.
 - Health: `dataspace/TirWatcherHealthIndicator` (`@Requires(condition = TirWatcherCondition.class)`), in the style of
   `DataSpaceSubscriptionHealthIndicator`. It reports DEGRADED while an alert is active, or when there has been no
   successful cycle (outcome `complete` or `initial`) for `3 × interval` (named constant). Before the first successful
-  cycle the baseline is the instant the watcher was started (taken from the `Clock` when the first cycle is scheduled),
-  so the initial delay does not report DEGRADED. `TirWatcher.Status` carries that start instant. It is UP otherwise,
+  cycle the baseline is the instant the first cycle is due: the `Clock` instant when it is scheduled plus the
+  `initialDelay` used for that scheduling. So the initial delay never reports DEGRADED, even when `initial-delay` is
+  longer than `3 × interval`. `TirWatcher.Status` carries that first-cycle-due instant. It is UP otherwise,
   and the details come from `TirWatcher.Status`, plus a `reason` detail (`tir_empty`, `tir_mass_removal` or
   `no_successful_cycle`). DEGRADED is a **shared constant** with a neutral description, so the aggregate never sees
   two different DEGRADED values and `/health` never shows the subscription text for a TIR alert: add
@@ -259,8 +275,11 @@ Lay the foundation: no behaviour yet.
     and after an exception; a changed interval is applied
   - parameterized startup-guard test over (tir-watcher enabled, publisher enabled, own id set): fails for
     watcher on + publisher off, and for watcher on + no own id; starts otherwise (including watcher off + publisher off)
-  - health-indicator test over UP/DEGRADED, including UP during the initial delay and DEGRADED after `3 × interval`
-    without a successful cycle
+  - health-indicator test over UP/DEGRADED, including UP during the initial delay, UP during an initial delay longer
+    than `3 × interval` (e.g. `initial-delay` 5m, interval 1m, checked at 4m), and DEGRADED after `3 × interval`
+    past the first-cycle-due instant without a successful cycle
+  - the parameterized startup-guard test also covers an out-of-range `page-size`, `max-pages`, `confirmations` and
+    `max-removals-per-cycle` (fails) and `max-removals-per-cycle: 0` (starts)
 - Docs:
   - `README.md`: a new `#### Watching the trust anchor registry` section under `### Data space events`. It covers
     what is detected, latency ≈ `confirmations × interval`, every safeguard and its config key, the alerts (log
@@ -272,7 +291,9 @@ Lay the foundation: no behaviour yet.
     the delivery semantics (a confirmed removal is retried every cycle until it matched at least one subscription;
     a delivery that overflows or fails after that is not retried by the watcher; subscribers that register later
     do not get it), and the cursor format (`page[after]` from `links.next` must be an integer; a registry with string
-    cursors never completes an enumeration and logs WARN every cycle).
+    cursors never completes an enumeration and logs WARN every cycle), and the value ranges (`page-size` 1..100,
+    `max-pages` >= 1, `confirmations` >= 1, `max-removals-per-cycle` >= 0 where 0 holds back every removal for
+    the operator; out of range fails startup, and is clamped after a refresh).
   - Commented `tir-watcher:` block in the `dataspace.events` example of `src/main/resources/application.yaml`.
   - `AGENTS.md`: list `TirWatcher`/`TrustedIssuersRegistryReader` and `api` → `org.fiware.iam.tir.*`.
 - Acceptance: `mvn test` is green. A k3s IT is out of scope: the k3s CM deployment is
