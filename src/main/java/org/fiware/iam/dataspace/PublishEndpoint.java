@@ -11,13 +11,8 @@ import io.micronaut.management.endpoint.annotation.Write;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
-import org.fiware.iam.configuration.GeneralProperties;
-import org.fiware.iam.events.model.DataSpaceEventVO;
 
-import java.time.Clock;
-import java.util.UUID;
-
-import static io.micronaut.http.MediaType.APPLICATION_JSON;
+import java.util.Optional;
 
 /**
  * Internal {@code POST :9090/events}: Allows to send events to external subscribers.
@@ -31,10 +26,7 @@ public class PublishEndpoint {
 
     static final String ID = "events";
 
-    private final EventDelivery eventDelivery;
-    private final DataSpaceEventsProperties properties;
-    private final GeneralProperties generalProperties;
-    private final Clock clock;
+    private final OwnEventPublisher ownEventPublisher;
 
     @Write
     public HttpResponse<PublishedEvent> publish(@Nullable String type, @Nullable String subject, @Nullable Object data,
@@ -42,25 +34,15 @@ public class PublishEndpoint {
         if (type == null || type.isBlank()) {
             return HttpResponse.badRequest();
         }
-        String source = properties.ownId(generalProperties);
+        Optional<PublishedEvent> published = ownEventPublisher.publish(type, subject, plain(data), id);
         // receivers reject an event without source, after the 202 the caller would never learn about the drop
-        if (source == null || source.isBlank()) {
+        if (published.isEmpty()) {
             log.error("Cannot publish event of type {}: neither dataspace.events.own-participant-id nor general.did is set.", type);
             return HttpResponse.status(HttpStatus.SERVICE_UNAVAILABLE);
         }
-        DataSpaceEventVO event = new DataSpaceEventVO()
-                .specversion(DataSpaceEventVO.Specversion._1_0)
-                .id(id == null || id.isBlank() ? UUID.randomUUID().toString() : id)
-                .source(source)
-                .type(type)
-                .subject(subject)
-                .time(clock.instant())
-                .dataspaceid(properties.getDataspaceId())
-                .datacontenttype(APPLICATION_JSON)
-                .data(plain(data));
-        int subscriptions = eventDelivery.publish(event);
-        log.info("Published event {} of type {} to {} subscriptions.", event.getId(), type, subscriptions);
-        return HttpResponse.accepted().body(new PublishedEvent(event.getId(), subscriptions));
+        PublishedEvent event = published.get();
+        log.info("Published event {} of type {} to {} subscriptions.", event.id(), type, event.subscriptions());
+        return HttpResponse.accepted().body(event);
     }
 
     // endpoint arguments bind untyped values as JSON tree nodes; deliveries serialize plain maps, lists and scalars
