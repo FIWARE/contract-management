@@ -56,8 +56,7 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
      `snapshot == null` step 3 takes `C = {}` as the initial snapshot, and with an empty `snapshot` step 5 runs
      normally (nothing is missing). This narrows the ticket's 'empty registry → alert' to the case that can be a
      wiped TIR, so a fresh trust anchor is not DEGRADED; the empty start is still made visible by a single WARN
-     (step 3). **Open question for the ticket owner:** this narrowing is not confirmed yet, so step 4 must not
-     be implemented before it is (see *Open questions*).
+     (step 3). The ticket owner confirmed this reading on PR #8.
   3. `snapshot == null`: set `snapshot = C` (possibly empty), emit nothing, log INFO with the size, outcome `initial`.
      If `C` is empty, log WARN once instead (`The trust anchor registry is empty; nothing to watch yet.`), without
      the alert or DEGRADED health. Later cycles that stay empty from the start log nothing above DEBUG.
@@ -111,14 +110,6 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   `CompositeMeterRegistry` fallback, as `EventListener` does. Never use DIDs as tag values.
 - Use the doc density of the existing `dataspace/` classes: one-line class Javadoc, Javadoc on configuration
   fields, no `@param`/`@return`.
-
-### Open questions (ticket owner)
-- **Empty registry from the start.** The ticket says 'an empty registry → nothing emitted, alert'. This plan alerts
-  only when the registry goes from non-empty to empty; a TIR that is empty from the start logs one WARN, without the
-  alert or DEGRADED (cycle step 3). Step 4 waits for the owner's confirmation. If the literal reading is wanted, an
-  empty `C` raises `tir_empty` also when `snapshot` is null or empty (outcome `empty`, no initial snapshot taken),
-  the 'empty from the start' scenario of step 4 expects `empty`, `empty`, `initial` with the alert active until `{A}`,
-  and the README describes a fresh trust anchor as DEGRADED until its first participant is registered.
 
 ## Steps
 
@@ -232,7 +223,7 @@ Lay the foundation: no behaviour yet.
 ### Step 4: TirWatcher diff, safeguards and acceptance tests
 - New `dataspace/TirWatcher.java` (`@Slf4j @Singleton`, `@Requires(condition = TirWatcherCondition.class)`; injects
   `TrustedIssuersRegistryReader`, `OwnEventPublisher`, `SubscriptionRegistry`, `DataSpaceEventsProperties`, `Clock`,
-  `Optional<MeterRegistry>`). Before writing it, confirm that the open question above is answered.
+  `Optional<MeterRegistry>`).
   It defines `PARTICIPANT_REMOVED_TYPE`, the metric/tag name constants and an `enum Outcome` (lower-case name = tag
   value). `Outcome cycle()` implements the *Cycle algorithm* above. It reads `effectiveConfirmations()` and
   `effectiveMaxRemovalsPerCycle()` (clamped, see step 1) from the bean at the start of each cycle. It is `synchronized`, or guarded by a single
@@ -275,9 +266,13 @@ Lay the foundation: no behaviour yet.
     cycle 3, although no single cycle removed more than 5
   - breaker remedy (confirmations 2, cap 2): `{A,B,C,D}`, `{A}` (breaker), `{A}` with cap 5, `{A}` with cap back to 2
     → breaker again, nothing emitted. Variant keeping cap 5 for two cycles → B, C, D emitted on the second raised cycle
-  - no subscriptions: confirmations 1, `{A,B}`, `{A}` with delivery count 0, `{A}` with count 1 → B published on cycles 2
-    and 3, announced (metric) once, `undelivered` empty afterwards. Variant: `{A,B}`, `{A}` (count 0), `{A,B}` → B
-    dropped from `undelivered`, not published again
+  - no subscriptions: confirmations 1, `{A,B}`, `{A}` with `active` empty, `{A}` with `active` returning one
+    subscription of A (count 1) → `publish` not called on cycle 2 (WARN once, B kept in `undelivered`), B published
+    on cycle 3, announced (metric) once, `undelivered` empty afterwards. Variant: `{A,B}`, `{A}` with `active` empty,
+    `{A,B}` → B dropped from `undelivered`, never published
+  - check/publish race: confirmations 1, `{A,B}`, `{A}` with `active` returning one subscription of A but `publish`
+    returning 0 (it expired in between), `{A}` with count 1 → B published on cycles 2 and 3, announced (metric) once,
+    `undelivered` empty afterwards
   - only the removed participant subscribed: confirmations 1, `{A,B}`, `{A}` with B as the only active subscriber,
     `{A}` with A subscribed too (count 2) → B not published on cycle 2 (WARN once), published on cycle 3, announced
     once
