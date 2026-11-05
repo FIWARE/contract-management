@@ -41,8 +41,8 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   (outcome `incomplete`, WARN every cycle).
 - **State (in memory only).** `snapshot` is a `Set<String>`, or null before the first complete cycle. `pending` is a
   `Map<String,Integer>` from a missing DID to the number of consecutive complete cycles it has been missing.
-  `undelivered` is a `Set<String>` of confirmed removals that have not yet matched any subscription (see
-  step 5 of the cycle). A restart loses all three, so the first cycle after a restart is silent. Removals that happen while CM is
+  `undelivered` is a `Set<String>` of confirmed removals that have not yet matched a subscription of another
+  participant (see step 5 of the cycle). A restart loses all three, so the first cycle after a restart is silent. Removals that happen while CM is
   down are not announced; document this as accepted.
 - **Cycle algorithm** (C = DIDs of a complete enumeration):
   1. Incomplete enumeration: change no state, emit nothing, log WARN once with `DownstreamError.reason(e)`, outcome
@@ -56,7 +56,8 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
      `snapshot == null` step 3 takes `C = {}` as the initial snapshot, and with an empty `snapshot` step 5 runs
      normally (nothing is missing). This narrows the ticket's 'empty registry → alert' to the case that can be a
      wiped TIR, so a fresh trust anchor is not DEGRADED; the empty start is still made visible by a single WARN
-     (step 3).
+     (step 3). **Open question for the ticket owner:** this narrowing is not confirmed yet, so step 4 must not
+     be implemented before it is (see *Open questions*).
   3. `snapshot == null`: set `snapshot = C` (possibly empty), emit nothing, log INFO with the size, outcome `initial`.
      If `C` is empty, log WARN once instead (`The trust anchor registry is empty; nothing to watch yet.`), without
      the alert or DEGRADED health. Later cycles that stay empty from the start log nothing above DEBUG.
@@ -74,15 +75,24 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
      freezes `pending`.
   5. Otherwise, drop from `pending` and from `undelivered` every DID that is in C again (reappeared), and increment
      `pending` for every DID in `missing`. Each DID with `pending >= confirmations` is removed from `snapshot` and
-     `pending` and added to `undelivered`. Then publish every DID in `undelivered`; a DID leaves `undelivered` only
-     when `EventDelivery.publish` returns at least 1. That count is the number of **matching subscriptions**, not of
+     `pending` and added to `undelivered`. Then, for every DID in `undelivered`, count the **other** subscriptions:
+     `SubscriptionRegistry.active(PARTICIPANT_REMOVED_TYPE)` without those whose `subscriberId` equals the removed
+     DID. The registry does not filter by subscriber, and the removed participant's own lease stays active until it
+     expires, so in the lease-gap/restart case it may be the only match; the announcement is meant for the
+     remaining participants. If there are no other subscriptions, do not publish (the removed participant would get
+     the event again on every cycle) and keep the DID. Otherwise publish it; it leaves `undelivered` only when
+     `EventDelivery.publish` returns at least 1. Checking and publishing are not atomic: another participant's
+     subscription that expires in between is the same as one that expires right after queueing (accepted). The
+     `subscriberId` is the participant id from `ParticipantResolver`; step 4 verifies it has the DID form the TIR
+     lists, otherwise this filter matches nothing and only lets the DID go a cycle early. `SubscriptionRegistry.active`
+     is already public, so no new accessor is needed. The count of `publish` is the number of **matching subscriptions**, not of
      successful queue offers: per its Javadoc it includes subscriptions whose queue overflowed (`OVERFLOW`,
      `OVERFLOW_STARTED`) or closed concurrently (`CLOSED`). So a count of 1 whose only queue overflowed takes the DID
      out of `undelivered`, and the removal is lost for that subscriber. Matched is not delivered either: delivery is
      asynchronous, and if it exhausts its retries afterwards the removal is lost too. Both are accepted. The watcher
      does not retry them: an overflowing subscriber already loses other events, and redelivery after queueing is the
-     delivery's own retry policy. `EventDelivery.publish` and its CM-2 contract stay unchanged. A count of 0 (no subscription, e.g. after a publisher
-     restart or in a subscriber's lease gap) or an empty `Optional` (no source) keeps it there for the next complete
+     delivery's own retry policy. `EventDelivery.publish` and its CM-2 contract stay unchanged. No other
+     subscription, a count of 0 (no subscription, e.g. after a publisher restart or in a subscriber's lease gap) or an empty `Optional` (no source) keeps it there for the next complete
      cycle, so a removal is not lost just because nobody was listening at that moment. `undelivered` DIDs are no
      longer in `snapshot`, so they never count towards the breaker. Finally add `C \ snapshot` (additions, never
      announced). Outcome `complete`.
@@ -101,6 +111,14 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   `CompositeMeterRegistry` fallback, as `EventListener` does. Never use DIDs as tag values.
 - Use the doc density of the existing `dataspace/` classes: one-line class Javadoc, Javadoc on configuration
   fields, no `@param`/`@return`.
+
+### Open questions (ticket owner)
+- **Empty registry from the start.** The ticket says 'an empty registry → nothing emitted, alert'. This plan alerts
+  only when the registry goes from non-empty to empty; a TIR that is empty from the start logs one WARN, without the
+  alert or DEGRADED (cycle step 3). Step 4 waits for the owner's confirmation. If the literal reading is wanted, an
+  empty `C` raises `tir_empty` also when `snapshot` is null or empty (outcome `empty`, no initial snapshot taken),
+  the 'empty from the start' scenario of step 4 expects `empty`, `empty`, `initial` with the alert active until `{A}`,
+  and the README describes a fresh trust anchor as DEGRADED until its first participant is registered.
 
 ## Steps
 
@@ -213,7 +231,8 @@ Lay the foundation: no behaviour yet.
 
 ### Step 4: TirWatcher diff, safeguards and acceptance tests
 - New `dataspace/TirWatcher.java` (`@Slf4j @Singleton`, `@Requires(condition = TirWatcherCondition.class)`; injects
-  `TrustedIssuersRegistryReader`, `OwnEventPublisher`, `DataSpaceEventsProperties`, `Clock`, `Optional<MeterRegistry>`).
+  `TrustedIssuersRegistryReader`, `OwnEventPublisher`, `SubscriptionRegistry`, `DataSpaceEventsProperties`, `Clock`,
+  `Optional<MeterRegistry>`). Before writing it, confirm that the open question above is answered.
   It defines `PARTICIPANT_REMOVED_TYPE`, the metric/tag name constants and an `enum Outcome` (lower-case name = tag
   value). `Outcome cycle()` implements the *Cycle algorithm* above. It reads `effectiveConfirmations()` and
   `effectiveMaxRemovalsPerCycle()` (clamped, see step 1) from the bean at the start of each cycle. It is `synchronized`, or guarded by a single
@@ -221,10 +240,12 @@ Lay the foundation: no behaviour yet.
   up to `max-pages × read-timeout`, so nothing outside the cycle may take it. The watcher therefore publishes an
   immutable `Status` record (last outcome, last successful cycle `Instant`, first-cycle-due `Instant`, snapshot
   size, pending size, undelivered size, alert active) through a `volatile` field (or `AtomicReference`). It is
-  set when the first cycle is scheduled and replaced at the end of every cycle, and `status()` only reads that
-  field: it never takes the lock and never touches the mutable `snapshot`/`pending`/`undelivered` collections.
+  initialised in the constructor to `Status.NOT_SCHEDULED` (no outcome, first-cycle-due `null`), so `status()`
+  never returns null, even when `/health` is called before `ServerStartupEvent`. It is replaced when the first cycle
+  is scheduled and at the end of every cycle, and `status()` only reads that field: it never takes the lock and never touches the mutable `snapshot`/`pending`/`undelivered` collections.
   - Logging: INFO for each announced removal (`Participant <did> removed from the trust anchor registry, published to N matching subscriptions.`).
-  - Logging: WARN once when a confirmed removal reached 0 subscriptions and is kept for retry; DEBUG on later retries,
+  - Logging: WARN once when a confirmed removal has no subscription of another participant, or reached 0
+    subscriptions, and is kept for retry; DEBUG on later retries,
     so a publisher without subscriptions does not log every interval.
   - Logging: one WARN per incomplete cycle (`DownstreamError.reason(e)`, exception attached).
   - Logging: one ERROR when an alert is raised (`FailureReason.TIR_EMPTY/TIR_MASS_REMOVAL.format(...)` with the
@@ -257,8 +278,14 @@ Lay the foundation: no behaviour yet.
   - no subscriptions: confirmations 1, `{A,B}`, `{A}` with delivery count 0, `{A}` with count 1 → B published on cycles 2
     and 3, announced (metric) once, `undelivered` empty afterwards. Variant: `{A,B}`, `{A}` (count 0), `{A,B}` → B
     dropped from `undelivered`, not published again
+  - only the removed participant subscribed: confirmations 1, `{A,B}`, `{A}` with B as the only active subscriber,
+    `{A}` with A subscribed too (count 2) → B not published on cycle 2 (WARN once), published on cycle 3, announced
+    once
   - additions are never announced: `{A}`, `{A,B}`
   - the empty-from-the-start scenario also asserts exactly one WARN and no ERROR
+  - unless stated otherwise, the mocked `SubscriptionRegistry.active` returns one subscription of a participant
+    that is not removed
+  - `status()` of a freshly constructed watcher is `Status.NOT_SCHEDULED`, never null
 - Also assert the event arguments (type, subject = DID, data `participantId`) and the metric counts per outcome.
 
 ### Step 5: Scheduling, startup guard, health and documentation
@@ -279,7 +306,9 @@ Lay the foundation: no behaviour yet.
   successful cycle (outcome `complete` or `initial`) for `3 × effectiveInterval()` (named constant). Before the first successful
   cycle the baseline is the instant the first cycle is due: the `Clock` instant when it is scheduled plus the
   `effectiveInitialDelay()` used for that scheduling. So the initial delay never reports DEGRADED, even when `initial-delay` is
-  longer than `3 × interval`. `TirWatcher.Status` carries that first-cycle-due instant. The indicator reads only
+  longer than `3 × interval`. `TirWatcher.Status` carries that first-cycle-due instant. While it is
+  `Status.NOT_SCHEDULED` (first-cycle-due `null`, before `ServerStartupEvent`), the indicator reports UP with
+  `state: not_scheduled` in its details. The indicator reads only
   `TirWatcher.status()` (the `volatile` snapshot, see step 4), so `/health` never waits for a cycle blocked on a slow
   registry; such a cycle shows up as `no_successful_cycle` once `3 × interval` has passed. It is UP otherwise,
   and the details come from `TirWatcher.Status`, plus a `reason` detail (`tir_empty`, `tir_mass_removal` or
@@ -297,7 +326,8 @@ Lay the foundation: no behaviour yet.
     after the default interval and the chain continues
   - parameterized startup-guard test over (tir-watcher enabled, publisher enabled, own id set): fails for
     watcher on + publisher off, and for watcher on + no own id; starts otherwise (including watcher off + publisher off)
-  - health-indicator test over UP/DEGRADED, including UP during the initial delay, UP during an initial delay longer
+  - health-indicator test over UP/DEGRADED, including UP with `state: not_scheduled` before the first cycle is
+    scheduled (indicator called directly on a fresh watcher), UP during the initial delay, UP during an initial delay longer
     than `3 × interval` (e.g. `initial-delay` 5m, interval 1m, checked at 4m), and DEGRADED after `3 × interval`
     past the first-cycle-due instant without a successful cycle; with a refreshed `interval: PT0S` the default
     interval is used (no immediate DEGRADED)
@@ -314,7 +344,8 @@ Lay the foundation: no behaviour yet.
     `POST :9090/refresh` and keep it raised for at least `confirmations` cycles, ≈ `confirmations × interval`, before
     lowering it again), the empty-registry behaviour (an empty TIR from the start logs one WARN, no alert; going to empty is alerted
     and never acted on, so removing the last participant is not announced), the restart/first-cycle behaviour, and
-    the delivery semantics (a confirmed removal is retried every cycle until it matched at least one subscription;
+    the delivery semantics (a confirmed removal is retried every cycle until it matched at least one subscription
+    of a participant other than the removed one;
     a delivery that overflows or fails after that is not retried by the watcher; subscribers that register later
     do not get it), and the cursor format (`page[after]` from `links.next` must be an integer; a registry with string
     cursors never completes an enumeration and logs WARN every cycle), and the value ranges (`page-size` 1..100,
