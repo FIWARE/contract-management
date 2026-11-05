@@ -21,7 +21,11 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   nobody reads 'cursor' as 'any cursor format works'. The first request sends no
   `page[after]` (the registry's own default first page). Each further request sends the `page[after]` and `page[size]`
   values parsed from the **query** of the previous page's `links.next`, through the generated client against the
-  configured `trusted-issuers-registry` service. The host and path of `links.next` are ignored: they are built from the
+  configured `trusted-issuers-registry` service. The link's `page[size]` is sent back because an offset-style cursor
+  is only valid together with the size it was computed for. If the link has no `page[size]` or one that does not
+  parse as an integer, the reader sends `effectivePageSize()`; a parseable value outside 1..100 is clamped to that
+  range like the configured one. Neither case is an error: the count == `total` check still catches a page that the
+  changed size made the registry skip. The host and path of `links.next` are ignored: they are built from the
   registry's own view of its host (`getHrefUri` in FIWARE TIL) and may not be reachable from CM. FIWARE TIL emits
   `links.next` only while `page.hasNext()`. An empty page (an empty registry, or a page past the end) answers
   `{items:[], total:0, pageSize:0}` **without `links`**, so the `total` of an empty page means nothing.
@@ -47,6 +51,11 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
 - **Cycle algorithm** (C = DIDs of a complete enumeration):
   1. Incomplete enumeration: change no state, emit nothing, log WARN once with `DownstreamError.reason(e)`, outcome
      `incomplete`. Error cycles neither confirm nor refute a pending removal.
+     Steps 1, 2 and 4 also do **not** retry `undelivered`: that retry runs only in step 5, i.e. on `complete` cycles.
+     This is deliberate. While the registry is unreachable the watcher cannot tell whether a confirmed DID has
+     reappeared (which would drop it from `undelivered`), and while it is `empty` or `breaker` the registry is
+     suspected broken and is already alerted, so the watcher announces nothing until it is trusted again. The
+     retry resumes with the next `complete` cycle; nothing is lost, it is only delayed.
   2. `C` is empty **and `snapshot` is non-empty** (the registry went from participants to none): change no state,
      emit nothing, ALERT (`tir_empty`), outcome `empty`. An empty registry is far likelier a wiped or misconfigured
      TIR than the legitimate removal of every participant, so this is never acted on. Consequence (accepted,
@@ -187,6 +196,8 @@ Lay the foundation: no behaviour yet.
     answers any further page the way the real server does (`{items:[], total:0, pageSize:0}`), so a trailing request
     or a total check on it would fail the test
   - 1-based cursor: the first page's `links.next` carries `page[after]=2`; the reader requests exactly that value
+  - `page[size]` in `links.next`: present (e.g. 50) → sent as is; missing or not an integer → `effectivePageSize()`
+    sent; outside 1..100 (0, 500) → clamped to 1 / 100. All complete when the registry answers consistently
   - registry caps the page size: `page[size]=100` requested, every page returns 50 items with a `links.next` →
     complete, the short pages are not treated as end-of-list
   - registry shrank mid-enumeration: the second page answers `{items:[], total:0}` before the first-page `total` is
@@ -243,8 +254,10 @@ Lay the foundation: no behaviour yet.
     snapshot size and the missing count), DEBUG while it persists, INFO when it clears. A trust anchor stuck in an
     alert therefore does not log an ERROR every interval.
   - Logging: log-and-rethrow is forbidden.
-  - If `OwnEventPublisher` returns empty (no source), log ERROR and keep the DID in `undelivered`. Neither that nor a
-    count of 0 counts as announced in `dataspace.tir.removals`.
+  - If `OwnEventPublisher` returns empty (no source), keep the DID in `undelivered`. Log ERROR once when the
+    condition starts (`own-participant-id`/`general.did` emptied by a refresh; the startup guard rejects it at
+    startup), DEBUG while it persists, INFO when a later publish has a source again, like the alerts. Neither that
+    nor a count of 0 counts as announced in `dataspace.tir.removals`.
 - **Acceptance test** `dataspace/TirWatcherTest`: a single `@ParameterizedTest @MethodSource` over scenarios. Each
   scenario consists of the config (confirmations, cap), a sequence of cycles, each with the registry result (a
   `Set<String>` or a thrown `TirEnumerationException`), an optional cap override (applied to the properties bean
@@ -271,8 +284,12 @@ Lay the foundation: no behaviour yet.
     on cycle 3, announced (metric) once, `undelivered` empty afterwards. Variant: `{A,B}`, `{A}` with `active` empty,
     `{A,B}` → B dropped from `undelivered`, never published
   - check/publish race: confirmations 1, `{A,B}`, `{A}` with `active` returning one subscription of A but `publish`
-    returning 0 (it expired in between), `{A}` with count 1 → B published on cycles 2 and 3, announced (metric) once,
-    `undelivered` empty afterwards
+    returning 0 (it expired in between), `{A}` with count 1 → B published on cycles 2 and 3 (WARN once on cycle 2),
+    announced (metric) once, `undelivered` empty afterwards
+  - no source: confirmations 1, `{A,B}`, `{A}`, `{A}` with the publisher returning empty, `{A}` with count 1 → one
+    ERROR on cycle 2, none on cycle 3, INFO and B announced once on cycle 4
+  - retry waits for a complete cycle: confirmations 1, `{A,B}`, `{A}` with `active` empty, error with another
+    subscriber present, `{A}` → B not published on cycle 3 (outcome `incomplete`), published on cycle 4
   - only the removed participant subscribed: confirmations 1, `{A,B}`, `{A}` with B as the only active subscriber,
     `{A}` with A subscribed too (count 2) → B not published on cycle 2 (WARN once), published on cycle 3, announced
     once
@@ -339,8 +356,9 @@ Lay the foundation: no behaviour yet.
     `POST :9090/refresh` and keep it raised for at least `confirmations` cycles, ≈ `confirmations × interval`, before
     lowering it again), the empty-registry behaviour (an empty TIR from the start logs one WARN, no alert; going to empty is alerted
     and never acted on, so removing the last participant is not announced), the restart/first-cycle behaviour, and
-    the delivery semantics (a confirmed removal is retried every cycle until it matched at least one subscription
-    of a participant other than the removed one;
+    the delivery semantics (a confirmed removal is retried on every **complete** cycle until it matched at least
+    one subscription of a participant other than the removed one; while cycles end `incomplete`, `empty` or
+    `breaker` the retry waits, so an alert or an unreachable registry also delays already confirmed removals;
     a delivery that overflows or fails after that is not retried by the watcher; subscribers that register later
     do not get it), and the cursor format (`page[after]` from `links.next` must be an integer; a registry with string
     cursors never completes an enumeration and logs WARN every cycle), and the value ranges (`page-size` 1..100,
