@@ -13,27 +13,41 @@ trips on mass removals, an empty registry is alerted on, and the first snapshot 
   `https://raw.githubusercontent.com/FIWARE/trusted-issuers-list/main/api/trusted-issuers-registry.yaml`.
   It returns `{self, items:[{did, href}], total, pageSize, links}`. In FIWARE trusted-issuers-list,
   `page[after]` is a **0-based page number**, results are sorted by DID, `page[size]` is 1..100, and an empty registry
-  answers `{items:[], total:0, pageSize:0}` **without `links`**. Do not follow `links.next`: it is an absolute URL
-  built from the registry's own view of its host. Increment `page[after]` instead.
-- **Complete enumeration.** An enumeration is complete only if every page answered 2xx, every page reports the same
-  `total`, no DID is blank, the number of distinct DIDs collected equals `total`, and the page count stayed below
-  `max-pages`. Anything else is incomplete and throws. This also catches entries skipped by offset pagination
-  when the registry changes during the enumeration.
+  answers `{items:[], total:0, pageSize:0}` **without `links`**. The same `{items:[], total:0}` answer is given for
+  **any empty page, including a page past the end** (`TrustedIssuerRegistryController.getIssuersV4`), so the `total`
+  of an empty page means nothing. Do not follow `links.next`: it is an absolute URL built from the registry's own view
+  of its host. Increment `page[after]` instead.
+- **Complete enumeration.** The `total` of page 0 is authoritative. Paging stops as soon as the distinct DIDs
+  collected reach that `total` (so a registry of exactly N × `page-size` DIDs needs no trailing request), or at the
+  first short or empty page. An empty page after page 0 is end-of-list and its `total` is ignored. The enumeration is
+  complete only if every page answered 2xx, every **non-empty** page reports the page-0 `total`, no DID is blank, the
+  number of distinct DIDs collected equals the page-0 `total`, and the page count stayed below `max-pages`. Anything
+  else is incomplete and throws. The count check also catches entries skipped by offset pagination, and a registry
+  that shrank mid-enumeration (an early empty page leaves the count below `total`).
 - **State (in memory only).** `snapshot` is a `Set<String>`, or null before the first complete cycle. `pending` is a
   `Map<String,Integer>` from a missing DID to the number of consecutive complete cycles it has been missing.
-  A restart loses both, so the first cycle after a restart is silent. Removals that happen while CM is down are not
-  announced; document this as accepted.
+  `undelivered` is a `Set<String>` of confirmed removals that no subscription has received yet (see step 5 of the
+  cycle). A restart loses all three, so the first cycle after a restart is silent. Removals that happen while CM is
+  down are not announced; document this as accepted.
 - **Cycle algorithm** (C = DIDs of a complete enumeration):
   1. Incomplete enumeration: change no state, emit nothing, log WARN once with `DownstreamError.reason(e)`, outcome
      `incomplete`. Error cycles neither confirm nor refute a pending removal.
   2. `C` is empty: change no state, emit nothing, ALERT (`tir_empty`), outcome `empty`. This applies to the first cycle too.
   3. `snapshot == null`: set `snapshot = C`, emit nothing, log INFO with the size, outcome `initial`.
-  4. `missing = snapshot \ C`. If `missing.size() > maxRemovalsPerCycle`: change no state (snapshot and pending stay
-     as they are), emit nothing, ALERT (`tir_mass_removal`), outcome `breaker`. The breaker re-trips every cycle until
-     the operator raises the cap (refreshable) or the registry is restored.
-  5. Otherwise, drop from `pending` every DID that is in C again (reappeared), and increment `pending` for every DID in
-     `missing`. Each DID with `pending >= confirmations` is emitted and removed from both `snapshot` and `pending`.
-     Then add `C \ snapshot` (additions, never announced). Outcome `complete`.
+  4. `missing = snapshot \ C`. If `missing.size() > maxRemovalsPerCycle`: change no state (snapshot, pending and
+     undelivered stay as they are), emit nothing, ALERT (`tir_mass_removal`), outcome `breaker`. The breaker re-trips
+     every cycle until the operator raises the cap (refreshable) or the registry is restored. Because a tripped cycle
+     does not advance `pending`, a raised cap must stay in place for at least `confirmations` cycles
+     (≈ `confirmations × interval`) before the removals are announced; lowering it earlier re-trips the breaker and
+     freezes `pending`.
+  5. Otherwise, drop from `pending` and from `undelivered` every DID that is in C again (reappeared), and increment
+     `pending` for every DID in `missing`. Each DID with `pending >= confirmations` is removed from `snapshot` and
+     `pending` and added to `undelivered`. Then publish every DID in `undelivered`; a DID leaves `undelivered` only
+     when the publisher reached at least one subscription. A count of 0 (no subscription, e.g. after a publisher
+     restart or in a subscriber's lease gap) or an empty `Optional` (no source) keeps it there for the next complete
+     cycle, so a removal is not lost just because nobody was listening at that moment. `undelivered` DIDs are no
+     longer in `snapshot`, so they never count towards the breaker. Finally add `C \ snapshot` (additions, never
+     announced). Outcome `complete`.
 - **Event.** `type` is the constant `TirWatcher.PARTICIPANT_REMOVED_TYPE = "org.fiware.dataspace.participant.removed"`,
   which follows the repo's `org.fiware.dataspace.*` naming. `subject` is the removed DID, and `data` is
   `{"participantId": "<did>"}`. The source, id, time and dataspaceid are built the same way as in `PublishEndpoint`.
@@ -87,19 +101,24 @@ Lay the foundation: no behaviour yet.
 - New `dataspace/TrustedIssuersRegistryReader.java` (`@Singleton`, `@Requires(condition = TirWatcherCondition.class)`,
   injects the generated TIR client and `DataSpaceEventsProperties`). It exposes one method, `Set<String> enumerate()`,
   which blocks and is called from the watcher thread. It reads the page size and max-pages from the properties on
-  every call. It requests pages `page[after] = 0, 1, 2, …` until a page returns fewer items than requested, or none,
-  and enforces every rule under *Complete enumeration*. It throws `TirEnumerationException` on an
-  `HttpClientResponseException` (keep the status), a transport error, a missing/null body or items, a `total` that
-  changes between pages, a blank DID, a distinct count ≠ `total`, or `maxPages` being reached. An empty registry is
-  **not** an error: it returns an empty set, and the watcher decides what that means.
+  every call. It requests pages `page[after] = 0, 1, 2, …` and stops as soon as the distinct DIDs reach the page-0
+  `total`, or at the first page with fewer items than requested (an empty page after page 0 is end-of-list, its
+  `total:0` is ignored). It enforces every rule under *Complete enumeration*. It throws `TirEnumerationException` on an
+  `HttpClientResponseException` (keep the status), a transport error, a missing/null body or items, a non-empty page
+  whose `total` differs from page 0, a blank DID, a distinct count ≠ page-0 `total`, or `maxPages` being reached. An
+  empty registry is **not** an error: it returns an empty set, and the watcher decides what that means.
 - Unit test `dataspace/TrustedIssuersRegistryReaderTest`, with the client mocked and parameterized via `@MethodSource`:
-  - single page, multi-page, exact-multiple-of-page-size boundary, empty registry (no `links`)
-  - 5xx on page 2, connection error, `total` changing between pages, count ≠ total, duplicate DID across pages,
-    blank DID, max-pages exceeded
+  - single page, multi-page, empty registry (no `links`)
+  - exact multiple of the page size (e.g. 2 pages of `page-size`): complete after exactly 2 requests, and the mock
+    answers any further page the way the real server does (`{items:[], total:0, pageSize:0}`), so a trailing request
+    or a total check on it would fail the test
+  - registry shrank mid-enumeration: page 1 answers `{items:[], total:0}` before the page-0 `total` is reached → incomplete
+  - 5xx on page 2, connection error, `total` changing between non-empty pages, count ≠ total, duplicate DID across
+    pages, blank DID, max-pages exceeded
 - HTTP test `dataspace/TrustedIssuersRegistryReaderHttpTest` (`@MicronautTest`, a fake TIR `@Controller` guarded by
   `@Requires(property = "spec.name", …)`, in the style of `SubscriptionControllerHttpTest`). It checks that the generated
   client sends `page[size]`/`page[after]` correctly and deserializes a real multi-page response and the
-  empty-registry response.
+  empty-registry response. The fake answers a page past the end with `{items:[], total:0, pageSize:0}`, like upstream.
 - Acceptance: all reader tests pass, and no state is kept in the reader.
 
 ### Step 3: Reusable publishing of own events
@@ -122,17 +141,20 @@ Lay the foundation: no behaviour yet.
   value). `Outcome cycle()` implements the *Cycle algorithm* above. It reads `confirmations` (values < 1 are treated as
   1) and `maxRemovalsPerCycle` from the bean at the start of each cycle. It is `synchronized`, or guarded by a single
   thread, so that a cycle never overlaps another. It also exposes a read-only `Status` record (last outcome, last
-  complete cycle `Instant`, snapshot size, pending size, alert active) for the health indicator.
+  complete cycle `Instant`, snapshot size, pending size, undelivered size, alert active) for the health indicator.
   - Logging: INFO for each announced removal (`Participant <did> removed from the trust anchor registry, announced to N subscriptions.`).
+  - Logging: WARN once when a confirmed removal reached 0 subscriptions and is kept for retry; DEBUG on later retries,
+    so a publisher without subscriptions does not log every interval.
   - Logging: one WARN per incomplete cycle (`DownstreamError.reason(e)`, exception attached).
   - Logging: one ERROR per alert (`FailureReason.TIR_EMPTY/TIR_MASS_REMOVAL.format(...)` with the snapshot size and the missing count).
   - Logging: log-and-rethrow is forbidden.
-  - If `OwnEventPublisher` returns empty (no source), log ERROR, keep the DID pending so that it is retried next cycle,
-    and do not count it as announced.
+  - If `OwnEventPublisher` returns empty (no source), log ERROR and keep the DID in `undelivered`. Neither that nor a
+    count of 0 counts as announced in `dataspace.tir.removals`.
 - **Acceptance test** `dataspace/TirWatcherTest`: a single `@ParameterizedTest @MethodSource` over scenarios. Each
-  scenario consists of the config (confirmations, cap), a sequence of registry results per cycle (a `Set<String>` or
-  a thrown `TirEnumerationException`), the expected emitted DIDs, the expected outcomes per cycle, and the expected
-  alert state. Mock the reader and publisher, use `SimpleMeterRegistry`, and drive time with `MutableClock`. Scenarios:
+  scenario consists of the config (confirmations, cap), a sequence of cycles, each with the registry result (a
+  `Set<String>` or a thrown `TirEnumerationException`), an optional cap override (applied to the properties bean
+  before that cycle, as a refresh would) and the publisher's delivery count, plus the expected emitted DIDs, the
+  expected outcomes per cycle, and the expected alert state. Mock the reader and publisher, use `SimpleMeterRegistry`, and drive time with `MutableClock`. Scenarios:
   - clean removal: `{A,B,C}`, `{A,B}`, `{A,B}` → C emitted once on cycle 3 (confirmations 2); the confirmations=1
     variant emits on cycle 2
   - registry error mid-enumeration: `{A,B,C}`, error, error → nothing emitted, snapshot is still `{A,B,C}`. Variant
@@ -142,6 +164,11 @@ Lay the foundation: no behaviour yet.
   - restart: a fresh watcher whose first cycle is `{A}` → nothing emitted, outcome `initial`
   - over the cap: cap 2, `{A,B,C,D}`, `{A}` → nothing emitted, alert, outcome `breaker`, snapshot unchanged; at exactly
     the cap the removals proceed
+  - breaker remedy (confirmations 2, cap 2): `{A,B,C,D}`, `{A}` (breaker), `{A}` with cap 5, `{A}` with cap back to 2
+    → breaker again, nothing emitted. Variant keeping cap 5 for two cycles → B, C, D emitted on the second raised cycle
+  - no subscriptions: confirmations 1, `{A,B}`, `{A}` with delivery count 0, `{A}` with count 1 → B published on cycles 2
+    and 3, announced (metric) once, `undelivered` empty afterwards. Variant: `{A,B}`, `{A}` (count 0), `{A,B}` → B
+    dropped from `undelivered`, not published again
   - additions are never announced: `{A}`, `{A,B}`
 - Also assert the event arguments (type, subject = DID, data `participantId`) and the metric counts per outcome.
 
@@ -152,9 +179,12 @@ Lay the foundation: no behaviour yet.
   `initialDelay`, then self-reschedules each next cycle after the **current** `interval` (one-shot chain, so a refreshed
   interval applies; cap the delay like `DataSpaceEventSubscriber.capped`). Any `Throwable` from a cycle is logged and
   the chain continues. Stop on `@PreDestroy`.
-- Startup guard: when `tir-watcher.enabled` is true but `publisher.enabled` is false, or no own participant id /
-  `general.did` is set, fail startup with a clear message. Follow the pattern of `SubscriberStartupGuard`, so that a
-  misconfiguration does not silently do nothing.
+- Startup guard: `dataspace/TirWatcherStartupGuard` (`@Context`). When `tir-watcher.enabled` is true but
+  `publisher.enabled` is false, or no own participant id / `general.did` is set, fail startup with a clear
+  `ConfigurationException`. It follows `SubscriberStartupGuard`, **but** is conditioned on `tir-watcher.enabled`
+  alone (`@Requires(property = "dataspace.events.tir-watcher.enabled", value = "true")`), not on
+  `TirWatcherCondition`: that condition needs `publisher.enabled`, so the guard would not exist in exactly the case it
+  must reject.
 - Health: `dataspace/TirWatcherHealthIndicator` (`@Requires(condition = TirWatcherCondition.class)`), in the style of
   `DataSpaceSubscriptionHealthIndicator`. It reports DEGRADED while an alert is active, or when there has been no
   complete cycle for `3 × interval` (named constant). It is UP otherwise, and the details come from `TirWatcher.Status`.
@@ -163,13 +193,16 @@ Lay the foundation: no behaviour yet.
 - Tests:
   - scheduler tests with `RecordingTaskScheduler`: first cycle after the initial delay; rescheduling after success
     and after an exception; a changed interval is applied
-  - parameterized startup-guard test
+  - parameterized startup-guard test over (tir-watcher enabled, publisher enabled, own id set): fails for
+    watcher on + publisher off, and for watcher on + no own id; starts otherwise (including watcher off + publisher off)
   - health-indicator test over UP/DEGRADED
 - Docs:
   - `README.md`: a new `#### Watching the trust anchor registry` section under `### Data space events`. It covers
     what is detected, latency ≈ `confirmations × interval`, every safeguard and its config key, the alerts (log
     code, metric, health), the operator remedy for a tripped breaker (raise `max-removals-per-cycle` via
-    `POST :9090/refresh` for one cycle), and the restart/first-cycle behaviour.
+    `POST :9090/refresh` and keep it raised for at least `confirmations` cycles, ≈ `confirmations × interval`, before
+    lowering it again), the restart/first-cycle behaviour, and the delivery semantics (a confirmed removal is retried
+    every cycle until at least one subscription received it; subscribers that register later do not get it).
   - Commented `tir-watcher:` block in the `dataspace.events` example of `src/main/resources/application.yaml`.
   - `AGENTS.md`: list `TirWatcher`/`TrustedIssuersRegistryReader` and `api` → `org.fiware.iam.tir.*`.
 - Acceptance: `mvn test` is green. A k3s IT is out of scope: the k3s CM deployment is
