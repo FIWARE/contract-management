@@ -45,15 +45,9 @@ public class DataSpaceEventsProperties {
     public static final Duration DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL = Duration.ofMinutes(1);
     public static final Duration DEFAULT_TIR_WATCHER_INITIAL_DELAY = Duration.ofSeconds(30);
     public static final Duration DEFAULT_TIR_WATCHER_INTERVAL = Duration.ofMinutes(1);
-    /** Bounds of page[size] in the trusted issuers registry API. */
-    public static final int MIN_PAGE_SIZE = 1;
-    public static final int MAX_PAGE_SIZE = 100;
-    public static final int DEFAULT_TIR_WATCHER_PAGE_SIZE = MAX_PAGE_SIZE;
-    public static final int MIN_MAX_PAGES = 1;
+    public static final int DEFAULT_TIR_WATCHER_PAGE_SIZE = TirWatcherSettings.MAX_PAGE_SIZE;
     public static final int DEFAULT_TIR_WATCHER_MAX_PAGES = 1000;
-    public static final int MIN_CONFIRMATIONS = 1;
     public static final int DEFAULT_TIR_WATCHER_CONFIRMATIONS = 2;
-    public static final int MIN_MAX_REMOVALS_PER_CYCLE = 0;
     public static final int DEFAULT_TIR_WATCHER_MAX_REMOVALS_PER_CYCLE = 5;
 
     /**
@@ -399,6 +393,14 @@ public class DataSpaceEventsProperties {
     @Data
     @ConfigurationProperties("tir-watcher")
     public static class TirWatcherSettings {
+
+        // Bounds of page[size] in the trusted issuers registry API.
+        public static final int MIN_PAGE_SIZE = 1;
+        public static final int MAX_PAGE_SIZE = 100;
+
+        public static final int MIN_MAX_PAGES = 1;
+        public static final int MIN_CONFIRMATIONS = 1;
+        public static final int MIN_MAX_REMOVALS_PER_CYCLE = 0;
 
         /**
          * Enables the watcher. Requires the publisher. Evaluated at startup only.
