@@ -171,37 +171,52 @@ public class TirWatcher {
 
     private void announceUndelivered() {
         for (String did : List.copyOf(undelivered.keySet())) {
-            boolean othersSubscribed = subscriptionRegistry.active(PARTICIPANT_REMOVED_TYPE).stream()
-                    .anyMatch(subscription -> !did.equals(subscription.subscriberId()));
-            if (!othersSubscribed) {
-                keepForRetry(did, "no other participant subscribed");
-                continue;
+            try {
+                if (!announce(did)) {
+                    return;
+                }
+            } catch (RuntimeException e) {
+                // keeps the rest of the cycle (snapshot, alert, metric, status) intact
+                keepForRetry(did, "publishing failed: " + DownstreamError.reason(e), e);
             }
-            Optional<OwnEventPublisher.PublishedEvent> published =
-                    publisher.publish(PARTICIPANT_REMOVED_TYPE, did, Map.of(PARTICIPANT_ID_KEY, did), null);
-            if (published.isEmpty()) {
-                reportNoSource();
-                // without a source nothing can be published in this cycle
-                return;
-            }
-            reportSourceRestored();
-            int subscriptions = published.get().subscriptions();
-            if (subscriptions < MIN_ANNOUNCED_SUBSCRIPTIONS) {
-                keepForRetry(did, "it matched no subscription");
-                continue;
-            }
-            undelivered.remove(did);
-            meterRegistry.counter(REMOVALS_METRIC).increment();
-            log.info("Participant {} removed from the trust anchor registry, published to {} matching subscriptions.",
-                    did, subscriptions);
         }
     }
 
-    private void keepForRetry(String did, String why) {
+    /**
+     * Returns false when no source is configured, so no further removal can be published in this cycle.
+     */
+    private boolean announce(String did) {
+        boolean othersSubscribed = subscriptionRegistry.active(PARTICIPANT_REMOVED_TYPE).stream()
+                .anyMatch(subscription -> !did.equals(subscription.subscriberId()));
+        if (!othersSubscribed) {
+            keepForRetry(did, "no other participant subscribed", null);
+            return true;
+        }
+        Optional<OwnEventPublisher.PublishedEvent> published =
+                publisher.publish(PARTICIPANT_REMOVED_TYPE, did, Map.of(PARTICIPANT_ID_KEY, did), null);
+        if (published.isEmpty()) {
+            reportNoSource();
+            return false;
+        }
+        reportSourceRestored();
+        int subscriptions = published.get().subscriptions();
+        if (subscriptions < MIN_ANNOUNCED_SUBSCRIPTIONS) {
+            keepForRetry(did, "it matched no subscription", null);
+            return true;
+        }
+        undelivered.remove(did);
+        meterRegistry.counter(REMOVALS_METRIC).increment();
+        log.info("Participant {} removed from the trust anchor registry, published to {} matching subscriptions.",
+                did, subscriptions);
+        return true;
+    }
+
+    private void keepForRetry(String did, String why, @Nullable Throwable cause) {
         if (Boolean.TRUE.equals(undelivered.put(did, true))) {
-            log.debug("Removal of participant {} still not announced: {}.", did, why);
+            log.debug("Removal of participant {} still not announced: {}.", did, why, cause);
         } else {
-            log.warn("Removal of participant {} not announced yet: {}; retried on the next complete cycle.", did, why);
+            log.warn("Removal of participant {} not announced yet: {}; retried on the next complete cycle.", did, why,
+                    cause);
         }
     }
 

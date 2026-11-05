@@ -209,6 +209,11 @@ class TirWatcherTest {
                 scenario("only the removed participant subscribed",
                         ok("A", "B"), ok("A").subscribedBy("B"), ok("A").subscribedBy("B", "A").delivers(2))
                         .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE).published("3:B").warnings(1),
+                scenario("publish throws: the cycle completes and the removal is retried",
+                        ok("A", "B"), ok(), ok("A", "C").publishFails(), ok("A", "C").publishFails(), ok("A", "C"))
+                        .confirmations(1).outcomes(INITIAL, EMPTY, COMPLETE, COMPLETE, COMPLETE)
+                        .published("3:B", "4:B", "5:B").announced(1).snapshot(2).errors(1).warnings(1)
+                        .info("cleared"),
                 scenario("additions are never announced",
                         ok("A"), ok("A", "B"))
                         .outcomes(INITIAL, COMPLETE).snapshot(2));
@@ -234,6 +239,9 @@ class TirWatcherTest {
             assertEquals(TirWatcher.PARTICIPANT_REMOVED_TYPE, invocation.getArguments()[0]);
             assertEquals(Map.of(TirWatcher.PARTICIPANT_ID_KEY, did), invocation.getArguments()[2]);
             published.add(number + ":" + did);
+            if (cycle.fails) {
+                throw new IllegalStateException("delivery failed");
+            }
             return cycle.delivered == null
                     ? Optional.empty()
                     : Optional.of(new PublishedEvent(UUID.randomUUID().toString(), cycle.delivered));
@@ -261,34 +269,38 @@ class TirWatcherTest {
     }
 
     private static Cycle ok(String... dids) {
-        return new Cycle(Set.of(dids), null, List.of(OTHER), DELIVERED);
+        return new Cycle(Set.of(dids), null, List.of(OTHER), DELIVERED, false);
     }
 
     private static Cycle error() {
-        return new Cycle(null, null, List.of(OTHER), DELIVERED);
+        return new Cycle(null, null, List.of(OTHER), DELIVERED, false);
     }
 
     /**
      * One cycle: the registry answer (null = enumeration fails), a refreshed cap, the active subscribers of
-     * participant.removed, and how many subscriptions a publish matches (null = no source).
+     * participant.removed, and how many subscriptions a publish matches (null = no source) or whether it throws.
      */
     private record Cycle(@Nullable Set<String> registry, @Nullable Integer cap, List<String> subscribers,
-                         @Nullable Integer delivered) {
+                         @Nullable Integer delivered, boolean fails) {
 
         Cycle cap(int value) {
-            return new Cycle(registry, value, subscribers, delivered);
+            return new Cycle(registry, value, subscribers, delivered, fails);
         }
 
         Cycle subscribedBy(String... subscriberIds) {
-            return new Cycle(registry, cap, List.of(subscriberIds), delivered);
+            return new Cycle(registry, cap, List.of(subscriberIds), delivered, fails);
         }
 
         Cycle delivers(int count) {
-            return new Cycle(registry, cap, subscribers, count);
+            return new Cycle(registry, cap, subscribers, count, fails);
         }
 
         Cycle noSource() {
-            return new Cycle(registry, cap, subscribers, null);
+            return new Cycle(registry, cap, subscribers, null, fails);
+        }
+
+        Cycle publishFails() {
+            return new Cycle(registry, cap, subscribers, delivered, true);
         }
     }
 
