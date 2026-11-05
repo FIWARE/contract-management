@@ -14,7 +14,11 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   It returns `{self, items:[{did, href}], total, pageSize, links}`. The TIR is pluggable (that is why D-3 polls), so
   the reader must not depend on one implementation's cursor semantics: FIWARE trusted-issuers-list uses a 0-based page
   number, EBSI-style registries may start at 1, and a registry may cap `page[size]` below what was requested.
-  Therefore `page[after]` is treated as an **opaque cursor taken from `links.next`**. The first request sends no
+  Therefore `page[after]` is treated as a **cursor taken from `links.next`**, never computed by CM. It is opaque in
+  meaning but not in format: the spec types it `integer` (minimum 0), so the generated client takes an `Integer` and
+  the cursor must parse as one. This covers FIWARE TIL and 0- or 1-based registries. A registry whose cursor is a
+  real string fails the parse and stays `incomplete` (WARN) every cycle: this fails safe, and the README says so, so
+  nobody reads 'cursor' as 'any cursor format works'. The first request sends no
   `page[after]` (the registry's own default first page). Each further request sends the `page[after]` and `page[size]`
   values parsed from the **query** of the previous page's `links.next`, through the generated client against the
   configured `trusted-issuers-registry` service. The host and path of `links.next` are ignored: they are built from the
@@ -23,7 +27,9 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   `{items:[], total:0, pageSize:0}` **without `links`**, so the `total` of an empty page means nothing.
 - **Complete enumeration.** The `total` of the first page is authoritative. Paging stops as soon as the distinct DIDs
   collected reach that `total` (so no trailing request is made), or when a page has no `links.next` or is empty
-  (end-of-list; the `total` of an empty page is ignored). A short page is **not** an end-of-list signal, because the
+  (end-of-list; the `total` of an empty page is ignored). The exception is the **first** page: an empty first page
+  is an empty registry only if its `total` is 0 or absent. An empty first page with `total > 0` is incomplete, so a
+  misbehaving registry yields a WARN, not `C = {}` and the `empty` alert. A short page is **not** an end-of-list signal, because the
   registry may cap the page size. The enumeration is complete only if every page answered 2xx, every **non-empty**
   page reports the first page's `total`, no DID is blank, every `links.next` carries a parseable `page[after]` that has
   not been requested before in this enumeration, the number of distinct DIDs collected equals the first page's
@@ -34,7 +40,7 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   (outcome `incomplete`, WARN every cycle).
 - **State (in memory only).** `snapshot` is a `Set<String>`, or null before the first complete cycle. `pending` is a
   `Map<String,Integer>` from a missing DID to the number of consecutive complete cycles it has been missing.
-  `undelivered` is a `Set<String>` of confirmed removals that have not yet been queued for any subscription (see
+  `undelivered` is a `Set<String>` of confirmed removals that have not yet matched any subscription (see
   step 5 of the cycle). A restart loses all three, so the first cycle after a restart is silent. Removals that happen while CM is
   down are not announced; document this as accepted.
 - **Cycle algorithm** (C = DIDs of a complete enumeration):
@@ -64,9 +70,13 @@ trips on mass removals, a registry that turns empty is alerted on, and the first
   5. Otherwise, drop from `pending` and from `undelivered` every DID that is in C again (reappeared), and increment
      `pending` for every DID in `missing`. Each DID with `pending >= confirmations` is removed from `snapshot` and
      `pending` and added to `undelivered`. Then publish every DID in `undelivered`; a DID leaves `undelivered` only
-     when `EventDelivery.publish` queued it for at least one subscription. Queued is not delivered: delivery is
-     asynchronous, and if it exhausts its retries afterwards the removal is lost for that subscriber. The watcher does
-     not retry that; it is the delivery's own retry policy. A count of 0 (no subscription, e.g. after a publisher
+     when `EventDelivery.publish` returns at least 1. That count is the number of **matching subscriptions**, not of
+     successful queue offers: per its Javadoc it includes subscriptions whose queue overflowed (`OVERFLOW`,
+     `OVERFLOW_STARTED`) or closed concurrently (`CLOSED`). So a count of 1 whose only queue overflowed takes the DID
+     out of `undelivered`, and the removal is lost for that subscriber. Matched is not delivered either: delivery is
+     asynchronous, and if it exhausts its retries afterwards the removal is lost too. Both are accepted. The watcher
+     does not retry them: an overflowing subscriber already loses other events, and redelivery after queueing is the
+     delivery's own retry policy. `EventDelivery.publish` and its CM-2 contract stay unchanged. A count of 0 (no subscription, e.g. after a publisher
      restart or in a subscriber's lease gap) or an empty `Optional` (no source) keeps it there for the next complete
      cycle, so a removal is not lost just because nobody was listening at that moment. `undelivered` DIDs are no
      longer in `snapshot`, so they never count towards the breaker. Finally add `C \ snapshot` (additions, never
@@ -145,8 +155,11 @@ Lay the foundation: no behaviour yet.
     complete, the short pages are not treated as end-of-list
   - registry shrank mid-enumeration: the second page answers `{items:[], total:0}` before the first-page `total` is
     reached → incomplete
-  - `links.next` missing before `total` is reached, `links.next` without `page[after]`, and a `links.next` that repeats
-    an already requested cursor → incomplete
+  - `links.next` missing before `total` is reached, `links.next` without `page[after]`, a `links.next` whose
+    `page[after]` is not an integer (string cursor), and a `links.next` that repeats an already requested cursor →
+    incomplete
+  - empty first page: `{items:[], total:0}` and `{items:[]}` without `total` → empty set; `{items:[], total:5}` →
+    incomplete
   - 5xx on page 2, connection error, `total` changing between non-empty pages, count ≠ total, duplicate DID across
     pages, blank DID, max-pages exceeded
 - HTTP test `dataspace/TrustedIssuersRegistryReaderHttpTest` (`@MicronautTest`, a fake TIR `@Controller` guarded by
@@ -177,7 +190,7 @@ Lay the foundation: no behaviour yet.
   1) and `maxRemovalsPerCycle` from the bean at the start of each cycle. It is `synchronized`, or guarded by a single
   thread, so that a cycle never overlaps another. It also exposes a read-only `Status` record (last outcome, last
   complete cycle `Instant`, snapshot size, pending size, undelivered size, alert active) for the health indicator.
-  - Logging: INFO for each announced removal (`Participant <did> removed from the trust anchor registry, queued for N subscriptions.`).
+  - Logging: INFO for each announced removal (`Participant <did> removed from the trust anchor registry, published to N matching subscriptions.`).
   - Logging: WARN once when a confirmed removal reached 0 subscriptions and is kept for retry; DEBUG on later retries,
     so a publisher without subscriptions does not log every interval.
   - Logging: one WARN per incomplete cycle (`DownstreamError.reason(e)`, exception attached).
@@ -232,9 +245,13 @@ Lay the foundation: no behaviour yet.
   successful cycle (outcome `complete` or `initial`) for `3 × interval` (named constant). Before the first successful
   cycle the baseline is the instant the watcher was started (taken from the `Clock` when the first cycle is scheduled),
   so the initial delay does not report DEGRADED. `TirWatcher.Status` carries that start instant. It is UP otherwise,
-  and the details come from `TirWatcher.Status`. Reuse the existing `DataSpaceSubscriptionHealthIndicator.DEGRADED`
-  status, or move it to a shared constant both indicators use, so that the aggregate never sees two different
-  DEGRADED values.
+  and the details come from `TirWatcher.Status`, plus a `reason` detail (`tir_empty`, `tir_mass_removal` or
+  `no_successful_cycle`). DEGRADED is a **shared constant** with a neutral description, so the aggregate never sees
+  two different DEGRADED values and `/health` never shows the subscription text for a TIR alert: add
+  `dataspace/DataSpaceHealth` (final class, private constructor) with
+  `DEGRADED = new HealthStatus("DEGRADED", "A data space eventing component is degraded; see its details.", null, null)`.
+  Both indicators use it. `DataSpaceSubscriptionHealthIndicator.DEGRADED` becomes `= DataSpaceHealth.DEGRADED`, so its
+  tests compile unchanged; its own reason is already in its details (the per-publisher states).
   Make sure it does not fail liveness or readiness probes, the same way the subscription indicator avoids that (see
   `DataSpaceSubscriptionHealthProbeTest`).
 - Tests:
@@ -252,9 +269,10 @@ Lay the foundation: no behaviour yet.
     `POST :9090/refresh` and keep it raised for at least `confirmations` cycles, ≈ `confirmations × interval`, before
     lowering it again), the empty-registry behaviour (an empty TIR from the start is fine; going to empty is alerted
     and never acted on, so removing the last participant is not announced), the restart/first-cycle behaviour, and
-    the delivery semantics (a confirmed removal is retried every cycle until it was queued for at least one
-    subscription; a delivery that fails after queueing is not retried by the watcher; subscribers that register later
-    do not get it).
+    the delivery semantics (a confirmed removal is retried every cycle until it matched at least one subscription;
+    a delivery that overflows or fails after that is not retried by the watcher; subscribers that register later
+    do not get it), and the cursor format (`page[after]` from `links.next` must be an integer; a registry with string
+    cursors never completes an enumeration and logs WARN every cycle).
   - Commented `tir-watcher:` block in the `dataspace.events` example of `src/main/resources/application.yaml`.
   - `AGENTS.md`: list `TirWatcher`/`TrustedIssuersRegistryReader` and `api` → `org.fiware.iam.tir.*`.
 - Acceptance: `mvn test` is green. A k3s IT is out of scope: the k3s CM deployment is
