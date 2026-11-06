@@ -44,6 +44,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 
 /**
  * Acceptance scenarios of the trust anchor watcher: confirmations, error cycles, empty registry, circuit breaker and
@@ -89,6 +90,29 @@ class TirWatcherTest {
     @Test
     void freshWatcherIsNotScheduled() {
         assertEquals(TirWatcher.Status.NOT_SCHEDULED, newWatcher().status());
+    }
+
+    @Test
+    void failureAfterPublishKeepsRemovalForRetry() {
+        properties.getTirWatcher().setConfirmations(1);
+        meterRegistry = spy(new SimpleMeterRegistry());
+        doThrow(new IllegalStateException("meter failed")).doCallRealMethod()
+                .when(meterRegistry).counter(TirWatcher.REMOVALS_METRIC);
+        TirWatcher watcher = newWatcher();
+        List<String> published = new ArrayList<>();
+        Map<String, Set<String>> eventIds = new HashMap<>();
+        arrange(ok("A", "B"), 1, published, eventIds);
+        watcher.cycle();
+        arrange(ok("A"), 2, published, eventIds);
+
+        assertEquals(COMPLETE, watcher.cycle());
+        assertEquals(1, watcher.status().undeliveredSize(), "kept for retry");
+
+        assertEquals(COMPLETE, watcher.cycle());
+        assertEquals(0, watcher.status().undeliveredSize(), "announced on retry");
+        assertEquals(List.of("2:B", "2:B"), published);
+        assertEquals(1, eventIds.get("B").size(), "retry reuses the event id");
+        assertEquals(1, meterRegistry.counter(TirWatcher.REMOVALS_METRIC).count(), "announced");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -201,7 +225,8 @@ class TirWatcherTest {
                         .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE).published("3:B").warnings(1),
                 scenario("no subscriptions, then reappeared",
                         ok("A", "B"), ok("A").subscribedBy(), ok("A", "B"))
-                        .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE).snapshot(2).warnings(1),
+                        .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE).snapshot(2).warnings(1)
+                        .info("listed again"),
                 scenario("check/publish race",
                         ok("A", "B"), ok("A").subscribedBy("A").delivers(0), ok("A").subscribedBy("A"))
                         .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE).published("2:B", "3:B").announced(1)

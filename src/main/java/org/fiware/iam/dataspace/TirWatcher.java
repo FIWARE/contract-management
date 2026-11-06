@@ -166,7 +166,7 @@ public class TirWatcher {
         }
 
         pending.keySet().removeAll(current);
-        undelivered.keySet().removeAll(current);
+        dropReappeared(current);
         for (String did : missing) {
             int cycles = pending.merge(did, 1, Integer::sum);
             if (cycles >= confirmations) {
@@ -220,11 +220,21 @@ public class TirWatcher {
             keepForRetry(did, "it matched no subscription", null);
             return true;
         }
-        undelivered.remove(did);
         meterRegistry.counter(REMOVALS_METRIC).increment();
         log.info("Participant {} removed from the trust anchor registry, published to {} matching subscriptions.",
                 did, subscriptions);
+        // last, so a failure above still finds the removal for keepForRetry; a retry reuses the event id
+        undelivered.remove(did);
         return true;
+    }
+
+    private void dropReappeared(Set<String> current) {
+        for (String did : List.copyOf(undelivered.keySet())) {
+            if (current.contains(did)) {
+                undelivered.remove(did);
+                log.info("Participant {} is listed again; its confirmed removal is no longer announced.", did);
+            }
+        }
     }
 
     private void keepForRetry(String did, String why, @Nullable Throwable cause) {
