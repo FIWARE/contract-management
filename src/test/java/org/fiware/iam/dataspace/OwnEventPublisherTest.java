@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
@@ -74,6 +75,7 @@ class OwnEventPublisherTest {
         properties.setOwnParticipantId(ownParticipantId);
         generalProperties.setDid(did);
 
+        assertTrue(publisher.hasSource());
         Optional<PublishedEvent> result = publisher.publish(TYPE, SUBJECT, DATA, EXPLICIT_ID);
 
         DataSpaceEventVO event = published();
@@ -100,6 +102,7 @@ class OwnEventPublisherTest {
         properties.setOwnParticipantId(ownParticipantId);
         generalProperties.setDid(did);
 
+        assertFalse(publisher.hasSource());
         assertTrue(publisher.publish(TYPE, SUBJECT, DATA, EXPLICIT_ID).isEmpty());
         verify(eventDelivery, never()).publish(any());
     }

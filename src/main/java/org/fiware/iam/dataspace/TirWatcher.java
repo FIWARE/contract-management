@@ -33,6 +33,7 @@ import java.util.UUID;
 @Requires(condition = DataSpaceEventsProperties.TirWatcherCondition.class)
 public class TirWatcher {
 
+    // provisional: type and data shape are not yet confirmed against the eventing architecture (§8)
     public static final String PARTICIPANT_REMOVED_TYPE = "org.fiware.dataspace.participant.removed";
     static final String PARTICIPANT_ID_KEY = "participantId";
 
@@ -181,6 +182,10 @@ public class TirWatcher {
     }
 
     private void announceUndelivered() {
+        // checked on every complete cycle, so a restored source clears the flag even when nothing is published
+        if (noSource && publisher.hasSource()) {
+            reportSourceRestored();
+        }
         for (String did : List.copyOf(undelivered.keySet())) {
             try {
                 if (!announce(did)) {
@@ -210,7 +215,6 @@ public class TirWatcher {
             reportNoSource();
             return false;
         }
-        reportSourceRestored();
         int subscriptions = published.get().subscriptions();
         if (subscriptions < MIN_ANNOUNCED_SUBSCRIPTIONS) {
             keepForRetry(did, "it matched no subscription", null);
@@ -245,10 +249,8 @@ public class TirWatcher {
     }
 
     private void reportSourceRestored() {
-        if (noSource) {
-            noSource = false;
-            log.info("An own participant id is set again; confirmed removals are announced.");
-        }
+        noSource = false;
+        log.info("An own participant id is set again; confirmed removals are announced.");
     }
 
     private void raise(FailureReason reason, String message) {

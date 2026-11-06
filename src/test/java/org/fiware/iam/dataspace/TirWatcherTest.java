@@ -210,6 +210,10 @@ class TirWatcherTest {
                         ok("A", "B"), ok("A").noSource(), ok("A").noSource(), ok("A"))
                         .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE, COMPLETE).published("2:B", "3:B", "4:B")
                         .announced(1).errors(1).info("set again"),
+                scenario("source restored without a publish, then missing again",
+                        ok("A", "B", "C"), ok("A", "C").noSource(), ok("A", "B", "C"), ok("A", "B").noSource())
+                        .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE, COMPLETE).published("2:B", "4:C")
+                        .announced(0).undelivered(1).errors(2).info("set again"),
                 scenario("retry waits for a complete cycle",
                         ok("A", "B"), ok("A").subscribedBy(), error(), ok("A"))
                         .confirmations(1).outcomes(INITIAL, COMPLETE, INCOMPLETE, COMPLETE).published("4:B").warnings(2),
@@ -241,6 +245,7 @@ class TirWatcherTest {
         }
         doReturn(cycle.subscribers.stream().map(TirWatcherTest::subscription).toList())
                 .when(subscriptionRegistry).active(TirWatcher.PARTICIPANT_REMOVED_TYPE);
+        doReturn(cycle.delivered != null).when(publisher).hasSource();
         doAnswer(invocation -> {
             String did = (String) invocation.getArguments()[1];
             assertEquals(TirWatcher.PARTICIPANT_REMOVED_TYPE, invocation.getArguments()[0]);
@@ -369,6 +374,11 @@ class TirWatcherTest {
 
         double announced() {
             return announced == null ? published.size() : announced;
+        }
+
+        Scenario undelivered(int value) {
+            undelivered = value;
+            return this;
         }
 
         Scenario alert(FailureReason value) {
