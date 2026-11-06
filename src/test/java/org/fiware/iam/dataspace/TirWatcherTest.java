@@ -23,6 +23,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,6 +38,7 @@ import static org.fiware.iam.dataspace.TirWatcher.Outcome.EMPTY;
 import static org.fiware.iam.dataspace.TirWatcher.Outcome.INCOMPLETE;
 import static org.fiware.iam.dataspace.TirWatcher.Outcome.INITIAL;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -95,13 +98,14 @@ class TirWatcherTest {
         properties.getTirWatcher().setMaxRemovalsPerCycle(scenario.cap);
         TirWatcher watcher = newWatcher();
         List<String> published = new ArrayList<>();
+        Map<String, Set<String>> eventIds = new HashMap<>();
         List<Outcome> outcomes = new ArrayList<>();
         Instant lastSuccess = null;
 
         for (int i = 0; i < scenario.cycles.size(); i++) {
             int number = i + 1;
             Cycle cycle = scenario.cycles.get(i);
-            arrange(cycle, number, published);
+            arrange(cycle, number, published, eventIds);
             clock.advance(INTERVAL);
 
             Outcome outcome = watcher.cycle();
@@ -117,6 +121,9 @@ class TirWatcherTest {
         TirWatcher.Status status = watcher.status();
         assertEquals(scenario.outcomes, outcomes, "outcomes");
         assertEquals(scenario.published.stream().sorted().toList(), published.stream().sorted().toList(), "published");
+        eventIds.forEach((did, ids) -> assertEquals(1, ids.size(), "event ids of the removal of " + did));
+        assertEquals(eventIds.size(), eventIds.values().stream().flatMap(Set::stream).distinct().count(),
+                "one event id per removal");
         assertEquals(scenario.announced(), meterRegistry.counter(TirWatcher.REMOVALS_METRIC).count(), "announced");
         for (Outcome outcome : Outcome.values()) {
             assertEquals(outcomes.stream().filter(outcome::equals).count(), cycles(outcome), "cycles " + outcome);
@@ -223,7 +230,7 @@ class TirWatcherTest {
         return new TirWatcher(reader, publisher, subscriptionRegistry, properties, clock, Optional.of(meterRegistry));
     }
 
-    private void arrange(Cycle cycle, int number, List<String> published) {
+    private void arrange(Cycle cycle, int number, List<String> published, Map<String, Set<String>> eventIds) {
         if (cycle.registry == null) {
             doThrow(new TirEnumerationException("unreachable", 1, null, null)).when(reader).enumerate();
         } else {
@@ -238,13 +245,16 @@ class TirWatcherTest {
             String did = (String) invocation.getArguments()[1];
             assertEquals(TirWatcher.PARTICIPANT_REMOVED_TYPE, invocation.getArguments()[0]);
             assertEquals(Map.of(TirWatcher.PARTICIPANT_ID_KEY, did), invocation.getArguments()[2]);
+            String id = (String) invocation.getArguments()[3];
+            assertFalse(id == null || id.isBlank(), "event id");
+            eventIds.computeIfAbsent(did, key -> new HashSet<>()).add(id);
             published.add(number + ":" + did);
             if (cycle.fails) {
                 throw new IllegalStateException("delivery failed");
             }
             return cycle.delivered == null
                     ? Optional.empty()
-                    : Optional.of(new PublishedEvent(UUID.randomUUID().toString(), cycle.delivered));
+                    : Optional.of(new PublishedEvent(id, cycle.delivered));
         }).when(publisher).publish(any(), any(), any(), any());
     }
 

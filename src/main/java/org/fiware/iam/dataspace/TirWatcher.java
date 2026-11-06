@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Derives participant.removed events from the trust anchor registry by diffing complete enumerations against the last
@@ -78,13 +79,23 @@ public class TirWatcher {
     @Nullable
     private Set<String> snapshot;
     private final Map<String, Integer> pending = new HashMap<>();
-    // confirmed removal -> whether its retry was already warned about
-    private final Map<String, Boolean> undelivered = new LinkedHashMap<>();
+    private final Map<String, Removal> undelivered = new LinkedHashMap<>();
     @Nullable
     private FailureReason alert;
     private boolean noSource;
 
     private volatile Status status = Status.NOT_SCHEDULED;
+
+    /**
+     * A confirmed removal awaiting announcement; the event id is fixed at confirmation, so every retry is the same
+     * event to the receivers' deduplication.
+     */
+    private record Removal(String eventId, boolean warned) {
+
+        Removal asWarned() {
+            return new Removal(eventId, true);
+        }
+    }
 
     public TirWatcher(TrustedIssuersRegistryReader reader, OwnEventPublisher publisher,
                       SubscriptionRegistry subscriptionRegistry, DataSpaceEventsProperties properties, Clock clock,
@@ -160,7 +171,7 @@ public class TirWatcher {
             if (cycles >= confirmations) {
                 snapshot.remove(did);
                 pending.remove(did);
-                undelivered.put(did, false);
+                undelivered.put(did, new Removal(UUID.randomUUID().toString(), false));
             }
         }
         announceUndelivered();
@@ -193,7 +204,8 @@ public class TirWatcher {
             return true;
         }
         Optional<OwnEventPublisher.PublishedEvent> published =
-                publisher.publish(PARTICIPANT_REMOVED_TYPE, did, Map.of(PARTICIPANT_ID_KEY, did), null);
+                publisher.publish(PARTICIPANT_REMOVED_TYPE, did, Map.of(PARTICIPANT_ID_KEY, did),
+                        undelivered.get(did).eventId());
         if (published.isEmpty()) {
             reportNoSource();
             return false;
@@ -212,7 +224,9 @@ public class TirWatcher {
     }
 
     private void keepForRetry(String did, String why, @Nullable Throwable cause) {
-        if (Boolean.TRUE.equals(undelivered.put(did, true))) {
+        Removal removal = undelivered.get(did);
+        undelivered.put(did, removal.asWarned());
+        if (removal.warned()) {
             log.debug("Removal of participant {} still not announced: {}.", did, why, cause);
         } else {
             log.warn("Removal of participant {} not announced yet: {}; retried on the next complete cycle.", did, why,
