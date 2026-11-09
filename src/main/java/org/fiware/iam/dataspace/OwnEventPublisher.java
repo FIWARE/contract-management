@@ -31,8 +31,9 @@ public class OwnEventPublisher {
 
     public Optional<PublishedEvent> publish(String type, @Nullable String subject, @Nullable Object data,
                                             @Nullable String id) {
+        // read once: dataspace.events is refreshable, so a second read could find the source emptied
         String source = properties.ownId(generalProperties);
-        if (source == null || source.isBlank()) {
+        if (!present(source)) {
             return Optional.empty();
         }
         DataSpaceEventVO event = new DataSpaceEventVO()
@@ -46,6 +47,17 @@ public class OwnEventPublisher {
                 .datacontenttype(APPLICATION_JSON)
                 .data(data);
         return Optional.of(new PublishedEvent(event.getId(), eventDelivery.publish(event)));
+    }
+
+    /**
+     * Whether an own participant id is configured, i.e. whether {@link #publish} would publish at all.
+     */
+    public boolean hasSource() {
+        return present(properties.ownId(generalProperties));
+    }
+
+    private static boolean present(@Nullable String source) {
+        return source != null && !source.isBlank();
     }
 
     /**

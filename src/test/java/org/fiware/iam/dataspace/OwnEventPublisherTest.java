@@ -22,11 +22,14 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,6 +77,7 @@ class OwnEventPublisherTest {
         properties.setOwnParticipantId(ownParticipantId);
         generalProperties.setDid(did);
 
+        assertTrue(publisher.hasSource());
         Optional<PublishedEvent> result = publisher.publish(TYPE, SUBJECT, DATA, EXPLICIT_ID);
 
         DataSpaceEventVO event = published();
@@ -100,8 +104,20 @@ class OwnEventPublisherTest {
         properties.setOwnParticipantId(ownParticipantId);
         generalProperties.setDid(did);
 
+        assertFalse(publisher.hasSource());
         assertTrue(publisher.publish(TYPE, SUBJECT, DATA, EXPLICIT_ID).isEmpty());
         verify(eventDelivery, never()).publish(any());
+    }
+
+    @Test
+    void readsTheSourceOnceSoARefreshCannotEmptyItMidPublish() {
+        GeneralProperties refreshed = spy(new GeneralProperties());
+        doReturn(GENERAL_DID).doReturn(null).when(refreshed).getDid();
+        OwnEventPublisher racing =
+                new OwnEventPublisher(eventDelivery, properties, refreshed, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertTrue(racing.publish(TYPE, SUBJECT, DATA, EXPLICIT_ID).isPresent());
+        assertEquals(GENERAL_DID, published().getSource());
     }
 
     static Stream<Arguments> missingIds() {
