@@ -60,6 +60,41 @@ an unreachable list does not stop start-up.
   INFO, no handler call), so it is not counted by the new metric. `mode=keep, action=kept` for the own id therefore
   appears only for an event that names it through the `data.participantId` fallback and in the sweep; the README and
   the metric description say so. An override for an identifier replaces the publisher's mode for that identifier.
+
+  **`keep` protects the identifier against every publisher.** It is configured under a publisher's
+  `on-participant-removed`, but `removalMode(P, X, ownId)` is empty when X is on the `keep` list of *any* removal
+  publisher. Otherwise P1's `keep` of X would not stop P2 in `full` from deleting X's whole issuer entry, P1's
+  membership included, which breaks the ticket's "an identifier on `keep` is never touched in either path". To stop
+  only P's removals from writing while other publishers still act, use an override `{id: X, mode: report}` under P;
+  that is the per-publisher tool, `keep` is the participant-wide one. The log line of a `kept` decision names the
+  publisher whose `keep` applied (or the own id).
+- **Stale removal events.** An event can arrive late: the publisher retries a `502` for as long as the TIL is down,
+  and X may be re-admitted in the meantime with a fresh membership grant from P. The TIL stores no grant timestamps,
+  so the event's `time` cannot be compared with anything. Instead, before any write, the event path asks P's registry
+  (`GET {registry-url}/v4/issuers/{did}`, the TIR spec's `getIssuerV4`) whether X is listed again. If it is, nothing is
+  written: `action=still_listed`, `2xx`. A `404` means delisted and the cleanup proceeds; any other answer fails with
+  `TirLookupException` (`TIR_LOOKUP_FAILED`), answered `502`, so the publisher retries. The check runs only for
+  writing modes (`report` writes nothing to protect) and only when P has a `registry-url`; without one the race stays,
+  the README names it, and the start-up guard WARNs for a writing mode without `registry-url`. A registry that lags
+  behind the announcement also yields `still_listed`; the next sweep (which reads `local − listed` fresh) then
+  completes the cleanup, so nothing is lost. The sweep itself needs no extra lookup: its window between the listing and
+  the writes is one run.
+- **No empty issuer entries.** `deleteCredentialsByScope` keeps the issuer "even when no credential remains", so a
+  `dataspace`/`granted` cleanup (or the adoption-path `revokeUnattributed`) can leave an issuer with zero credentials,
+  still listed in the TIL's TIR view. That is not harmless: FIWARE VCVerifier (`verifier/trustedissuer.go`,
+  `verifyWithCredentialsConfig`) skips base types such as `VerifiableCredential` that have no entry, so for an
+  existing issuer without credentials a credential typed only with base types would pass. So when a writing plan would
+  leave the entry empty, its **final write is replaced by `deleteIssuer`** (`404` = done): `RemovalPlan` decides it
+  from the `HeldEntry`, and `ParticipantRemoval` re-reads the entry just before that final write and falls back to
+  the scope-targeted revoke if anything else appeared in the meantime. Because the final write is P's membership
+  revoke whenever P's membership is held, P's membership survives until the delete succeeds, so a failed delete is
+  still found by the retry and the next sweep (the convergence rule above holds). An entry that is already empty when
+  read in a writing mode (e.g. a crash after an earlier revoke) is deleted as well. A credential written between the
+  re-read and the delete is lost; this is the same accepted race as in adoption and the README names it. `report`
+  mode writes nothing and deletes nothing. The report never shows a held-but-empty entry: after such a cleanup it
+  shows the mode's revoking action (`revoked_membership`/`revoked_granted`; `deleted_issuer` stays reserved for
+  `full`) with `held: []` and `unattributedCount: 0`, and an event about an identifier absent from the TIL shows
+  `action=not_held` with the same empty `held`.
 - **Who writes membership grants.** Contract-management writes a `dataspace-membership` grant in exactly one place:
   adoption (Step 5, `TrustedIssuersListAdapter.grantMembership`). Its order paths (`TilProductOrderHandler`,
   `ContractManagementController`) write untyped order grants only. Other components **will** write membership grants
@@ -87,9 +122,9 @@ an unreachable list does not stop start-up.
   `dsc_dataspace_events_participant_removed_total`. Tags: `publisher` (a configured publisher id), `mode` and `action`.
   `mode` is one of `report`, `dataspace`, `granted`, `full` (the effective mode, lower case) or `keep` (the identifier
   is on `keep` or is the own id, so `removalMode` is empty; always paired with `action=kept`; the log line names which
-  of the two). Outcomes without an identifier (`breaker`,
+  of the two, and for `keep` which publisher's list). Outcomes without an identifier (`breaker`,
   `adoption_refused`, a `failed` registry read) carry the publisher's own mode. `action` takes a fixed set of values:
-  `reported`, `kept`, `not_held`, `revoked_membership`, `revoked_granted`, `deleted_issuer`, `adopted`,
+  `reported`, `kept`, `not_held`, `still_listed`, `revoked_membership`, `revoked_granted`, `deleted_issuer`, `adopted`,
   `adoption_refused`, `failed` and `breaker`. All tag values are bounded; the README lists them.
   The counter counts decisions, not sweep runs: the event path counts every handled event, the sweep counts an
   identifier only when it is newly seen for that publisher or its effective mode changed (keyed on the sweep's own
@@ -190,8 +225,8 @@ Add the configuration only, without any behaviour.
     - `int maxRemovalsPerRun = DEFAULT_MAX_REMOVALS_PER_RUN` (5), clamped to `>= 0` by `effectiveMaxRemovalsPerRun()`
     - `boolean adoptUnattributed = false`
     - `int maxAdoptionsPerRun = DEFAULT_MAX_ADOPTIONS_PER_RUN` (50), clamped to `>= 0` by `effectiveMaxAdoptionsPerRun()`
-    - `@Nullable String registryUrl`: base URL of this publisher's trusted issuers registry, used by the sweep. Without
-      it the publisher gets no sweep.
+    - `@Nullable String registryUrl`: base URL of this publisher's trusted issuers registry, used by the sweep and by
+      the event path's stale-event check (*Decisions*). Without it the publisher gets neither.
   - Add a `ParticipantRemovedSettings participantRemoved` (`@ConfigurationProperties("participant-removed")`) with the
     sweep timing `reconcile.initial-delay` (default 1 min) and `reconcile.interval` (default 15 min). Give each an
     `effective*()` getter, as `TirWatcherSettings` does. Also add `page-size`/`max-pages` for reading the TIL and the
@@ -199,9 +234,10 @@ Add the configuration only, without any behaviour.
   - Add helpers on the properties:
     - `removalPublishers()`: the publishers with a non-blank id whose `types` contain the participant.removed type.
       Move `TirWatcher.PARTICIPANT_REMOVED_TYPE` to a shared constant or reference it.
-    - `removalMode(publisherId, did, ownId)`: the effective mode. Returns empty when the DID is on `keep` or equals
-      `ownId` (callers pass `ownId(generalProperties)`; a blank own id excludes nothing); otherwise an override wins
-      over the publisher's mode.
+    - `removalMode(publisherId, did, ownId)`: the effective mode. Returns empty when the DID is on the `keep` list of
+      **any** removal publisher (see *Decisions*) or equals `ownId` (callers pass `ownId(generalProperties)`; a blank
+      own id excludes nothing); otherwise an override of `publisherId` wins over its mode. A companion
+      `keptBy(did)` returns the publisher whose `keep` applies, for the log line.
     - `adoption()`: the `AdoptionPolicy` record `{State state (ALLOWED|REFUSED|OFF), @Nullable String reason}` under
       the rule in *Decisions* (*Adoption assumes one data space*). `OFF` when no removal publisher sets
       `adopt-unattributed`; `REFUSED` with the reason (more than one removal publisher, or no `dataspace-id`)
@@ -217,8 +253,9 @@ Add the configuration only, without any behaviour.
 - `src/main/resources/application.yaml`: extend the commented `dataspace.events` example with an `on-participant-removed`
   block and `participant-removed.reconcile`.
 - Tests (`src/test/java/org/fiware/iam/configuration/DataSpaceEventsPropertiesTest.java`, parameterized):
-  `removalMode` covers the default, the publisher mode, an override beating the mode, `keep` beating an override, and
-  the own id excluded even with a `full` override. `adoption()` covers off, allowed, refused for two removal
+  `removalMode` covers the default, the publisher mode, an override beating the mode, `keep` beating an override,
+  P1's `keep` excluding the DID for P2 in `full` (and P2's override), and the own id excluded even with a `full`
+  override. `adoption()` covers off, allowed, refused for two removal
   publishers and for a missing `dataspace-id`, and a peer publisher for other types that does not refuse it.
   `removalWritesConfigured` covers report-only, a writing mode, a writing override, allowed adoption (true) and refused
   adoption with report-only (false). Also cover the effective clamps, `removalPublishers`, the binding of lower-case modes and of an `overrides` list with
@@ -309,7 +346,8 @@ still pass.
 ### Step 3: ParticipantRemovedHandler: policy, cleanup, 502 and per-decision logging/metric
 - New `src/main/java/org/fiware/iam/dataspace/RemovalPlan.java`: a pure function from `(RemovalMode | keep, HeldEntry,
   publisherId)` to an ordered list of TIL operations plus the resulting `action`. It implements the table in
-  *Decisions* and puts P's membership revocation last. The order-grant row depends on the membership rows (footnote
+  *Decisions* and puts P's membership revocation last; when the result would be an empty entry, the final operation is
+  `deleteIssuer` (*No empty issuer entries*); `RemovalPlanTest` covers it per mode × origin. The order-grant row depends on the membership rows (footnote
   ²): order grants are revoked in `granted` only when the entry holds P's membership and no other.
 - New `src/main/java/org/fiware/iam/dataspace/RemovedParticipantsReport.java`: the in-memory report store, without
   the endpoint (Step 6), created here so that Steps 3–5 can record into it. A `@Singleton` keyed by (publisher, did);
@@ -327,8 +365,12 @@ still pass.
   1. Resolve the mode (`removalMode`, own id included). For `keep`/own id: count `kept` and stop, no TIL access.
      Otherwise `TilCapabilities.requireSupported()`; if it fails with `TIL_TOO_OLD` and this identifier's effective
      mode is `report`, record `reported` with `held` unknown instead of failing (decided per event, not from the global
-     configuration; see *Decisions*). Then read the `HeldEntry` (all reads first).
-  2. Build the plan and run its writes sequentially (`concatMap`).
+     configuration; see *Decisions*). For a writing mode, trigger `EVENT` and a `registry-url`: ask
+     `PublisherRegistryLookup.isListed` (*Stale removal events*); if listed, record `still_listed` and stop without TIL
+     reads or writes. Then read the `HeldEntry` (all reads first).
+  2. Build the plan and run its writes sequentially (`concatMap`). When the plan would leave the entry empty, its
+     final write is `deleteIssuer`, preceded by a re-read that falls back to the scope-targeted revoke if the entry
+     gained anything (*No empty issuer entries*).
   3. Write one INFO line, e.g. `Participant <did> removed by <publisher> (mode <m>, <trigger>): <action>; still held: <grants>`,
      and record the outcome in `RemovedParticipantsReport`.
   4. Count `dsc.dataspace.events.participant.removed{publisher,action,mode}`, using the `Optional<MeterRegistry>`
@@ -337,6 +379,12 @@ still pass.
   On failure it counts `action=failed` and passes on a `ParticipantRemovalException` (new `ContractManagementException`
   subclass with reason `PARTICIPANT_REMOVAL_FAILED`, holding the publisher and DID and keeping the TIL cause). It does
   not log, since the failure is logged once in `EventListener`.
+- New `src/main/java/org/fiware/iam/dataspace/PublisherRegistryLookup.java` (`@Singleton`,
+  `@Requires(condition = ParticipantRemovedCondition)`): `Mono<Boolean> isListed(String registryUrl, String did)` with
+  the low-level `HttpClient`, `GET {registryUrl}/v4/issuers/{did}` (DID URL-encoded). `200` → true, `404` → false,
+  anything else or an IO error/timeout → new `TirLookupException` (`ContractManagementException` subclass, new
+  `FailureReason` `TIR_LOOKUP_FAILED`, with DID, registry URL and status, keeping the cause). Step 4 may reuse its
+  client for `enumerate(registryUrl)`.
 - New `src/main/java/org/fiware/iam/dataspace/ParticipantRemovedHandler.java`, a `DataSpaceEventHandler` for the
   participant.removed type:
   - The participant is `event.getSubject()`, falling back to `data.participantId` (see `TirWatcher.PARTICIPANT_ID_KEY`).
@@ -348,7 +396,8 @@ still pass.
   cause chain:
   - `InvalidEventException`: `400` (outcome `invalid_event`), and `deduplicator.complete(key)` instead of `forget`,
     because a redelivery of the same event can never succeed. Logged once at WARN.
-  - `TrustedIssuersException`: `502` (outcome `downstream_failed`), `forget`, so the publisher retries.
+  - `TrustedIssuersException` or `TirLookupException`: `502` (outcome `downstream_failed`), `forget`, so the
+    publisher retries.
   - anything else: `500` and `forget`, unchanged.
 - Tests (`src/test/java/org/fiware/iam/dataspace/`):
   - `RemovalPlanTest`: parameterized `@MethodSource` over mode × origin of the entry (P's membership, another
@@ -361,6 +410,9 @@ still pass.
     Footnote ² is pinned by named cases in `granted`, removed by P1: `P1 membership + order grants` revokes both
     (membership last); `P2 membership + order grants` keeps everything; `P1 + P2 membership + order grants` revokes only
     P1's membership and keeps the order grants; `order grants only` keeps them (`action=reported`, nothing attributable to P).
+    `keep` across publishers: X on P1's `keep`, held by P1 and P2, removed by P2 in `full` (and in `dataspace`) makes
+    no TIL call and counts `mode=keep, action=kept`; an override `{X, report}` under P1 instead keeps only P1's
+    removals from writing, while P2's removal in `full` still deletes the issuer.
   - `RemovedParticipantsReportTest`: updates, eviction at `MAX_ENTRIES_PER_PUBLISHER` and the attributable flag.
   - `ParticipantRemovalTest` (Mockito adapter): the writes and their order; the metric tags; a failing read gives no
     write; a failing first write gives no further write, keeps P's membership grant and raises the exception; a
@@ -369,12 +421,22 @@ still pass.
     `mode=keep, action=kept`. An unverified capability raises `TrustedIssuersException` before any read; with a
     `TOO_OLD` TIL, an event whose effective mode is `report` records `reported` with `held` unknown, also when another
     publisher (or an override) is in a writing mode, while an event whose effective mode writes raises the exception.
-  - `EventListenerTest` (parameterized over the three failure kinds): a TIL failure and an unverified capability answer
-    `502` and a redelivery is handled again; an event without a participant answers `400` and its redelivery is a
+    Stale events (`PublisherRegistryLookup` mocked): X listed again → `still_listed`, no TIL read or write; `404` → the
+    cleanup runs; a lookup failure raises `TirLookupException` before any TIL call; `report` mode, a publisher without
+    `registry-url` and the `RECONCILIATION` trigger make no lookup. Empty entries: a `dataspace`/`granted` cleanup that
+    would leave nothing ends with `deleteIssuer` instead of the membership revoke, and the report shows the revoking
+    action with `held: []`; one that leaves another grant does not delete; a grant appearing before the re-read turns
+    the delete back into the scope-targeted revoke; an already empty entry is deleted in a writing mode; `report` mode
+    never deletes; a failing `deleteIssuer` keeps P's membership, raises the exception, and the retry completes.
+  - `PublisherRegistryLookupTest` (HTTP stub, as `TrustedIssuersRegistryReaderHttpTest`): `200`, `404`, `5xx`, a
+    connection error and a DID that needs URL encoding.
+  - `EventListenerTest` (parameterized over the three failure kinds): a TIL failure, a registry lookup failure and an
+    unverified capability answer `502` and a redelivery is handled again; an event without a participant answers `400` and its redelivery is a
     duplicate (`202`, not dispatched again); another handler error still answers `500`.
 
 **Acceptance:** all mode × origin (including the mixed entry), keep/override and multi-membership tests pass. A failing
-TIL call answers `502`, P's membership grant survives, and a retry completes the cleanup.
+TIL call answers `502`, P's membership grant survives, and a retry completes the cleanup. A late event about a
+re-admitted identifier writes nothing, and no cleanup leaves an empty issuer entry.
 
 ### Step 4: Per-publisher reconciliation sweep
 - Make the registry reader reusable. Refactor `src/main/java/org/fiware/iam/dataspace/TrustedIssuersRegistryReader.java`
@@ -419,7 +481,8 @@ TIL call answers `502`, P's membership grant survives, and a retry completes the
   `DataSpaceEventSubscriber`) runs after `effectiveInitialDelay()` and then `effectiveInterval()` after each run ends,
   so a refreshed interval takes effect. Add the executor to `src/main/resources/application.yaml`.
 - Tests: `ParticipantReconcilerTest`, parameterized:
-  - a removed identifier is applied with the publisher's mode; an identifier still listed is untouched; keep; own id
+  - a removed identifier is applied with the publisher's mode; an identifier still listed is untouched; keep (also
+    another publisher's `keep`); own id; the sweep makes no `PublisherRegistryLookup` call
   - the breaker at cap, cap + 1 and a cap of 0; `report`-mode candidates beyond the cap do not trip it; a standing
     trip logs the ERROR and counts `breaker` once, and clearing it logs INFO; a tripped breaker makes no `heldEntry`
     read for already-known candidates (verify the adapter calls)
@@ -496,7 +559,8 @@ lists is handled with P's policy at start-up and on every interval, within the c
   `{publisher, mode, til: supported|unverified|too-old, adoption: allowed|refused|off, breaker: tripped|clear,
   participants: [{id, trigger: event|reconciliation, lastSeen, mode, action, applied: bool, attributable: bool|null,
   held: [{scope, scopeType, credentialCount}] | null, unattributedCount}]}`. `held`/`attributable` are `null` when the
-  entry was not read (own id/keep, or a `report`-mode event against a `TOO_OLD` TIL).
+  entry was not read (own id/keep, `still_listed`, or a `report`-mode event against a `TOO_OLD` TIL); `held: []` with
+  `unattributedCount: 0` means nothing is held (after a cleanup that deleted the emptied issuer, or `not_held`).
 - New `RemovedParticipantsEndpoint`: `@Endpoint(id = "participants-removed", defaultSensitive = false)`,
   `@Requires(condition = ParticipantRemovedCondition)`, one `@Read` method that assembles the response from the
   report store (Step 3), `TilCapabilities.state()` (Step 2), `adoption()` (Step 1) and the reconciler's breaker state
@@ -515,8 +579,9 @@ and whether it is attributable.
   `@Requires(condition = ParticipantRemovedCondition)`, following `TirWatcherStartupGuard`. It throws a
   `ConfigurationException` that names the key and the value:
   - Configuration checks: an override with a blank id or no mode; a `registry-url` that is not an absolute http(s) URL;
-    timing, cap and paging values outside their range (use the `requireEffective` pattern); a DID on both `keep` and
-    `overrides`, as a WARN only.
+    timing, cap and paging values outside their range (use the `requireEffective` pattern); as WARNs only, a DID on
+    any publisher's `keep` that also appears in any `overrides`, and a publisher in a writing mode (or with a writing
+    override) without `registry-url` (no stale-event check, no sweep).
   - TIL capabilities (probes and `TilCapabilities` from Step 2): the guard probes the required capabilities once.
     - `TOO_OLD` **and** `removalWritesConfigured()`: start-up fails with a `ConfigurationException` naming the
       capability, the configured mode or the allowed adoption that needs it, and the trusted-issuers-list ticket
@@ -526,7 +591,10 @@ and whether it is attributable.
 - Docs:
   - `README.md`: a new section *Reacting to participant removals* after *Watching the trust anchor registry*. It covers
     the modes table (with footnote ²: order grants are revoked in `granted` only for an entry attributed to P alone),
-    keep/overrides, the own id (an event whose `subject` is the own id is answered `SELF` and never counted; only the
+    keep/overrides (`keep` protects against every publisher; an override `report` is the per-publisher alternative),
+    stale events (`still_listed` via `registry-url`; without it a late event can revoke a fresh grant), empty issuer
+    entries are deleted after a cleanup (why, and the race of a credential written just before the delete),
+    the own id (an event whose `subject` is the own id is answered `SELF` and never counted; only the
     `data.participantId` fallback and the sweep count it as `mode=keep`), multi-membership, a subsection *Writing membership grants* for other
     components (exact `scope=<publisher id>`, `scopeType=dataspace-membership`, an example request, what happens to
     untyped or unscoped entries; CM itself writes them only through adoption), adoption with its one-data-space
@@ -541,7 +609,8 @@ and whether it is attributable.
   - `AGENTS.md`: list the new classes under `dataspace/`.
 - Tests: `ParticipantRemovedStartupGuardTest`, parameterized over invalid configurations and over
   `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` × `report`-only / writing mode / writing override / allowed adoption / refused
-  adoption (behaves as `report`-only), with a mocked
+  adoption (behaves as `report`-only), the two WARNs (cross-publisher `keep`/override, writing mode without
+  `registry-url`), with a mocked
   `TilCapabilities` (the probe classification itself is tested in Step 2). Unreachable: start-up succeeds, health
   DOWN, sweep and event writes blocked until a later probe succeeds. A context test checks that start-up fails with a
   too-old TIL when the mode is `dataspace` or adoption is allowed, and succeeds with `report` only or a refused adoption.
