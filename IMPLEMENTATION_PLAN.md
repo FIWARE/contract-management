@@ -174,7 +174,7 @@ an unreachable list does not stop start-up.
   TIL-1), `scopes-endpoint` (`GET /issuer/{did}/scopes`, TIL-2) and `unscoped` (TIL-3). `/scopes` gets its own probe
   because a list may have the filter without it (TIL-1 without TIL-2, or a proxy that does not route the path), and
   every mode, `report` included, reads it through `heldEntry`. `TilCapabilities` keeps one state per capability:
-  `SUPPORTED`, `TOO_OLD` or `UNVERIFIED`. Answers map as follows:
+  `SUPPORTED`, `TOO_OLD` or `UNVERIFIED` (`scopes-endpoint` also `PENDING`, see below). Answers map as follows:
   | probe answer | state |
   |---|---|
   | `400` whose body contains the expected validation message (a named constant, confirmed against the TIL source) | `SUPPORTED` |
@@ -182,15 +182,28 @@ an unreachable list does not stop start-up.
   | `401`, `403`, `408`, `429` (not a version signal) | `UNVERIFIED` |
   | `5xx`, connection error, timeout | `UNVERIFIED` |
 
-  The `scopes-endpoint` probe asks for an issuer that cannot exist, so its positive answer is a `404`, not a `400`: it
-  is `SUPPORTED` only on a `404` whose body is the TIL's `ProblemDetails` with the issuer-not-found message (a named
-  constant, confirmed against the TIL source). Any other `404` (a route that does not exist: Micronaut's
-  `Page Not Found`, a proxy page, an empty body) is `TOO_OLD`; the other rows of the table apply unchanged.
+  The `scopes-endpoint` probe cannot use an issuer that does not exist: the TIL's `getIssuerScopes` answers an unknown
+  issuer with a bare `HttpResponse.notFound()` (no `ProblemDetails`, no message), which looks exactly like a missing
+  route. So it probes an issuer that **exists**, with reads only:
+  1. `GET /issuer?pageSize=1` (unfiltered). Any answer but `200` is classified by the table. A `200` without an
+     issuer gives `PENDING` (below).
+  2. `GET /issuer/{first did}/scopes`. A `200` whose body is a JSON array is `SUPPORTED`; any other `2xx` (e.g. a
+     proxy page) is `TOO_OLD`.
+  3. On a `404`, `GET /issuer/{first did}`: a `200` means the issuer exists but `/scopes` does not, so `TOO_OLD`. A
+     `404` means the issuer was deleted between the reads, so `UNVERIFIED` (re-probed). Other answers follow the table.
+
+  `PENDING` is a fourth state, used only by `scopes-endpoint` on an empty TIL. It does **not** block: an empty TIL
+  holds nothing, `heldEntry` stops at the `404` of `getIssuer` and never reaches `/scopes`, and the sweep and adoption
+  lists are empty. It is re-probed like `UNVERIFIED` (throttled by `PROBE_RETRY_INTERVAL`), so it resolves as soon as
+  an issuer exists. If it then resolves to `TOO_OLD`, the refresh rule below applies (ERROR once, writes blocked,
+  no start-up failure). Between the first issuer and the re-probe, the `heldEntry` backstop (Step 2) answers `502`.
+  Changing TIL-2 so that its `404` carries a `ProblemDetails` body was rejected: CM would still have to recognise the
+  TIL-2 releases that are already deployed.
 
   Required capabilities follow the current (refreshable) configuration: `typed-scopes` and `scopes-endpoint` always;
   `unscoped` only while adoption is **allowed** (`adoption()`, Step 1). A refused adoption makes no `unscoped` call, so
-  it requires nothing; the refusal is already reported through its WARN and `action=adoption_refused`. While a required capability is not `SUPPORTED`, every TIL access of this feature
-  fails with `TrustedIssuersException` (new `FailureReason`s `TIL_CAPABILITY_UNVERIFIED` / `TIL_TOO_OLD`, naming the
+  it requires nothing; the refusal is already reported through its WARN and `action=adoption_refused`. While a required capability is `UNVERIFIED` or `TOO_OLD` (`PENDING` does not block), every TIL access of this
+  feature fails with `TrustedIssuersException` (new `FailureReason`s `TIL_CAPABILITY_UNVERIFIED` / `TIL_TOO_OLD`, naming the
   capability), so the `TrustedIssuersException` → `502` mapping that Step 3 adds to `EventListener.dispatch` covers
   events (today `dispatch` answers every handler error with `500`). `UNVERIFIED` is re-probed
   before each sweep run and before each event is handled (at most once per `PROBE_RETRY_INTERVAL`, 30 s); `TOO_OLD` is
@@ -200,17 +213,21 @@ an unreachable list does not stop start-up.
   - Start-up fails only when the TIL definitively answers `TOO_OLD` **and** the configuration needs writes: a publisher
     mode or an override other than `report`, or an allowed adoption (a refused `adopt-unattributed` writes nothing). That is what the ticket's "a configured mode
     needs a newer TIL" means; `report` is the default, not a choice to fail on.
-  - A `report`-only configuration with a `TOO_OLD` TIL degrades instead: ERROR logged once, health DOWN, the report
+  - A `report`-only configuration with a `TOO_OLD` TIL degrades instead: ERROR logged once, health DEGRADED, the report
     endpoint shows `til: too-old`, no sweep runs.
   - With a `TOO_OLD` TIL, an event is decided by **its own** effective mode (`removalMode(P, did, ownId)`), not by the
     global configuration: if that mode is `report`, the event is accepted (`2xx`, nothing to retry because `report`
     writes nothing) and recorded as `action=reported` with `held` unknown. This also holds after a refresh that mixes
     P1 in `report` with P2 in `dataspace`, so P1's events are not retried forever. Events whose effective mode writes
     answer `502`.
-  - An unreachable TIL never stops start-up: health DOWN, sweep runs skipped, and events answer `502` (the publisher
+  - An unreachable TIL never stops start-up: health DEGRADED, sweep runs skipped, and events answer `502` (the publisher
     retries) until a re-probe succeeds.
   - A refresh that switches to a writing mode while the TIL is `TOO_OLD` cannot fail start-up any more: ERROR once,
-    health DOWN, all writes blocked. The README calls out this upgrade impact.
+    health DEGRADED, all writes blocked. The README calls out this upgrade impact.
+  - The health of this feature is **never DOWN**, only DEGRADED: `/health` on :9090 is the liveness and readiness
+    probe (`src/test/resources/k3s/contract-management-provider.yaml`), and a DOWN would restart the pod in a loop or
+    take order handling and the event receiver out of service, as `TirWatcherHealthIndicator` and
+    `DataSpaceSubscriptionHealthIndicator` already avoid. All of them use `DataSpaceHealth.DEGRADED`.
 
 ## Steps
 
@@ -294,11 +311,14 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
 - Capability probes `Mono<TilCapability.State> probeTypedScopes()` / `probeUnscoped()`, classified by the table in
   *Decisions* (*TIL capabilities*):
   - typed scopes and the list filter: `GET /issuer?scopeType=dataspace-membership` without a scope; `SUPPORTED` only
-    on `400` with the `requireScope` validation message.
-  - `scopes-endpoint` (`probeScopesEndpoint()`): `GET /issuer/{PROBE_DID}/scopes` with a DID that cannot exist
-    (`PROBE_DID_PREFIX` + random UUID); `SUPPORTED` only on the issuer-not-found `404` described in *Decisions*.
+    on `400` with the `SCOPE_TYPE_WITHOUT_SCOPE` message of `getIssuers` ("A scope type requires a scope -
+    unscoped credentials cannot be addressed by type."), not one of the `requireScope` messages such as
+    `NO_SCOPE_PROVIDED` or `NO_SCOPE_OR_UNSCOPED`.
+  - `scopes-endpoint` (`probeScopesEndpoint()`): the three reads described in *Decisions* (first issuer of
+    `GET /issuer?pageSize=1`, its `/scopes`, and on a `404` its `GET /issuer/{did}`); `SUPPORTED` only on a `200` with
+    a JSON array, `PENDING` on an empty TIL.
   - `unscoped`: `DELETE /issuer/{PROBE_DID}/credential?unscoped=true&scope=<random UUID>`; `SUPPORTED` only on `400`
-    with the unscoped/scope validation message. Harmless on an old list, since the random scope matches nothing.
+    with the `UNSCOPED_WITH_SCOPE` message (thrown before the existence check, returned as `ProblemDetails` `detail`). Harmless on an old list, since the random scope matches nothing.
 
   Before implementing, confirm all three requests and the exact messages against `FIWARE/trusted-issuers-list`
   `TrustedIssuersListController` and keep the messages as named constants.
@@ -333,12 +353,14 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
     `scopeType=dataspace-membership` and leaves the unscoped ones alone
   - that order grants are still written untyped
   - every row of the probe classification for all three probes: `400` with and without the expected message, `404`,
-    `405`, another `4xx`, `401`/`403`/`408`/`429`, `2xx`, `5xx`, connection error, timeout; for `scopes-endpoint` the
-    issuer-not-found `404` (`SUPPORTED`) against a route-not-found `404`, a proxy `404` and an empty `404` (`TOO_OLD`)
+    `405`, another `4xx`, `401`/`403`/`408`/`429`, `2xx`, `5xx`, connection error, timeout. For `scopes-endpoint`:
+    an empty list (`PENDING`); a failing list read (table); `/scopes` `200` with an array (`SUPPORTED`) or a
+    non-array body (`TOO_OLD`); `/scopes` `404` with the issuer still found (`TOO_OLD`) or gone (`UNVERIFIED`);
+    `/scopes` `5xx`/timeout (`UNVERIFIED`)
 - `TilCapabilitiesTest`: required set per configuration (`unscoped` required with allowed adoption, not with refused
   adoption); `requireSupported` fails with the right reason per state; an
   `UNVERIFIED` capability is re-probed, but not within `PROBE_RETRY_INTERVAL` (`MutableClock`); `TOO_OLD` is logged once
-  and reset by a refresh.
+  and reset by a refresh; `PENDING` does not block `requireSupported` and is re-probed like `UNVERIFIED`.
 
 **Acceptance:** the adapter and `TilCapabilities` offer every call that Steps 3–7 need, and the existing order tests
 still pass.
@@ -473,9 +495,9 @@ re-admitted identifier writes nothing, and no cleanup leaves an empty issuer ent
   The sweep never touches unattributed entries outside adoption (see the footnote in *Decisions*). Publishers are
   independent: one failing does not stop the rest. Each run starts with `TilCapabilities.requireSupported()` (Step 2)
   and skips the run (WARN once per state change) while a required capability is not `SUPPORTED`.
-- New `ParticipantRemovedHealthIndicator` (as `TirWatcherHealthIndicator`): DOWN while a required TIL capability
-  (`TilCapabilities`, Step 2) is `UNVERIFIED` or `TOO_OLD`, DEGRADED while a breaker is tripped (details per
-  publisher), else UP.
+- New `ParticipantRemovedHealthIndicator` (as `TirWatcherHealthIndicator`): `DataSpaceHealth.DEGRADED` while a
+  required TIL capability (`TilCapabilities`, Step 2) is `UNVERIFIED` or `TOO_OLD` (details name the capability) or a
+  breaker is tripped (details per publisher), else UP. Never DOWN (see *Decisions*); `PENDING` is UP.
 - New `ParticipantReconcilerScheduler`: its own `micronaut.executors.participant-reconciler` (type scheduled) and
   `@Named` `TaskScheduler`. A self-rescheduling one-shot chain (as in `TirWatcherScheduler` /
   `DataSpaceEventSubscriber`) runs after `effectiveInitialDelay()` and then `effectiveInterval()` after each run ends,
@@ -556,7 +578,7 @@ lists is handled with P's policy at start-up and on every interval, within the c
 
 ### Step 6: Removed-participants report and GET :9090/participants-removed
 - Response (`@Serdeable` records in `dataspace/`, no OpenAPI change since it is a management endpoint): a list of
-  `{publisher, mode, til: supported|unverified|too-old, adoption: allowed|refused|off, breaker: tripped|clear,
+  `{publisher, mode, til: supported|pending|unverified|too-old, adoption: allowed|refused|off, breaker: tripped|clear,
   participants: [{id, trigger: event|reconciliation, lastSeen, mode, action, applied: bool, attributable: bool|null,
   held: [{scope, scopeType, credentialCount}] | null, unattributedCount}]}`. `held`/`attributable` are `null` when the
   entry was not read (own id/keep, `still_listed`, or a `report`-mode event against a `TOO_OLD` TIL); `held: []` with
@@ -588,6 +610,7 @@ and whether it is attributable.
       (TIL-1 for `typed-scopes`, TIL-2 for `scopes-endpoint`, TIL-3 for `unscoped`).
     - `TOO_OLD` in a `report`-only configuration: no failure; ERROR once, the degraded behaviour from *Decisions*.
     - `UNVERIFIED`: no failure; WARN, and `TilCapabilities` re-probes later (Steps 3 and 4).
+    - `PENDING` (`scopes-endpoint` on an empty TIL): no failure; INFO, resolved by a later re-probe (*Decisions*).
 - Docs:
   - `README.md`: a new section *Reacting to participant removals* after *Watching the trust anchor registry*. It covers
     the modes table (with footnote ²: order grants are revoked in `granted` only for an entry attributed to P alone),
@@ -603,16 +626,17 @@ and whether it is attributable.
     its breaker, the convergent cleanup with the `502` and retry, the metric with its tag values and the `held` gauge,
     the management endpoint `GET :9090/participants-removed`, the required TIL version, and the **upgrade impact**:
     deployments whose publishers already list participant.removed in `types` activate the feature (in `report` mode,
-    reads only, degrading instead of failing on a too-old TIL), and start-up fails only if a writing mode or
+    reads only, degrading instead of failing on a too-old TIL; health turns DEGRADED, never DOWN, so the liveness
+    and readiness probes are not affected), and start-up fails only if a writing mode or
     adoption is configured and the TIL answers too old.
   - `src/main/resources/application.yaml`: commented example.
   - `AGENTS.md`: list the new classes under `dataspace/`.
 - Tests: `ParticipantRemovedStartupGuardTest`, parameterized over invalid configurations and over
-  `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` × `report`-only / writing mode / writing override / allowed adoption / refused
+  `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` / `PENDING` × `report`-only / writing mode / writing override / allowed adoption / refused
   adoption (behaves as `report`-only), the two WARNs (cross-publisher `keep`/override, writing mode without
   `registry-url`), with a mocked
   `TilCapabilities` (the probe classification itself is tested in Step 2). Unreachable: start-up succeeds, health
-  DOWN, sweep and event writes blocked until a later probe succeeds. A context test checks that start-up fails with a
+  DEGRADED (never DOWN), sweep and event writes blocked until a later probe succeeds. A context test checks that start-up fails with a
   too-old TIL when the mode is `dataspace` or adoption is allowed, and succeeds with `report` only or a refused adoption.
 
 **Acceptance:** a configured writing mode or adoption that needs a newer trusted-issuers-list makes start-up fail with
