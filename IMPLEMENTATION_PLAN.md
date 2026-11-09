@@ -274,7 +274,8 @@ Add the configuration only, without any behaviour.
     is a `@Data` class with these fields:
     - `RemovalMode mode = REPORT`
     - `List<String> keep`
-    - `List<Override> overrides`, where `Override` is `{String id; RemovalMode mode}`
+    - `List<ModeOverride> overrides`, where `ModeOverride` is `{String id; RemovalMode mode}` (not `Override`, which
+      would shadow `java.lang.Override` in the enclosing class)
     - `int maxRemovalsPerRun = DEFAULT_MAX_REMOVALS_PER_RUN` (5), clamped to `>= 0` by `effectiveMaxRemovalsPerRun()`
     - `boolean adoptUnattributed = false`
     - `int maxAdoptionsPerRun = DEFAULT_MAX_ADOPTIONS_PER_RUN` (50), clamped to `>= 0` by `effectiveMaxAdoptionsPerRun()`
@@ -305,8 +306,10 @@ Add the configuration only, without any behaviour.
   - Add `ParticipantRemovedCondition`: the listener is enabled **and** at least one publisher is authorized for
     participant.removed.
 - New enum `org.fiware.iam.configuration.RemovalMode` (`REPORT, DATASPACE, GRANTED, FULL`), with a `tagValue()` in lower
-  case, and a constant `KEEP_TAG_VALUE = "keep"` for the `mode` tag of identifiers on `keep`. Make sure the lower-case YAML values bind; if Micronaut's enum conversion does not accept them, add a
-  `TypeConverter`.
+  case, and a constant `KEEP_TAG_VALUE = "keep"` for the `mode` tag of identifiers on `keep`. Make sure the lower-case YAML values bind. Entries of `publishers` are
+  converted by Jackson, not by Micronaut's `TypeConverter`s, so `RemovalMode.fromValue` is a case-insensitive
+  `@JsonCreator`. A value that does not convert (e.g. a misspelt mode) drops the **whole publisher entry** without an
+  error, as for any other field of a publisher entry today.
 - `src/main/resources/application.yaml`: extend the commented `dataspace.events` example with an `on-participant-removed`
   block and `participant-removed.reconcile`.
 - Tests (`src/test/java/org/fiware/iam/configuration/DataSpaceEventsPropertiesTest.java`, parameterized):

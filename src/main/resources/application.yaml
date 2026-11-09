@@ -136,6 +136,32 @@ oid4vp:
 #        # optional overrides of subscriber.client-id / subscriber.scopes
 #        client-id: "contract-management"
 #        scopes: [ "default" ]
+#      # a trust anchor announcing removals; its on-participant-removed policy applies to its events and to the sweep
+#      - id: "did:web:trust-anchor.org"
+#        origin: "cm.trust-anchor.org"
+#        types: [ "org.fiware.dataspace.participant.removed" ]
+#        on-participant-removed:
+#          # report (default, writes nothing), dataspace, granted or full; writing modes require registry-url
+#          mode: dataspace
+#          # never touched, whichever publisher removes them
+#          keep: [ "did:web:partner.org" ]
+#          # a list, since DIDs cannot be map keys
+#          overrides:
+#            - id: "did:web:special.org"
+#              mode: report
+#          # breaker: a sweep finding more write candidates applies none of them
+#          max-removals-per-run: 5
+#          # requires dataspace-id and this publisher as the only one of participant.removed
+#          adopt-unattributed: false
+#          max-adoptions-per-run: 50
+#          registry-url: "https://tir.trust-anchor.org"
+#    # receiving side of participant.removed: reconciliation sweep per publisher with a registry-url
+#    participant-removed:
+#      page-size: 100
+#      max-pages: 1000
+#      reconcile:
+#        initial-delay: PT1M
+#        interval: PT15M
 #    # sending side: POST /subscriptions, webhook delivery and the internal POST :9090/events
 #    publisher:
 #      enabled: true
