@@ -41,8 +41,8 @@ an unreachable list does not stop start-up.
   no membership at all, nothing ties them to P and they are kept and reported. The rows are therefore not independent:
   `RemovalPlan` decides the order-grant row from the membership rows. A later removal by P2 (now the only membership)
   revokes them, so the cleanup still converges. Revoking them for any removing publisher was rejected, because a
-  removal by P1 would then take away trust that P2's data space still needs. **To be confirmed by the ticket owner**;
-  the alternative is one `RemovalPlan` branch.
+  removal by P1 would then take away trust that P2's data space still needs. **Proceed unless objected** (asked of
+  the ticket owner, not answered yet): Step 3 implements this rule; the alternative is one `RemovalPlan` branch.
 
   **The sweep never removes unattributed entries** (deliberate asymmetry). It acts only on entries that hold P's
   membership grant (`local`). An unattributed-only entry that P no longer lists is indistinguishable from an
@@ -68,14 +68,15 @@ an unreachable list does not stop start-up.
   only P's removals from writing while other publishers still act, use an override `{id: X, mode: report}` under P;
   that is the per-publisher tool, `keep` is the participant-wide one. The log line of a `kept` decision names the
   publisher whose `keep` applied (or the own id).
-- **Stale removal events.** An event can arrive late: the publisher retries a `502` for as long as the TIL is down,
-  and X may be re-admitted in the meantime with a fresh membership grant from P. The TIL stores no grant timestamps,
+- **Stale removal events.** An event can arrive late: the publisher retries a `502` within its retry window, may
+  queue the event behind others, and is not necessarily this repository's `EventDelivery`; X may be re-admitted in
+  the meantime with a fresh membership grant from P. The TIL stores no grant timestamps,
   so the event's `time` cannot be compared with anything. Instead, before any write, the event path asks P's registry
   (`GET {registry-url}/v4/issuers/{did}`, the TIR spec's `getIssuerV4`) whether X is listed again. If it is, nothing is
   written: `action=still_listed`, `2xx`. A `404` means delisted and the cleanup proceeds; any other answer fails with
   `TirLookupException` (`TIR_LOOKUP_FAILED`), answered `502`, so the publisher retries. The check runs only for
-  writing modes (`report` writes nothing to protect) and only when P has a `registry-url`; without one the race stays,
-  the README names it, and the start-up guard WARNs for a writing mode without `registry-url`. A registry that lags
+  writing modes (`report` writes nothing to protect); every writing mode has a `registry-url` (*Bounded publisher
+  retries* below). A registry that lags
   behind the announcement also yields `still_listed`; the next sweep (which reads `local − listed` fresh) then
   completes the cleanup, so nothing is lost. The sweep itself needs no extra lookup: its window between the listing and
   the writes is one run.
@@ -88,7 +89,7 @@ an unreachable list does not stop start-up.
   from the `HeldEntry`, and `ParticipantRemoval` re-reads the entry just before that final write and falls back to
   the scope-targeted revoke if anything else appeared in the meantime. Because the final write is P's membership
   revoke whenever P's membership is held, P's membership survives until the delete succeeds, so a failed delete is
-  still found by the retry and the next sweep (the convergence rule above holds). An entry that is already empty when
+  still found by the next sweep, and by a publisher retry if one is still pending (the convergence rule below holds). An entry that is already empty when
   read in a writing mode (e.g. a crash after an earlier revoke) is deleted as well. A credential written between the
   re-read and the delete is lost; this is the same accepted race as in adoption and the README names it. `report`
   mode writes nothing and deletes nothing. The report never shows a held-but-empty entry: after such a cleanup it
@@ -108,11 +109,27 @@ an unreachable list does not stop start-up.
   the TIL has no multi-operation transactions, so it cannot be met literally). All reads come first,
   so a failed read changes nothing. Writes follow in this order: order grants and unattributed credentials first, P's
   membership grant **last**. A failing write can leave an intermediate state (e.g. in `granted`, order grants revoked
-  but P's membership still held), but the entry always still carries P's membership, so both the publisher's retry and
-  the next sweep find it again and complete the cleanup. Every write is idempotent (`404` = already done). A retry
-  recomputes the plan from the current TIL state and converges.
+  but P's membership still held), but the entry always still carries P's membership, so the next sweep finds it again
+  and completes the cleanup; a publisher retry still within its window does the same earlier. Every write is idempotent
+  (`404` = already done). A retry or sweep recomputes the plan from the current TIL state and converges.
+- **Bounded publisher retries; the sweep is the reliable path.** A publisher does not retry a `502` until the TIL
+  recovers. This repository's `EventDelivery` makes `delivery.max-attempts` attempts (default 5, backoff from 1 s,
+  about 15 s in total) and then drops the event (`dropped`); other publishers have their own limits. So a TIL outage
+  longer than the retry window loses the event, and only the sweep completes the cleanup (it reads `local − listed`
+  fresh, so it needs no event). The sweep needs P's `registry-url`, therefore **`registry-url` is required** for a
+  publisher with a writing mode, a writing override or `adopt-unattributed: true`: the start-up guard (Step 7) fails
+  with a `ConfigurationException` whose message names the consequence ("without registry-url a failed or dropped
+  removal event is never completed"). After a refresh the guard does not run, so `removalMode` clamps a writing mode
+  (or override) of a publisher without `registry-url` to `report`, and `adoption()` is `REFUSED` (reason
+  `no registry-url`), following the `effective*()` pattern; the sweep run logs an ERROR once per configuration change.
+  `report` without `registry-url` stays valid (events are reported, nothing is written, there is no sweep). One loss
+  remains and is documented in the README: with adoption allowed, an unattributed-only entry that P delisted before the
+  sweep adopted it is removed only by an event (the sweep never removes unattributed entries), so if that event is
+  dropped the entry stays until a later event names it or the operator removes it.
 - **Failure answer.** If a TIL call fails while an event is handled, `EventListener` answers `502 Bad Gateway`
   (outcome `downstream_failed`) instead of `500`, and the deduplicator forgets the event so that the publisher retries.
+  `EventDelivery.isRetryable` already retries every `5xx`, so the `502` names the failure (downstream, not a CM bug)
+  and gives the `downstream_failed` outcome; it does not change the retry behaviour.
 - **Refreshable configuration.** `DataSpaceEventsProperties` is refreshable. Read the policy through the bean on
   every use and never cache it (see the class Javadoc). Follow the `TirWatcherSettings` pattern: `effective*()` getters
   clamp out-of-range values after a refresh, and the start-up guard rejects them.
@@ -167,8 +184,8 @@ an unreachable list does not stop start-up.
   management port (9090), following `PublishEndpoint`. A management-port guard (as `ManagementPortGuard`) fails start-up
   when `endpoints.all.port` is unset or equals the server port. No OpenAPI change is needed. This departs from the
   ticket's `GET /events/participants/removed` (path and port). The ticket owner has not objected since the change
-  (comment 11168), but has not explicitly confirmed it either; **to be confirmed**. If the ticket's path is required,
-  only Step 6 changes.
+  (comment 11168) but has not explicitly confirmed it; **proceed unless objected**: Step 6 implements the management
+  endpoint. If the ticket's path is required, only Step 6 changes.
 - **TIL capabilities** (holder and probes in Step 2, used by Steps 3–7). The TIL has no version endpoint, so
   side-effect-free probes decide each required capability. There are three: `typed-scopes` (the typed list filter,
   TIL-1), `scopes-endpoint` (`GET /issuer/{did}/scopes`, TIL-2) and `unscoped` (TIL-3). `/scopes` gets its own probe
@@ -181,6 +198,11 @@ an unreachable list does not stop start-up.
   | any other `400`, `404`, `405`, any other `4xx` except those below, any `2xx` | `TOO_OLD` |
   | `401`, `403`, `408`, `429` (not a version signal) | `UNVERIFIED` |
   | `5xx`, connection error, timeout | `UNVERIFIED` |
+
+  Every probe is bounded by `PROBE_TIMEOUT` (5 s, a named constant in `TilCapabilities`) for the whole probe, the
+  three reads of `scopes-endpoint` included, applied with `Mono.timeout`; it is shorter than the TIL client's
+  `read-timeout` (30 s), and a timeout gives `UNVERIFIED`. The probes run concurrently, so the start-up guard waits at
+  most `PROBE_TIMEOUT` for a hanging TIL, and a re-probe before an event or sweep run is bounded the same way.
 
   The `scopes-endpoint` probe cannot use an issuer that does not exist: the TIL's `getIssuerScopes` answers an unknown
   issuer with a bare `HttpResponse.notFound()` (no `ProblemDetails`, no message), which looks exactly like a missing
@@ -199,6 +221,12 @@ an unreachable list does not stop start-up.
   no start-up failure). Between the first issuer and the re-probe, the `heldEntry` backstop (Step 2) answers `502`.
   Changing TIL-2 so that its `404` carries a `ProblemDetails` body was rejected: CM would still have to recognise the
   TIL-2 releases that are already deployed.
+  **The one case not caught at start-up:** a list with TIL-1 but without TIL-2 that is empty at start-up (typically a
+  fresh installation) starts even in a writing mode. Nothing is lost while it stays empty. When the first issuer
+  appears, the re-probe resolves to `TOO_OLD`: ERROR once, health DEGRADED, writes blocked, events in writing modes
+  answer `502` (and are dropped after the publisher's retries); after the TIL is upgraded and CM restarted or
+  refreshed, the sweep completes the cleanup. **Proceed unless objected** (asked of the ticket owner); the README's
+  required-version section names this case.
 
   Required capabilities follow the current (refreshable) configuration: `typed-scopes` and `scopes-endpoint` always;
   `unscoped` only while adoption is **allowed** (`adoption()`, Step 1). A refused adoption makes no `unscoped` call, so
@@ -220,8 +248,9 @@ an unreachable list does not stop start-up.
     writes nothing) and recorded as `action=reported` with `held` unknown. This also holds after a refresh that mixes
     P1 in `report` with P2 in `dataspace`, so P1's events are not retried forever. Events whose effective mode writes
     answer `502`.
-  - An unreachable TIL never stops start-up: health DEGRADED, sweep runs skipped, and events answer `502` (the publisher
-    retries) until a re-probe succeeds.
+  - An unreachable TIL never stops start-up: health DEGRADED, sweep runs skipped, and events answer `502` until a
+    re-probe succeeds. The publisher retries only within its window (*Bounded publisher retries*); events dropped in
+    the meantime are completed by the first sweep after the TIL is back.
   - A refresh that switches to a writing mode while the TIL is `TOO_OLD` cannot fail start-up any more: ERROR once,
     health DEGRADED, all writes blocked. The README calls out this upgrade impact.
   - The health of this feature is **never DOWN**, only DEGRADED: `/health` on :9090 is the liveness and readiness
@@ -253,12 +282,14 @@ Add the configuration only, without any behaviour.
       Move `TirWatcher.PARTICIPANT_REMOVED_TYPE` to a shared constant or reference it.
     - `removalMode(publisherId, did, ownId)`: the effective mode. Returns empty when the DID is on the `keep` list of
       **any** removal publisher (see *Decisions*) or equals `ownId` (callers pass `ownId(generalProperties)`; a blank
-      own id excludes nothing); otherwise an override of `publisherId` wins over its mode. A companion
+      own id excludes nothing); otherwise an override of `publisherId` wins over its mode. A writing mode of a
+      publisher without `registry-url` is clamped to `report` (*Bounded publisher retries*). A companion
       `keptBy(did)` returns the publisher whose `keep` applies, for the log line.
     - `adoption()`: the `AdoptionPolicy` record `{State state (ALLOWED|REFUSED|OFF), @Nullable String reason}` under
       the rule in *Decisions* (*Adoption assumes one data space*). `OFF` when no removal publisher sets
-      `adopt-unattributed`; `REFUSED` with the reason (more than one removal publisher, or no `dataspace-id`)
-      otherwise; `ALLOWED` only for exactly one removal publisher with the flag and a `dataspace-id`. Pure configuration,
+      `adopt-unattributed`; `REFUSED` with the reason (more than one removal publisher, no `dataspace-id`, or no
+      `registry-url`) otherwise; `ALLOWED` only for exactly one removal publisher with the flag, a `registry-url` and a
+      `dataspace-id`. Pure configuration,
       so `TilCapabilities` (Step 2), `RemovalPlan` (Step 3) and the sweep (Step 5) all read the same answer.
     - `removalWritesConfigured()`: true if any removal publisher has a mode or an override other than `report`, or
       `adoption()` is `ALLOWED`. The start-up guard (Step 7) fails on a too-old TIL only then.
@@ -272,8 +303,9 @@ Add the configuration only, without any behaviour.
 - Tests (`src/test/java/org/fiware/iam/configuration/DataSpaceEventsPropertiesTest.java`, parameterized):
   `removalMode` covers the default, the publisher mode, an override beating the mode, `keep` beating an override,
   P1's `keep` excluding the DID for P2 in `full` (and P2's override), and the own id excluded even with a `full`
-  override. `adoption()` covers off, allowed, refused for two removal
-  publishers and for a missing `dataspace-id`, and a peer publisher for other types that does not refuse it.
+  override, and a writing mode and a writing override of a publisher without `registry-url` clamped to `report`.
+  `adoption()` covers off, allowed, refused for two removal publishers, for a missing `dataspace-id` and for a
+  missing `registry-url`, and a peer publisher for other types that does not refuse it.
   `removalWritesConfigured` covers report-only, a writing mode, a writing override, allowed adoption (true) and refused
   adoption with report-only (false). Also cover the effective clamps, `removalPublishers`, the binding of lower-case modes and of an `overrides` list with
   DIDs (a small `ApplicationContext.run(Map)` test).
@@ -331,7 +363,8 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
   cannot work as planned: stop and report it (`blocked`, `[plan-update]`) instead of working around it.
 - New `src/main/java/org/fiware/iam/til/TilCapabilities.java` (`@Singleton`): holds the state per capability, derives
   the required set from the current `DataSpaceEventsProperties` (`typed-scopes` and `scopes-endpoint` always,
-  `unscoped` only while `adoption()` is `ALLOWED`), and offers `Mono<Void> requireSupported()`. That re-probes `UNVERIFIED` capabilities (throttled
+  `unscoped` only while `adoption()` is `ALLOWED`), runs every probe under `PROBE_TIMEOUT` (timeout = `UNVERIFIED`,
+  see *Decisions*), and offers `Mono<Void> requireSupported()`. That re-probes `UNVERIFIED` capabilities (throttled
   by `PROBE_RETRY_INTERVAL`, injected `Clock`) and fails with `TrustedIssuersException` (`TIL_CAPABILITY_UNVERIFIED`
   or `TIL_TOO_OLD`, naming the capability) unless all required ones are `SUPPORTED`. Also `state()` for health and
   report, and a log of the transition to `TOO_OLD` (ERROR, once). A refresh resets `TOO_OLD` to `UNVERIFIED`, so an
@@ -360,7 +393,9 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
 - `TilCapabilitiesTest`: required set per configuration (`unscoped` required with allowed adoption, not with refused
   adoption); `requireSupported` fails with the right reason per state; an
   `UNVERIFIED` capability is re-probed, but not within `PROBE_RETRY_INTERVAL` (`MutableClock`); `TOO_OLD` is logged once
-  and reset by a refresh; `PENDING` does not block `requireSupported` and is re-probed like `UNVERIFIED`.
+  and reset by a refresh; `PENDING` does not block `requireSupported` and is re-probed like `UNVERIFIED`; a hanging
+  probe (adapter returning `Mono.never()`, also for the second or third read of `scopes-endpoint`; virtual time)
+  gives `UNVERIFIED` after `PROBE_TIMEOUT`.
 
 **Acceptance:** the adapter and `TilCapabilities` offer every call that Steps 3–7 need, and the existing order tests
 still pass.
@@ -387,7 +422,8 @@ still pass.
   1. Resolve the mode (`removalMode`, own id included). For `keep`/own id: count `kept` and stop, no TIL access.
      Otherwise `TilCapabilities.requireSupported()`; if it fails with `TIL_TOO_OLD` and this identifier's effective
      mode is `report`, record `reported` with `held` unknown instead of failing (decided per event, not from the global
-     configuration; see *Decisions*). For a writing mode, trigger `EVENT` and a `registry-url`: ask
+     configuration; see *Decisions*). For a writing mode and trigger `EVENT` (a writing mode always has a
+     `registry-url`, see `removalMode`): ask
      `PublisherRegistryLookup.isListed` (*Stale removal events*); if listed, record `still_listed` and stop without TIL
      reads or writes. Then read the `HeldEntry` (all reads first).
   2. Build the plan and run its writes sequentially (`concatMap`). When the plan would leave the entry empty, its
@@ -444,8 +480,9 @@ still pass.
     `TOO_OLD` TIL, an event whose effective mode is `report` records `reported` with `held` unknown, also when another
     publisher (or an override) is in a writing mode, while an event whose effective mode writes raises the exception.
     Stale events (`PublisherRegistryLookup` mocked): X listed again → `still_listed`, no TIL read or write; `404` → the
-    cleanup runs; a lookup failure raises `TirLookupException` before any TIL call; `report` mode, a publisher without
-    `registry-url` and the `RECONCILIATION` trigger make no lookup. Empty entries: a `dataspace`/`granted` cleanup that
+    cleanup runs; a lookup failure raises `TirLookupException` before any TIL call; `report` mode, a writing mode
+    refreshed onto a publisher without `registry-url` (acts as `report`, no write) and the `RECONCILIATION` trigger
+    make no lookup. Empty entries: a `dataspace`/`granted` cleanup that
     would leave nothing ends with `deleteIssuer` instead of the membership revoke, and the report shows the revoking
     action with `held: []`; one that leaves another grant does not delete; a grant appearing before the re-read turns
     the delete back into the scope-targeted revoke; an already empty entry is deleted in a writing mode; `report` mode
@@ -515,7 +552,8 @@ re-admitted identifier writes nothing, and no cleanup leaves an empty issuer ent
   - an unattributed-only entry that P no longer lists is not touched by the sweep
   - a run is skipped while `TilCapabilities` is unverified or too old, and runs again once a probe succeeds
   - an incomplete registry; one publisher failing does not stop the next
-  - a publisher without `registry-url` is skipped
+  - a `report`-only publisher without `registry-url` is skipped; a writing mode refreshed onto a publisher without
+    `registry-url` logs one ERROR per configuration change and acts as `report`
 
   `ParticipantReconcilerSchedulerTest` uses `RecordingTaskScheduler`. Add an HTTP test of the reader against a stub
   registry URL, following `TrustedIssuersRegistryReaderHttpTest`.
@@ -601,10 +639,14 @@ and whether it is attributable.
   `@Requires(condition = ParticipantRemovedCondition)`, following `TirWatcherStartupGuard`. It throws a
   `ConfigurationException` that names the key and the value:
   - Configuration checks: an override with a blank id or no mode; a `registry-url` that is not an absolute http(s) URL;
-    timing, cap and paging values outside their range (use the `requireEffective` pattern); as WARNs only, a DID on
-    any publisher's `keep` that also appears in any `overrides`, and a publisher in a writing mode (or with a writing
-    override) without `registry-url` (no stale-event check, no sweep).
-  - TIL capabilities (probes and `TilCapabilities` from Step 2): the guard probes the required capabilities once.
+    timing, cap and paging values outside their range (use the `requireEffective` pattern); a publisher with a
+    writing mode, a writing override or `adopt-unattributed: true` but no `registry-url`, with the message naming the
+    consequence (`... requires registry-url: without it there is no sweep, so a failed or dropped removal event is
+    never completed`; see *Bounded publisher retries*). As a WARN only, a DID on any publisher's `keep` that also
+    appears in any `overrides`.
+  - TIL capabilities (probes and `TilCapabilities` from Step 2): the guard probes the required capabilities once,
+    concurrently, each bounded by `PROBE_TIMEOUT`, so a hanging TIL delays start-up by at most that and yields
+    `UNVERIFIED`.
     - `TOO_OLD` **and** `removalWritesConfigured()`: start-up fails with a `ConfigurationException` naming the
       capability, the configured mode or the allowed adoption that needs it, and the trusted-issuers-list ticket
       (TIL-1 for `typed-scopes`, TIL-2 for `scopes-endpoint`, TIL-3 for `unscoped`).
@@ -615,7 +657,9 @@ and whether it is attributable.
   - `README.md`: a new section *Reacting to participant removals* after *Watching the trust anchor registry*. It covers
     the modes table (with footnote ²: order grants are revoked in `granted` only for an entry attributed to P alone),
     keep/overrides (`keep` protects against every publisher; an override `report` is the per-publisher alternative),
-    stale events (`still_listed` via `registry-url`; without it a late event can revoke a fresh grant), empty issuer
+    stale events (`still_listed` via `registry-url`), the bounded publisher retries (a TIL outage longer than the
+    retry window drops the event; the sweep completes it, hence `registry-url` is required for writing modes and
+    adoption; an unattributed-only entry delisted before adoption is lost from the cleanup when its event is dropped), empty issuer
     entries are deleted after a cleanup (why, and the race of a credential written just before the delete),
     the own id (an event whose `subject` is the own id is answered `SELF` and never counted; only the
     `data.participantId` fallback and the sweep count it as `mode=keep`), multi-membership, a subsection *Writing membership grants* for other
@@ -623,18 +667,22 @@ and whether it is attributable.
     untyped or unscoped entries; CM itself writes them only through adoption), adoption with its one-data-space
     assumption, per-run limit, the exclusion of `keep`/own id and the accepted race (a credential added between the
     re-read and the revoke is lost), the sweep (it never removes unattributed entries; only events do) and
-    its breaker, the convergent cleanup with the `502` and retry, the metric with its tag values and the `held` gauge,
-    the management endpoint `GET :9090/participants-removed`, the required TIL version, and the **upgrade impact**:
+    its breaker, the convergent cleanup with the `502`, the bounded retry and the sweep, the metric with its tag values and the `held` gauge,
+    the management endpoint `GET :9090/participants-removed`, the required TIL version (and the one case not caught
+    at start-up: a TIL without TIL-2 that is empty at start-up, see `PENDING`), and the **upgrade impact**:
     deployments whose publishers already list participant.removed in `types` activate the feature (in `report` mode,
     reads only, degrading instead of failing on a too-old TIL; health turns DEGRADED, never DOWN, so the liveness
     and readiness probes are not affected), and start-up fails only if a writing mode or
-    adoption is configured and the TIL answers too old.
+    adoption is configured and the TIL answers too old (or a writing mode lacks `registry-url`, which is new
+    configuration and so cannot affect existing deployments).
   - `src/main/resources/application.yaml`: commented example.
   - `AGENTS.md`: list the new classes under `dataspace/`.
 - Tests: `ParticipantRemovedStartupGuardTest`, parameterized over invalid configurations and over
   `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` / `PENDING` × `report`-only / writing mode / writing override / allowed adoption / refused
-  adoption (behaves as `report`-only), the two WARNs (cross-publisher `keep`/override, writing mode without
-  `registry-url`), with a mocked
+  adoption (behaves as `report`-only), the failure for a writing mode, a writing override and `adopt-unattributed`
+  without `registry-url` (message names the consequence; `report` without it starts), the WARN for a cross-publisher
+  `keep`/override, a hanging TIL (a real `TilCapabilities` over an adapter whose probes never answer: start-up
+  completes after `PROBE_TIMEOUT` with the capabilities `UNVERIFIED`), otherwise with a mocked
   `TilCapabilities` (the probe classification itself is tested in Step 2). Unreachable: start-up succeeds, health
   DEGRADED (never DOWN), sweep and event writes blocked until a later probe succeeds. A context test checks that start-up fails with a
   too-old TIL when the mode is `dataspace` or adoption is allowed, and succeeds with `report` only or a refused adoption.
