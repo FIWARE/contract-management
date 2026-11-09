@@ -73,6 +73,7 @@ class DataSpaceEventsPropertiesTest {
     private static final int TIR_MAX_PAGES = 50;
     private static final int TIR_CONFIRMATIONS = 3;
     private static final int TIR_MAX_REMOVALS = 7;
+    private static final String OWN_PARTICIPANT_ID = "did:web:trust-anchor.org";
     // keeps the test context away from the Rainbow and TM Forum startup calls
     private static final Map<String, Object> ISOLATED = Map.of("notification.enabled", false, "general.enable-rainbow", false);
 
@@ -276,14 +277,17 @@ class DataSpaceEventsPropertiesTest {
                         DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_MAX_PAGES,
                         DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_CONFIRMATIONS,
                         DataSpaceEventsProperties.DEFAULT_TIR_WATCHER_MAX_REMOVALS_PER_CYCLE),
-                Arguments.of("configured", Map.of(
-                                tirWatcher + "enabled", true,
-                                tirWatcher + "initial-delay", TIR_INITIAL_DELAY.toString(),
-                                tirWatcher + "interval", TIR_INTERVAL.toString(),
-                                tirWatcher + "page-size", TIR_PAGE_SIZE,
-                                tirWatcher + "max-pages", TIR_MAX_PAGES,
-                                tirWatcher + "confirmations", TIR_CONFIRMATIONS,
-                                tirWatcher + "max-removals-per-cycle", TIR_MAX_REMOVALS),
+                // the watcher's startup guard needs the publisher and an own participant id
+                Arguments.of("configured", Map.ofEntries(
+                                Map.entry(PREFIX + "publisher.enabled", true),
+                                Map.entry(PREFIX + "own-participant-id", OWN_PARTICIPANT_ID),
+                                Map.entry(tirWatcher + "enabled", true),
+                                Map.entry(tirWatcher + "initial-delay", TIR_INITIAL_DELAY.toString()),
+                                Map.entry(tirWatcher + "interval", TIR_INTERVAL.toString()),
+                                Map.entry(tirWatcher + "page-size", TIR_PAGE_SIZE),
+                                Map.entry(tirWatcher + "max-pages", TIR_MAX_PAGES),
+                                Map.entry(tirWatcher + "confirmations", TIR_CONFIRMATIONS),
+                                Map.entry(tirWatcher + "max-removals-per-cycle", TIR_MAX_REMOVALS)),
                         true, TIR_INITIAL_DELAY, TIR_INTERVAL, TIR_PAGE_SIZE, TIR_MAX_PAGES, TIR_CONFIRMATIONS,
                         TIR_MAX_REMOVALS));
     }

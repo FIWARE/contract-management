@@ -34,11 +34,7 @@ public class DataSpaceSubscriptionHealthIndicator implements HealthIndicator {
     static final String REASON_DETAIL = "reason";
     static final String SETTINGS_DETAIL = "subscriber-settings";
 
-    /**
-     * Without operational flag and severity it ranks between UP and DOWN, and the health endpoints keep answering 200.
-     */
-    public static final HealthStatus DEGRADED =
-            new HealthStatus("DEGRADED", "Not every publisher subscription is established.", null, null);
+    public static final HealthStatus DEGRADED = DataSpaceHealth.DEGRADED;
 
     private final SubscriptionStateStore store;
     private final Clock clock;

@@ -34,7 +34,7 @@ import java.util.UUID;
 @Requires(condition = DataSpaceEventsProperties.TirWatcherCondition.class)
 public class TirWatcher {
 
-    // provisional until confirmed against the eventing architecture (§8); the CM-3 (#103) handler must match both
+    // type and data as in §8 of the data space eventing architecture; the CM-3 (#103) handler matches both
     public static final String PARTICIPANT_REMOVED_TYPE = "org.fiware.dataspace.participant.removed";
     static final String PARTICIPANT_ID_KEY = "participantId";
 
@@ -126,6 +126,15 @@ public class TirWatcher {
      */
     public Status status() {
         return status;
+    }
+
+    /**
+     * Records when the first cycle is due, the health baseline until a cycle succeeds. Called once, before that cycle.
+     */
+    synchronized void scheduled(Instant firstCycleDue) {
+        Status previous = status;
+        status = new Status(previous.lastOutcome(), previous.lastSuccessfulCycle(), firstCycleDue,
+                previous.snapshotSize(), previous.pendingSize(), previous.undeliveredSize(), previous.alert());
     }
 
     /**
