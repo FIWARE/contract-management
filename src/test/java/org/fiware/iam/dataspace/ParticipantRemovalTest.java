@@ -417,6 +417,23 @@ class ParticipantRemovalTest {
         assertTrue(report.entries(P1).get(0).outcome().applied());
     }
 
+    @Test
+    void unattributedOnlyEntryTurningMixedBeforeTheDeleteKeepsItsCredentials() {
+        DataSpaceEventsProperties.Publisher p1 = publisher(P1, RemovalMode.DATASPACE);
+        p1.getOnParticipantRemoved().setAdoptUnattributed(true);
+        properties.setDataspaceId("test-dataspace");
+        configure(p1);
+        held = entry(CREDENTIALS);
+        beforeSecondRead = entry -> entry(CREDENTIALS, order());
+
+        RemovalOutcome outcome = apply(P1);
+
+        verify(adapter, never()).revokeUnattributed(anyString());
+        verify(adapter, never()).deleteIssuer(anyString());
+        assertFalse(outcome.applied());
+        assertEquals(entry(CREDENTIALS, order()), outcome.held());
+    }
+
     private RemovalOutcome apply(String publisherId) {
         return removal.apply(publisherId, X, RemovalTrigger.EVENT).block();
     }

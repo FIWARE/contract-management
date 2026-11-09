@@ -142,6 +142,17 @@ public record RemovalPlan(RemovalAction action, List<Operation> operations) {
         }
 
         /**
+         * The write to run instead of the delete, or empty if none may run against the fresh entry any more. Revoking
+         * unattributed credentials claimed an entry holding nothing else, so it must not touch one that gained a grant.
+         */
+        public Optional<Operation> fallback(HeldEntry fresh) {
+            if (replaced instanceof RevokeUnattributed && !fresh.isUnattributedOnly()) {
+                return Optional.empty();
+            }
+            return Optional.ofNullable(replaced);
+        }
+
+        /**
          * True if the issuer, as freshly read, is to be deleted.
          */
         public boolean deletes(HeldEntry fresh) {

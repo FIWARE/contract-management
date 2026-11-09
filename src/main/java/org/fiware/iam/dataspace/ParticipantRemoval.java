@@ -130,9 +130,9 @@ public class ParticipantRemoval {
                 if (fresh.isEmpty() || deleteIfEmpty.deletes(fresh.get())) {
                     return adapter.deleteIssuer(did).thenReturn(Progress.written(RemovalPlan.emptyEntry(did)));
                 }
-                return deleteIfEmpty.replaced() == null
-                        ? Mono.just(new Progress(fresh.get(), false))
-                        : run(did, deleteIfEmpty.replaced(), fresh.get());
+                return deleteIfEmpty.fallback(fresh.get())
+                        .map(fallback -> run(did, fallback, fresh.get()))
+                        .orElseGet(() -> Mono.just(new Progress(fresh.get(), false)));
             });
         };
     }
