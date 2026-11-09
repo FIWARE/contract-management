@@ -302,7 +302,7 @@ class TrustedIssuersListAdapterTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("heldEntries")
     void heldEntry_classifiesTheGrants(String description, int credentials, List<IssuerScopeVO> scopes,
-            boolean membershipOfPublisher, int otherMemberships, int orderGrants, int unattributed, boolean attributable) {
+            boolean membershipOfPublisher, int otherMemberships, int orderGrants, int unattributed, boolean unattributedOnly) {
         stubIssuer(credentials, scopes);
 
         HeldEntry entry = membershipAdapter().heldEntry(ISSUER_DID).block().orElseThrow();
@@ -312,7 +312,7 @@ class TrustedIssuersListAdapterTest {
         Assertions.assertEquals(otherMemberships, entry.otherMemberships(PUBLISHER).size());
         Assertions.assertEquals(orderGrants, entry.orderGrants().size());
         Assertions.assertEquals(unattributed, entry.unattributedCount());
-        Assertions.assertEquals(attributable, entry.isAttributable());
+        Assertions.assertEquals(unattributedOnly, entry.isUnattributedOnly());
     }
 
     static Stream<Arguments> heldEntries() {

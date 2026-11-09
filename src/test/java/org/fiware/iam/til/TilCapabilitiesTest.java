@@ -27,6 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 import reactor.test.scheduler.VirtualTimeScheduler;
 
@@ -35,6 +36,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import static org.mockito.Mockito.doReturn;
@@ -199,15 +201,63 @@ class TilCapabilitiesTest {
 
     @Test
     void refresh_dropsAProbeAnsweredForThePreviousList() {
-        when(adapter.probeTypedScopes()).thenReturn(Mono.just(TilCapability.State.SUPPORTED));
+        Sinks.One<TilCapability.State> previousList = Sinks.one();
+        when(adapter.probeTypedScopes()).thenReturn(previousList.asMono(), Mono.just(TilCapability.State.TOO_OLD));
         when(adapter.probeScopesEndpoint()).thenReturn(Mono.just(TilCapability.State.SUPPORTED));
         TilCapabilities capabilities = capabilities();
-        Mono<Map<TilCapability, TilCapability.State>> probe = capabilities.probeRequired();
+        capabilities.probeRequired().subscribe();
 
         capabilities.onApplicationEvent(new RefreshEvent());
-        probe.block();
+        previousList.tryEmitValue(TilCapability.State.SUPPORTED);
 
         Assertions.assertEquals(TilCapability.State.UNVERIFIED, capabilities.state().get(TilCapability.TYPED_SCOPES));
+        TrustedIssuersException e = Assertions.assertThrows(TrustedIssuersException.class,
+                () -> capabilities.requireSupported().block(), "The refreshed list is probed anew, not joined to the old probe.");
+        Assertions.assertEquals(FailureReason.TIL_TOO_OLD, e.getReason());
+    }
+
+    @Test
+    void requireSupported_claimsNoProbeUntilSubscribed() {
+        stubProbes(TilCapability.State.SUPPORTED, TilCapability.State.SUPPORTED, TilCapability.State.SUPPORTED);
+        TilCapabilities capabilities = capabilities();
+
+        capabilities.requireSupported();
+        verify(adapter, never()).probeTypedScopes();
+
+        Assertions.assertDoesNotThrow(() -> capabilities.requireSupported().block());
+        verify(adapter, times(1)).probeTypedScopes();
+    }
+
+    @Test
+    void requireSupported_recordsAProbeWhoseCallerCancelled() {
+        Sinks.One<TilCapability.State> answer = Sinks.one();
+        when(adapter.probeTypedScopes()).thenReturn(answer.asMono());
+        when(adapter.probeScopesEndpoint()).thenReturn(Mono.just(TilCapability.State.SUPPORTED));
+        TilCapabilities capabilities = capabilities();
+
+        capabilities.requireSupported().subscribe().dispose();
+        answer.tryEmitValue(TilCapability.State.SUPPORTED);
+
+        Assertions.assertEquals(TilCapability.State.SUPPORTED, capabilities.state().get(TilCapability.TYPED_SCOPES));
+        Assertions.assertDoesNotThrow(() -> capabilities.requireSupported().block());
+        verify(adapter, times(1)).probeTypedScopes();
+    }
+
+    @Test
+    void requireSupported_sharesARunningProbe() {
+        Sinks.One<TilCapability.State> answer = Sinks.one();
+        when(adapter.probeTypedScopes()).thenReturn(answer.asMono());
+        when(adapter.probeScopesEndpoint()).thenReturn(Mono.just(TilCapability.State.SUPPORTED));
+        TilCapabilities capabilities = capabilities();
+        CompletableFuture<Void> first = capabilities.requireSupported().toFuture();
+        CompletableFuture<Void> second = capabilities.requireSupported().toFuture();
+        Assertions.assertFalse(second.isDone(), "A caller arriving during the probe waits for it instead of failing.");
+
+        answer.tryEmitValue(TilCapability.State.SUPPORTED);
+
+        Assertions.assertDoesNotThrow(() -> first.join());
+        Assertions.assertDoesNotThrow(() -> second.join());
+        verify(adapter, times(1)).probeTypedScopes();
     }
 
     @Test

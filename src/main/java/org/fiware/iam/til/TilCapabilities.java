@@ -20,14 +20,16 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 
 /**
  * What the trusted-issuers-list supports of the capabilities the participant-removed handling needs, decided by probes.
  * <p>
- * UNVERIFIED and PENDING capabilities are re-probed on use, at most once per {@link #PROBE_RETRY_INTERVAL}; TOO_OLD is
- * final until a refresh. The required set follows the current, refreshable configuration.
+ * UNVERIFIED and PENDING capabilities are re-probed on subscription, at most once per {@link #PROBE_RETRY_INTERVAL}, and
+ * callers arriving meanwhile share the running probe; TOO_OLD is final until a refresh. A probe always runs to completion
+ * and records its result, even if every caller cancels. The required set follows the current, refreshable configuration.
  */
 @Singleton
 @Slf4j
@@ -47,6 +49,7 @@ public class TilCapabilities implements ApplicationEventListener<RefreshEvent> {
     // guarded by this
     private final Map<TilCapability, TilCapability.State> states = new EnumMap<>(TilCapability.class);
     private final Map<TilCapability, Instant> lastProbes = new EnumMap<>(TilCapability.class);
+    private final Map<TilCapability, Mono<Void>> runningProbes = new EnumMap<>(TilCapability.class);
     // a probe answered after a refresh describes the list before it, so its result is dropped
     private long generation;
 
@@ -89,13 +92,15 @@ public class TilCapabilities implements ApplicationEventListener<RefreshEvent> {
      * Never fails; emits the resulting state of the required ones.
      */
     public Mono<Map<TilCapability, TilCapability.State>> probeRequired() {
-        Set<TilCapability> required = required();
-        List<Mono<Void>> probes = required.stream()
-                .filter(this::claimProbe)
-                .map(this::probe)
-                .toList();
-        return Flux.merge(probes)
-                .then(Mono.fromSupplier(() -> requiredStates(required)));
+        return Mono.defer(() -> {
+            Set<TilCapability> required = required();
+            List<Mono<Void>> probes = required.stream()
+                    .map(this::runningOrDueProbe)
+                    .flatMap(Optional::stream)
+                    .toList();
+            return Flux.merge(probes)
+                    .then(Mono.fromSupplier(() -> requiredStates(required)));
+        });
     }
 
     /**
@@ -126,24 +131,36 @@ public class TilCapabilities implements ApplicationEventListener<RefreshEvent> {
         generation++;
         states.replaceAll((capability, state) -> state == TilCapability.State.TOO_OLD ? TilCapability.State.UNVERIFIED : state);
         lastProbes.clear();
+        // probes against the previous list must not hold back callers that want the refreshed one
+        runningProbes.clear();
     }
 
-    private synchronized boolean claimProbe(TilCapability capability) {
+    private synchronized Optional<Mono<Void>> runningOrDueProbe(TilCapability capability) {
+        Mono<Void> running = runningProbes.get(capability);
+        if (running != null) {
+            return Optional.of(running);
+        }
+        if (!isDue(capability)) {
+            return Optional.empty();
+        }
+        lastProbes.put(capability, clock.instant());
+        Mono<Void> probe = probe(capability, generation).cache();
+        runningProbes.put(capability, probe);
+        // detached from the callers, so a cancelled caller cannot drop the result
+        probe.subscribe();
+        return Optional.of(probe);
+    }
+
+    private boolean isDue(TilCapability capability) {
         TilCapability.State state = states.get(capability);
         if (state != TilCapability.State.UNVERIFIED && state != TilCapability.State.PENDING) {
             return false;
         }
-        Instant now = clock.instant();
         Instant last = lastProbes.get(capability);
-        if (last != null && now.isBefore(last.plus(PROBE_RETRY_INTERVAL))) {
-            return false;
-        }
-        lastProbes.put(capability, now);
-        return true;
+        return last == null || !clock.instant().isBefore(last.plus(PROBE_RETRY_INTERVAL));
     }
 
-    private Mono<Void> probe(TilCapability capability) {
-        long probedGeneration = currentGeneration();
+    private Mono<Void> probe(TilCapability capability, long probedGeneration) {
         return Mono.defer(probeOf(capability))
                 .timeout(PROBE_TIMEOUT, timeoutScheduler)
                 .onErrorReturn(TilCapability.State.UNVERIFIED)
@@ -164,15 +181,12 @@ public class TilCapabilities implements ApplicationEventListener<RefreshEvent> {
         if (probedGeneration != generation) {
             return;
         }
+        runningProbes.remove(capability);
         TilCapability.State previous = states.put(capability, state);
         if (state == TilCapability.State.TOO_OLD && previous != TilCapability.State.TOO_OLD) {
             log.error("The trusted-issuers-list does not support {}; the participant-removed handling cannot use it until "
                     + "the list is upgraded and the configuration refreshed or the service restarted.", capability.getId());
         }
-    }
-
-    private synchronized long currentGeneration() {
-        return generation;
     }
 
     private synchronized Map<TilCapability, TilCapability.State> requiredStates(Set<TilCapability> required) {

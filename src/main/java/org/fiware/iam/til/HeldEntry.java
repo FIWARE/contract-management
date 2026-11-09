@@ -43,9 +43,10 @@ public record HeldEntry(String did, List<Grant> grants, int unattributedCount) {
     }
 
     /**
-     * True if the entry holds nothing but unattributed credentials, so an announcement or adoption can attribute it as a whole.
+     * True if the entry holds nothing but unattributed credentials, so an announcement or adoption can claim it as a whole.
+     * Not the report's "attributable" flag, which is the opposite: an entry is attributable when a grant explains it.
      */
-    public boolean isAttributable() {
+    public boolean isUnattributedOnly() {
         return grants.isEmpty() && unattributedCount > 0;
     }
 
