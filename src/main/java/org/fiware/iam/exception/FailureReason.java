@@ -37,7 +37,10 @@ public enum FailureReason {
 	EVENT_SUBSCRIPTION_FAILED("event_subscription_failed"),
 	TIR_ENUMERATION_FAILED("tir_enumeration_failed"),
 	TIR_EMPTY("tir_empty"),
-	TIR_MASS_REMOVAL("tir_mass_removal");
+	TIR_MASS_REMOVAL("tir_mass_removal"),
+	TIR_LOOKUP_FAILED("tir_lookup_failed"),
+	INVALID_EVENT("invalid_event"),
+	PARTICIPANT_REMOVAL_FAILED("participant_removal_failed");
 
 	private final String code;
 

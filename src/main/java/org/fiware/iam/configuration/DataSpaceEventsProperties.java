@@ -157,14 +157,23 @@ public class DataSpaceEventsProperties {
      * own id. A writing mode of a publisher without registry-url is clamped to REPORT.
      */
     public Optional<RemovalMode> removalMode(String publisherId, String did, @Nullable String ownId) {
+        return effectiveRemoval(publisherId, did, ownId).map(EffectiveRemoval::mode);
+    }
+
+    /**
+     * Like {@link #removalMode}, together with the registry-url read from the same publisher entry, so a refresh in
+     * between cannot pair a writing mode with a missing registry-url.
+     */
+    public Optional<EffectiveRemoval> effectiveRemoval(String publisherId, String did, @Nullable String ownId) {
         if ((!isBlank(ownId) && ownId.equals(did)) || keptBy(did).isPresent()) {
             return Optional.empty();
         }
         return Optional.of(removalPublishers().stream()
                 .filter(publisher -> publisher.getId().equals(publisherId))
                 .findFirst()
-                .map(publisher -> publisher.getOnParticipantRemoved().effectiveMode(did))
-                .orElse(RemovalMode.REPORT));
+                .map(publisher -> new EffectiveRemoval(publisher.getOnParticipantRemoved().effectiveMode(did),
+                        publisher.getOnParticipantRemoved().getRegistryUrl()))
+                .orElse(new EffectiveRemoval(RemovalMode.REPORT, null)));
     }
 
     /**
@@ -205,6 +214,12 @@ public class DataSpaceEventsProperties {
     public boolean removalWritesConfigured() {
         return removalPublishers().stream().anyMatch(publisher -> publisher.getOnParticipantRemoved().configuresWrites())
                 || adoption().isAllowed();
+    }
+
+    /**
+     * A publisher's effective mode for one DID and its registry-url; a writing mode always comes with a registry-url.
+     */
+    public record EffectiveRemoval(RemovalMode mode, @Nullable String registryUrl) {
     }
 
     private static boolean isBlank(@Nullable String value) {

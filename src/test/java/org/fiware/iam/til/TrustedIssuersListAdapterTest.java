@@ -302,7 +302,8 @@ class TrustedIssuersListAdapterTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("heldEntries")
     void heldEntry_classifiesTheGrants(String description, int credentials, List<IssuerScopeVO> scopes,
-            boolean membershipOfPublisher, int otherMemberships, int orderGrants, int unattributed, boolean unattributedOnly) {
+            boolean membershipOfPublisher, int otherMemberships, int orderGrants, int unattributed, boolean unattributedOnly,
+            boolean attributable) {
         stubIssuer(credentials, scopes);
 
         HeldEntry entry = membershipAdapter().heldEntry(ISSUER_DID).block().orElseThrow();
@@ -313,22 +314,23 @@ class TrustedIssuersListAdapterTest {
         Assertions.assertEquals(orderGrants, entry.orderGrants().size());
         Assertions.assertEquals(unattributed, entry.unattributedCount());
         Assertions.assertEquals(unattributedOnly, entry.isUnattributedOnly());
+        Assertions.assertEquals(attributable, entry.isAttributable());
     }
 
     static Stream<Arguments> heldEntries() {
         return Stream.of(
-                Arguments.of("publisher's membership", 1, List.of(membership(PUBLISHER, 1)), true, 0, 0, 0, false),
-                Arguments.of("other publisher's membership", 2, List.of(membership(OTHER_PUBLISHER, 2)), false, 1, 0, 0, false),
+                Arguments.of("publisher's membership", 1, List.of(membership(PUBLISHER, 1)), true, 0, 0, 0, false, true),
+                Arguments.of("other publisher's membership", 2, List.of(membership(OTHER_PUBLISHER, 2)), false, 1, 0, 0, false, true),
                 Arguments.of("both memberships", 2, List.of(membership(PUBLISHER, 1), membership(OTHER_PUBLISHER, 1)),
-                        true, 1, 0, 0, false),
+                        true, 1, 0, 0, false, true),
                 Arguments.of("order grants", 3, List.of(orderGrant(ORDER_ID, 2), orderGrant("other-order", 1)),
-                        false, 0, 2, 0, false),
+                        false, 0, 2, 0, false, true),
                 Arguments.of("an order grant under the publisher's id is no membership", 1, List.of(orderGrant(PUBLISHER, 1)),
-                        false, 0, 1, 0, false),
-                Arguments.of("unattributed only", 2, List.of(), false, 0, 0, 2, true),
+                        false, 0, 1, 0, false, true),
+                Arguments.of("unattributed only", 2, List.of(), false, 0, 0, 2, true, false),
                 Arguments.of("unattributed next to grants", 4, List.of(membership(PUBLISHER, 1), orderGrant(ORDER_ID, 1)),
-                        true, 0, 1, 2, false),
-                Arguments.of("empty issuer", 0, List.of(), false, 0, 0, 0, false));
+                        true, 0, 1, 2, false, false),
+                Arguments.of("empty issuer", 0, List.of(), false, 0, 0, 0, false, false));
     }
 
     @Test

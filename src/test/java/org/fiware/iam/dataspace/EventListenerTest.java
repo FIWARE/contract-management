@@ -17,6 +17,11 @@ import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import io.micronaut.test.support.TestPropertyProvider;
 import jakarta.inject.Inject;
 import org.fiware.iam.events.model.DataSpaceEventVO;
+import org.fiware.iam.exception.FailureReason;
+import org.fiware.iam.exception.InvalidEventException;
+import org.fiware.iam.exception.ParticipantRemovalException;
+import org.fiware.iam.exception.TirLookupException;
+import org.fiware.iam.exception.TrustedIssuersException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -193,6 +198,44 @@ class EventListenerTest implements TestPropertyProvider {
         assertEquals(2, handler.started());
         assertEquals(1, handler.handled());
         assertEquals(failures + 1, count(KNOWN_TYPE, EventListener.HANDLER_FAILED));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("downstreamFailures")
+    void downstreamFailureAnswersBadGatewayAndIsHandledAgain(String description, Throwable failure) {
+        Event event = Event.of(PUBLISHER, KNOWN_TYPE);
+        double failures = count(KNOWN_TYPE, EventListener.DOWNSTREAM_FAILED);
+        handler.failNext(failure);
+
+        assertEquals(HttpStatus.BAD_GATEWAY, post(PUBLISHER, event).getStatus());
+        assertEquals(HttpStatus.ACCEPTED, post(PUBLISHER, event).getStatus());
+
+        assertEquals(2, handler.started());
+        assertEquals(1, handler.handled());
+        assertEquals(failures + 1, count(KNOWN_TYPE, EventListener.DOWNSTREAM_FAILED));
+    }
+
+    static Stream<Arguments> downstreamFailures() {
+        return Stream.of(
+                Arguments.of("TIL failure", new ParticipantRemovalException(PUBLISHER, OTHER_SUBJECT,
+                        new TrustedIssuersException(FailureReason.TIL_READ_FAILED, "TIL down"))),
+                Arguments.of("registry lookup failure", new ParticipantRemovalException(PUBLISHER, OTHER_SUBJECT,
+                        new TirLookupException(OTHER_SUBJECT, "http://registry.provider.org", null, null))),
+                Arguments.of("unverified capability",
+                        new TrustedIssuersException(FailureReason.TIL_CAPABILITY_UNVERIFIED, "unverified")));
+    }
+
+    @Test
+    void invalidEventAnswersBadRequestAndIsNotHandledAgain() {
+        Event event = Event.of(PUBLISHER, KNOWN_TYPE);
+        double invalid = count(KNOWN_TYPE, EventListener.INVALID_EVENT);
+        handler.failNext(new InvalidEventException(event.id(), PUBLISHER, "no participant"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, post(PUBLISHER, event).getStatus());
+        assertEquals(HttpStatus.ACCEPTED, post(PUBLISHER, event).getStatus());
+
+        assertEquals(1, handler.started());
+        assertEquals(invalid + 1, count(KNOWN_TYPE, EventListener.INVALID_EVENT));
     }
 
     @Test
