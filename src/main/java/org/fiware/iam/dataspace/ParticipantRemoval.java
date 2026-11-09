@@ -114,8 +114,9 @@ public class ParticipantRemoval {
             progress = progress.flatMap(current -> run(did, operation, current.state())
                     .map(step -> new Progress(step.state(), current.wrote() || step.wrote())));
         }
-        return progress.map(after -> new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), plan.action(),
-                after.wrote(), after.state()));
+        // a fallback that found the entry changed may write nothing; the planned action would then count a revoke that never happened
+        return progress.map(after -> new RemovalOutcome(publisherId, did, trigger, mode.tagValue(),
+                after.wrote() ? plan.action() : RemovalAction.REPORTED, after.wrote(), after.state()));
     }
 
     private Mono<Progress> run(String did, RemovalPlan.Operation operation, HeldEntry current) {

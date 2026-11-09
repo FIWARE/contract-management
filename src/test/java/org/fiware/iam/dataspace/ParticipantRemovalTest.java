@@ -172,7 +172,10 @@ class ParticipantRemovalTest {
         verify(adapter, never()).deleteIssuer(X);
         verify(adapter, never()).revokeGrant(anyString(), anyString(), any());
         assertFalse(outcome.applied());
+        assertEquals(RemovalAction.REPORTED, outcome.action());
         assertEquals(entry(0, order()), outcome.held());
+        assertEquals(1, count(P1, RemovalMode.DATASPACE.tagValue(), RemovalAction.REPORTED));
+        assertEquals(0, count(P1, RemovalMode.DATASPACE.tagValue(), RemovalAction.REVOKED_MEMBERSHIP));
     }
 
     @Test
@@ -431,7 +434,10 @@ class ParticipantRemovalTest {
         verify(adapter, never()).revokeUnattributed(anyString());
         verify(adapter, never()).deleteIssuer(anyString());
         assertFalse(outcome.applied());
+        assertEquals(RemovalAction.REPORTED, outcome.action());
         assertEquals(entry(CREDENTIALS, order()), outcome.held());
+        assertEquals(1, count(P1, RemovalMode.DATASPACE.tagValue(), RemovalAction.REPORTED));
+        assertEquals(0, count(P1, RemovalMode.DATASPACE.tagValue(), RemovalAction.REVOKED_MEMBERSHIP));
     }
 
     private RemovalOutcome apply(String publisherId) {
