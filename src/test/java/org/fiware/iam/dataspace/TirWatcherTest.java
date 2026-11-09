@@ -254,6 +254,11 @@ class TirWatcherTest {
                         ok("A", "B"), ok("A").subscribedBy(), ok("A").publishFails(), ok("A").publishFails(), ok("A"))
                         .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE, COMPLETE, COMPLETE)
                         .published("3:B", "4:B", "5:B").announced(1).warnings(2),
+                scenario("alternating retry reasons: one WARN per reason, not per cycle",
+                        ok("A", "B"), ok("A").subscribedBy(), ok("A").publishFails(), ok("A").subscribedBy(),
+                        ok("A").publishFails(), ok("A"))
+                        .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE, COMPLETE, COMPLETE, COMPLETE)
+                        .published("3:B", "5:B", "6:B").announced(1).warnings(2),
                 scenario("additions are never announced",
                         ok("A"), ok("A", "B"))
                         .outcomes(INITIAL, COMPLETE).snapshot(2));

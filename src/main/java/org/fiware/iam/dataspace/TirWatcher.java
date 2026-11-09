@@ -14,6 +14,7 @@ import org.fiware.iam.logging.DownstreamError;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -33,7 +34,7 @@ import java.util.UUID;
 @Requires(condition = DataSpaceEventsProperties.TirWatcherCondition.class)
 public class TirWatcher {
 
-    // provisional: type and data shape are not yet confirmed against the eventing architecture (§8)
+    // provisional until confirmed against the eventing architecture (§8); the CM-3 (#103) handler must match both
     public static final String PARTICIPANT_REMOVED_TYPE = "org.fiware.dataspace.participant.removed";
     static final String PARTICIPANT_ID_KEY = "participantId";
 
@@ -91,16 +92,18 @@ public class TirWatcher {
      * A confirmed removal awaiting announcement; the event id is fixed at confirmation, so every retry is the same
      * event to the receivers' deduplication.
      */
-    private record Removal(String eventId, @Nullable RetryReason warnedFor) {
+    private record Removal(String eventId, Set<RetryReason> warnedFor) {
 
         Removal withWarning(RetryReason reason) {
-            return new Removal(eventId, reason);
+            EnumSet<RetryReason> reasons = EnumSet.of(reason);
+            reasons.addAll(warnedFor);
+            return new Removal(eventId, Set.copyOf(reasons));
         }
     }
 
     /**
-     * Why a confirmed removal is kept for retry; a change of reason is logged at WARN again, so a failing delivery
-     * path is not hidden behind an earlier benign WARN.
+     * Why a confirmed removal is kept for retry; each reason is logged at WARN once per removal, so a failing delivery
+     * path is not hidden behind an earlier benign WARN, and alternating reasons do not WARN every cycle.
      */
     private enum RetryReason {
         NOT_SUBSCRIBED,
@@ -181,7 +184,7 @@ public class TirWatcher {
             if (cycles >= confirmations) {
                 snapshot.remove(did);
                 pending.remove(did);
-                undelivered.put(did, new Removal(UUID.randomUUID().toString(), null));
+                undelivered.put(did, new Removal(UUID.randomUUID().toString(), Set.of()));
             }
         }
         announceUndelivered();
@@ -249,7 +252,7 @@ public class TirWatcher {
     private void keepForRetry(String did, RetryReason reason, String why, @Nullable Throwable cause) {
         Removal removal = undelivered.get(did);
         undelivered.put(did, removal.withWarning(reason));
-        if (removal.warnedFor() == reason) {
+        if (removal.warnedFor().contains(reason)) {
             log.debug("Removal of participant {} still not announced: {}.", did, why, cause);
         } else {
             log.warn("Removal of participant {} not announced yet: {}; retried on the next complete cycle.", did, why,
