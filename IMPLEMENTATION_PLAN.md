@@ -274,7 +274,8 @@ Add the configuration only, without any behaviour.
     is a `@Data` class with these fields:
     - `RemovalMode mode = REPORT`
     - `List<String> keep`
-    - `List<Override> overrides`, where `Override` is `{String id; RemovalMode mode}`
+    - `List<ModeOverride> overrides`, where `ModeOverride` is `{String id; RemovalMode mode}` (not `Override`, which
+      would shadow `java.lang.Override` in the enclosing class)
     - `int maxRemovalsPerRun = DEFAULT_MAX_REMOVALS_PER_RUN` (5), clamped to `>= 0` by `effectiveMaxRemovalsPerRun()`
     - `boolean adoptUnattributed = false`
     - `int maxAdoptionsPerRun = DEFAULT_MAX_ADOPTIONS_PER_RUN` (50), clamped to `>= 0` by `effectiveMaxAdoptionsPerRun()`
@@ -285,7 +286,8 @@ Add the configuration only, without any behaviour.
     `effective*()` getter, as `TirWatcherSettings` does. Also add `page-size`/`max-pages` for reading the TIL and the
     publisher registries, reusing the `TirWatcherSettings.MIN/MAX_PAGE_SIZE` bounds.
   - Add helpers on the properties:
-    - `removalPublishers()`: the publishers with a non-blank id whose `types` contain the participant.removed type.
+    - `removalPublishers()`: the publishers with a non-blank id whose `types` contain the participant.removed type,
+      one per id (the first entry; Step 7 rejects repeated ids with conflicting policies).
       Move `TirWatcher.PARTICIPANT_REMOVED_TYPE` to a shared constant or reference it.
     - `removalMode(publisherId, did, ownId)`: the effective mode. Returns empty when the DID is on the `keep` list of
       **any** removal publisher (see *Decisions*) or equals `ownId` (callers pass `ownId(generalProperties)`; a blank
@@ -305,8 +307,11 @@ Add the configuration only, without any behaviour.
   - Add `ParticipantRemovedCondition`: the listener is enabled **and** at least one publisher is authorized for
     participant.removed.
 - New enum `org.fiware.iam.configuration.RemovalMode` (`REPORT, DATASPACE, GRANTED, FULL`), with a `tagValue()` in lower
-  case, and a constant `KEEP_TAG_VALUE = "keep"` for the `mode` tag of identifiers on `keep`. Make sure the lower-case YAML values bind; if Micronaut's enum conversion does not accept them, add a
-  `TypeConverter`.
+  case, and a constant `KEEP_TAG_VALUE = "keep"` for the `mode` tag of identifiers on `keep`. Make sure the lower-case YAML values bind. Entries of `publishers` are
+  converted by Jackson, not by Micronaut's `TypeConverter`s, so `RemovalMode.fromValue` is a case-insensitive
+  `@JsonCreator`. A value that does not convert (e.g. a misspelt mode) drops the **whole publisher entry** without an
+  error at binding, as for any other field of a publisher entry today. The raw property list still holds the entry
+  (pinned by `unconvertiblePolicyDropsPublisherEntryButKeepsRawEntry`), so Step 7's `PublisherEntriesGuard` detects it.
 - `src/main/resources/application.yaml`: extend the commented `dataspace.events` example with an `on-participant-removed`
   block and `participant-removed.reconcile`.
 - Tests (`src/test/java/org/fiware/iam/configuration/DataSpaceEventsPropertiesTest.java`, parameterized):
@@ -666,11 +671,42 @@ and whether it is attributable.
     - `TOO_OLD` in a `report`-only configuration: no failure; ERROR once, the degraded behaviour from *Decisions*.
     - `UNVERIFIED`: no failure; WARN, and `TilCapabilities` re-probes later (Steps 3 and 4).
     - `PENDING` (`scopes-endpoint` on an empty TIL): no failure; INFO, resolved by a later re-probe (*Decisions*).
+- New `src/main/java/org/fiware/iam/dataspace/PublisherEntriesGuard.java`, a `@Context` bean with
+  `@Requires(condition = ListenerCondition)`. It is deliberately **not** gated by `ParticipantRemovedCondition`, because
+  two of the mistakes it catches can turn that condition false. It runs three checks, implemented as a pure helper in
+  `configuration/` (e.g. `PublisherEntryCheck`) so that the sweep can reuse them:
+  - **Dropped entries.** Read the unconverted entries with
+    `environment.getProperty("dataspace.events.publishers", List.class)` and compare them with `getPublishers()` as
+    multisets of `id`. A raw entry without a bound counterpart failed conversion, e.g. `mode: dataspce` or a non-numeric
+    `max-removals-per-run`. Without this check, the publisher would silently lose its authorization for every event
+    type. If it was the only removal publisher, the feature would also switch off while the operator believes the
+    cleanup is active.
+    - The entry carries `on-participant-removed` (also accept the key `onParticipantRemoved`) or its `types` contain
+      participant.removed: fail with a `ConfigurationException` naming `dataspace.events.publishers[<index>]`, its id,
+      and the consequence ("an invalid value drops the whole publisher entry").
+    - Any other entry: WARN only, naming the index and id. The same silent drop already happens today for the other
+      fields, so existing deployments must keep starting.
+  - **Inert policy.** A publisher whose `on-participant-removed` differs from the default
+    (`!equals(new OnParticipantRemoved())`, Lombok `@Data`) but whose `types` lack participant.removed gets a WARN:
+    `on-participant-removed of <id> is ignored: its types do not include org.fiware.dataspace.participant.removed`.
+    This is a WARN, not a failure: an ignored policy writes nothing, and `removalWritesConfigured()` rightly ignores it.
+    The check is per entry, so it also catches a publisher split over two entries whose policy sits on the entry
+    without the type.
+  - **Repeated removal publisher ids.** `removalPublishers()` (Step 1) keeps one entry per id, the first, so a
+    publisher split over several entries counts once for adoption and `removalMode` reads one policy. If two removal
+    entries of the same id carry different `on-participant-removed` policies (`!equals`), the later one would be
+    silently ignored: fail with a `ConfigurationException` naming both indexes and the id. Identical policies (e.g.
+    both default, as in existing deployments) are accepted.
+  - After a refresh the guard does not run, so Step 7 also calls the helper at the start of each
+    `ParticipantReconciler` run. It logs once per configuration change: ERROR for a dropped removal entry and for
+    conflicting repeated ids (the first entry's policy applies), WARN for the other findings.
 - Docs:
   - `README.md`: a new section *Reacting to participant removals* after *Watching the trust anchor registry*. It covers
     the modes table (with footnote ²: order grants are revoked in `granted` only for an entry attributed to P alone),
     keep/overrides (`keep` protects against every publisher; an override `report` is the per-publisher alternative),
-    stale events (`still_listed` via `registry-url`; for an unattributed-only entry it points to the adoption caveat
+    invalid policy values (an unconvertible value drops the whole publisher entry; start-up fails for a removal
+    publisher; `on-participant-removed` takes effect only when `types` include participant.removed; a publisher split over
+    several entries needs one policy, conflicting ones fail start-up), stale events (`still_listed` via `registry-url`; for an unattributed-only entry it points to the adoption caveat
     below, since the sweep does not complete that cleanup), the bounded publisher retries (a TIL outage longer than the
     retry window drops the event; the sweep completes it, hence `registry-url` is required for writing modes and an
     otherwise allowed adoption; an unattributed-only entry delisted before adoption is lost from the cleanup when its
@@ -703,6 +739,12 @@ and whether it is attributable.
   `TilCapabilities` (the probe classification itself is tested in Step 2). Unreachable: start-up succeeds, health
   DEGRADED (never DOWN), sweep and event writes blocked until a later probe succeeds. A context test checks that start-up fails with a
   too-old TIL when the mode is `dataspace` or adoption is allowed, and succeeds with `report` only or a refused adoption.
+- `PublisherEntriesGuardTest` (context tests, parameterized): start-up fails for a removal publisher with a misspelt
+  mode, a misspelt override mode or a non-numeric `max-removals-per-run`, also when it is the only removal publisher
+  (so `ParticipantRemovedCondition` is false); a peer entry dropped for another field only WARNs; a non-default
+  `on-participant-removed` on a publisher without the participant.removed type WARNs, and a default one does not;
+  two removal entries of one id fail start-up with different policies and start with identical ones; the
+  reconciler run logs a dropped entry after a refresh once per configuration change.
 
 **Acceptance:** a configured writing mode or adoption that needs a newer trusted-issuers-list makes start-up fail with
 a clear message; `report` only and an unreachable TIL do not.

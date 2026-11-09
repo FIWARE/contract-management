@@ -8,8 +8,11 @@ import lombok.Data;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Configuration of the data space event channel. Micronaut's refresh scope rebinds this singleton in place on a refresh.
@@ -49,6 +52,15 @@ public class DataSpaceEventsProperties {
     public static final int DEFAULT_TIR_WATCHER_MAX_PAGES = 1000;
     public static final int DEFAULT_TIR_WATCHER_CONFIRMATIONS = 2;
     public static final int DEFAULT_TIR_WATCHER_MAX_REMOVALS_PER_CYCLE = 5;
+    public static final int DEFAULT_MAX_REMOVALS_PER_RUN = 5;
+    public static final int DEFAULT_MAX_ADOPTIONS_PER_RUN = 50;
+    public static final Duration DEFAULT_RECONCILE_INITIAL_DELAY = Duration.ofMinutes(1);
+    public static final Duration DEFAULT_RECONCILE_INTERVAL = Duration.ofMinutes(15);
+    public static final int DEFAULT_PARTICIPANT_REMOVED_PAGE_SIZE = TirWatcherSettings.MAX_PAGE_SIZE;
+    public static final int DEFAULT_PARTICIPANT_REMOVED_MAX_PAGES = 1000;
+
+    // type and data as in §8 of the data space eventing architecture
+    public static final String PARTICIPANT_REMOVED_TYPE = "org.fiware.dataspace.participant.removed";
 
     /**
      * Id of the data space this instance belongs to. Events carrying a different dataspaceid are rejected.
@@ -81,6 +93,11 @@ public class DataSpaceEventsProperties {
      * The trust anchor side: announces participants removed from the trusted issuers registry. Requires the publisher.
      */
     private TirWatcherSettings tirWatcher = new TirWatcherSettings();
+
+    /**
+     * The receiving side of participant.removed: reconciliation sweep and reading of the TIL and publisher registries.
+     */
+    private ParticipantRemovedSettings participantRemoved = new ParticipantRemovedSettings();
 
     /**
      * Participants allowed to publish events, with the event types each of them may publish.
@@ -120,6 +137,74 @@ public class DataSpaceEventsProperties {
             return ownParticipantId;
         }
         return generalProperties.getDid();
+    }
+
+    /**
+     * The publishers with an id that may publish participant.removed, each carrying its on-participant-removed policy.
+     * One per id: of entries repeating an id, the first one's policy applies (the start-up guard rejects conflicting ones).
+     */
+    public List<Publisher> removalPublishers() {
+        Set<String> ids = new HashSet<>();
+        return publishers.stream()
+                .filter(publisher -> !isBlank(publisher.getId()))
+                .filter(publisher -> publisher.getTypes() != null && publisher.getTypes().contains(PARTICIPANT_REMOVED_TYPE))
+                .filter(publisher -> ids.add(publisher.getId()))
+                .toList();
+    }
+
+    /**
+     * The mode the publisher's removal of the DID gets. Empty if the DID is on any removal publisher's keep list or is the
+     * own id. A writing mode of a publisher without registry-url is clamped to REPORT.
+     */
+    public Optional<RemovalMode> removalMode(String publisherId, String did, @Nullable String ownId) {
+        if ((!isBlank(ownId) && ownId.equals(did)) || keptBy(did).isPresent()) {
+            return Optional.empty();
+        }
+        return Optional.of(removalPublishers().stream()
+                .filter(publisher -> publisher.getId().equals(publisherId))
+                .findFirst()
+                .map(publisher -> publisher.getOnParticipantRemoved().effectiveMode(did))
+                .orElse(RemovalMode.REPORT));
+    }
+
+    /**
+     * The removal publisher whose keep list contains the DID.
+     */
+    public Optional<String> keptBy(String did) {
+        return removalPublishers().stream()
+                .filter(publisher -> publisher.getOnParticipantRemoved().keeps(did))
+                .map(Publisher::getId)
+                .findFirst();
+    }
+
+    /**
+     * Adoption is allowed only for exactly one removal publisher, flagged adopt-unattributed, with a registry-url, and a
+     * configured dataspace-id. A refusal names the first failing check in {@link AdoptionPolicy.RefusalReason} order.
+     */
+    public AdoptionPolicy adoption() {
+        List<Publisher> removalPublishers = removalPublishers();
+        if (removalPublishers.stream().noneMatch(publisher -> publisher.getOnParticipantRemoved().isAdoptUnattributed())) {
+            return AdoptionPolicy.OFF;
+        }
+        if (removalPublishers.size() != 1) {
+            return AdoptionPolicy.refused(AdoptionPolicy.RefusalReason.MULTIPLE_PUBLISHERS);
+        }
+        if (isBlank(dataspaceId)) {
+            return AdoptionPolicy.refused(AdoptionPolicy.RefusalReason.NO_DATASPACE_ID);
+        }
+        if (isBlank(removalPublishers.get(0).getOnParticipantRemoved().getRegistryUrl())) {
+            return AdoptionPolicy.refused(AdoptionPolicy.RefusalReason.NO_REGISTRY_URL);
+        }
+        return AdoptionPolicy.ALLOWED;
+    }
+
+    /**
+     * True if the configuration asks for TIL writes: a writing mode or override of a removal publisher, or allowed adoption.
+     * Reads the configured modes, before the registry-url clamp.
+     */
+    public boolean removalWritesConfigured() {
+        return removalPublishers().stream().anyMatch(publisher -> publisher.getOnParticipantRemoved().configuresWrites())
+                || adoption().isAllowed();
     }
 
     private static boolean isBlank(@Nullable String value) {
@@ -464,8 +549,67 @@ public class DataSpaceEventsProperties {
             return Math.max(maxRemovalsPerCycle, MIN_MAX_REMOVALS_PER_CYCLE);
         }
 
-        private static Duration positiveOrDefault(@Nullable Duration value, Duration fallback) {
+        static Duration positiveOrDefault(@Nullable Duration value, Duration fallback) {
             return value == null || value.isZero() || value.isNegative() ? fallback : value;
+        }
+    }
+
+    /**
+     * Timing and paging of the per-publisher reconciliation of participant.removed. A refreshed value out of range is
+     * clamped by its effective getter; at startup such a value is rejected instead.
+     */
+    @Data
+    @ConfigurationProperties("participant-removed")
+    public static class ParticipantRemovedSettings {
+
+        public static final int MIN_MAX_PAGES = 1;
+
+        /**
+         * Requested page size when listing the TIL and the publisher registries, clamped to 1..100.
+         */
+        private int pageSize = DEFAULT_PARTICIPANT_REMOVED_PAGE_SIZE;
+
+        /**
+         * Pages fetched per listing at most; a list needing more is treated as incomplete. At least 1.
+         */
+        private int maxPages = DEFAULT_PARTICIPANT_REMOVED_MAX_PAGES;
+
+        /**
+         * The reconciliation sweep.
+         */
+        private Reconcile reconcile = new Reconcile();
+
+        public int effectivePageSize() {
+            return Math.clamp(pageSize, TirWatcherSettings.MIN_PAGE_SIZE, TirWatcherSettings.MAX_PAGE_SIZE);
+        }
+
+        public int effectiveMaxPages() {
+            return Math.max(maxPages, MIN_MAX_PAGES);
+        }
+
+        @Data
+        @ConfigurationProperties("reconcile")
+        public static class Reconcile {
+
+            /**
+             * Delay of the first sweep after startup. Null or non-positive falls back to the default.
+             */
+            @Nullable
+            private Duration initialDelay = DEFAULT_RECONCILE_INITIAL_DELAY;
+
+            /**
+             * Wait between the end of a sweep and the start of the next. Null or non-positive falls back to the default.
+             */
+            @Nullable
+            private Duration interval = DEFAULT_RECONCILE_INTERVAL;
+
+            public Duration effectiveInitialDelay() {
+                return TirWatcherSettings.positiveOrDefault(initialDelay, DEFAULT_RECONCILE_INITIAL_DELAY);
+            }
+
+            public Duration effectiveInterval() {
+                return TirWatcherSettings.positiveOrDefault(interval, DEFAULT_RECONCILE_INTERVAL);
+            }
         }
     }
 
@@ -495,6 +639,108 @@ public class DataSpaceEventsProperties {
          */
         @Nullable
         private List<String> scopes;
+
+        /**
+         * What a participant.removed event of this publisher, and its reconciliation, does to the TIL.
+         */
+        private OnParticipantRemoved onParticipantRemoved = new OnParticipantRemoved();
+    }
+
+    /**
+     * Removal policy of one publisher. Read through {@link #removalMode}, which applies keep, the own id and the clamps.
+     */
+    @Data
+    public static class OnParticipantRemoved {
+
+        public static final int MIN_MAX_REMOVALS_PER_RUN = 0;
+        public static final int MIN_MAX_ADOPTIONS_PER_RUN = 0;
+
+        /**
+         * Mode for the identifiers this publisher removes. Writing modes require registry-url.
+         */
+        private RemovalMode mode = RemovalMode.REPORT;
+
+        /**
+         * Identifiers never touched, whichever publisher removes them.
+         */
+        private List<String> keep = new ArrayList<>();
+
+        /**
+         * Per-identifier modes replacing mode. A list, since DIDs break property-map keys.
+         */
+        private List<ModeOverride> overrides = new ArrayList<>();
+
+        /**
+         * Breaker: a sweep finding more write candidates applies none of them. 0 lets every candidate trip it.
+         */
+        private int maxRemovalsPerRun = DEFAULT_MAX_REMOVALS_PER_RUN;
+
+        /**
+         * Attributes unattributed entries of listed participants to this publisher's data space.
+         */
+        private boolean adoptUnattributed = false;
+
+        /**
+         * Adoptions per sweep at most; the rest follow in the next sweep.
+         */
+        private int maxAdoptionsPerRun = DEFAULT_MAX_ADOPTIONS_PER_RUN;
+
+        /**
+         * Base URL of this publisher's trusted issuers registry, used by the sweep and the stale-event check. Without it
+         * the publisher gets neither, and its writing modes are clamped to report.
+         */
+        @Nullable
+        private String registryUrl;
+
+        public int effectiveMaxRemovalsPerRun() {
+            return Math.max(maxRemovalsPerRun, MIN_MAX_REMOVALS_PER_RUN);
+        }
+
+        public int effectiveMaxAdoptionsPerRun() {
+            return Math.max(maxAdoptionsPerRun, MIN_MAX_ADOPTIONS_PER_RUN);
+        }
+
+        boolean keeps(String did) {
+            return keep != null && keep.contains(did);
+        }
+
+        boolean configuresWrites() {
+            return configuredMode().writes() || overrides().anyMatch(override -> override.getMode().writes());
+        }
+
+        RemovalMode effectiveMode(String did) {
+            RemovalMode configured = overrides()
+                    .filter(override -> did.equals(override.getId()))
+                    .map(ModeOverride::getMode)
+                    .findFirst()
+                    .orElseGet(this::configuredMode);
+            return configured.writes() && isBlank(registryUrl) ? RemovalMode.REPORT : configured;
+        }
+
+        private RemovalMode configuredMode() {
+            return mode == null ? RemovalMode.REPORT : mode;
+        }
+
+        private Stream<ModeOverride> overrides() {
+            return overrides == null ? Stream.empty()
+                    : overrides.stream().filter(override -> override != null && override.getMode() != null);
+        }
+    }
+
+    /**
+     * Mode for a single identifier. Named ModeOverride so it does not shadow java.lang.Override.
+     */
+    @Data
+    public static class ModeOverride {
+        /**
+         * Identifier (DID) the mode applies to; compared with the event subject.
+         */
+        private String id;
+
+        /**
+         * Replaces the publisher's mode for this identifier, but not keep or the own-id exclusion.
+         */
+        private RemovalMode mode;
     }
 
     /**
@@ -571,6 +817,18 @@ public class DataSpaceEventsProperties {
         public boolean matches(ConditionContext context) {
             DataSpaceEventsProperties properties = context.getBean(DataSpaceEventsProperties.class);
             return properties.getPublisher().isEnabled() && properties.getTirWatcher().isEnabled();
+        }
+    }
+
+    /**
+     * Enables the handling of participant.removed: the listener is enabled and some publisher may publish it.
+     */
+    public static class ParticipantRemovedCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context) {
+            DataSpaceEventsProperties properties = context.getBean(DataSpaceEventsProperties.class);
+            return properties.getListener().isEnabled() && !properties.removalPublishers().isEmpty();
         }
     }
 }
