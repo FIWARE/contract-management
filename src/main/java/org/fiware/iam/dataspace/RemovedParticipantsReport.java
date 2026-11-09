@@ -43,6 +43,17 @@ public class RemovedParticipantsReport {
     }
 
     /**
+     * Mark a recorded participant as seen now, keeping its outcome. Does nothing if the entry was evicted or never recorded.
+     */
+    public synchronized void touch(String publisherId, String did) {
+        LinkedHashMap<String, Entry> entries = byPublisher.get(publisherId);
+        Entry entry = entries == null ? null : entries.remove(did);
+        if (entry != null) {
+            entries.put(did, new Entry(entry.outcome(), clock.instant()));
+        }
+    }
+
+    /**
      * The publisher's entries, the one seen longest ago first.
      */
     public synchronized List<Entry> entries(String publisherId) {

@@ -385,6 +385,31 @@ class DataSpaceEventsPropertiesTest {
                 Arguments.of(true, true, true));
     }
 
+    @ParameterizedTest(name = "tir-watcher {0}, participant.removed listened to {1} -> registry reader {2}")
+    @MethodSource("registryReaderConditions")
+    void registryReaderCondition(boolean tirWatcher, boolean participantRemoved, boolean expected) {
+        DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
+        properties.getPublisher().setEnabled(tirWatcher);
+        properties.getTirWatcher().setEnabled(tirWatcher);
+        properties.getListener().setEnabled(participantRemoved);
+        DataSpaceEventsProperties.Publisher publisher = new DataSpaceEventsProperties.Publisher();
+        publisher.setId(PROVIDER_ID);
+        publisher.setTypes(List.of(DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE));
+        properties.setPublishers(List.of(publisher));
+        ConditionContext conditionContext = mock(ConditionContext.class);
+        when(conditionContext.getBean(DataSpaceEventsProperties.class)).thenReturn(properties);
+
+        assertEquals(expected, new DataSpaceEventsProperties.RegistryReaderCondition().matches(conditionContext));
+    }
+
+    static Stream<Arguments> registryReaderConditions() {
+        return Stream.of(
+                Arguments.of(false, false, false),
+                Arguments.of(true, false, true),
+                Arguments.of(false, true, true),
+                Arguments.of(true, true, true));
+    }
+
     @ParameterizedTest(name = "publisher entry {0}")
     @MethodSource("publisherEntries")
     void bindsPublisherSubscriptionFields(String name, Map<String, Object> entry, String subscriptionsUrl, String clientId,

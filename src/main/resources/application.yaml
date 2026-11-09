@@ -31,6 +31,9 @@ micronaut:
     tir-watcher:
       type: scheduled
       core-pool-size: 1
+    participant-reconciler:
+      type: scheduled
+      core-pool-size: 1
 
   http:
     services:

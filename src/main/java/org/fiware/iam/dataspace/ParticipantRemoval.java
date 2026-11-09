@@ -80,13 +80,28 @@ public class ParticipantRemoval {
                             : Mono.just(new RemovalOutcome(publisherId, did, trigger, removalMode.tagValue(),
                             RemovalAction.REPORTED, false, null)))
                     .map(outcome -> finish(outcome, null))
-                    .onErrorMap(e -> {
-                        count(publisherId, removalMode.tagValue(), RemovalAction.FAILED);
-                        report.record(new RemovalOutcome(publisherId, did, trigger, removalMode.tagValue(),
-                                RemovalAction.FAILED, false, null));
-                        return new ParticipantRemovalException(publisherId, did, e);
-                    });
+                    .onErrorMap(e -> failed(publisherId, did, trigger, removalMode, e));
         });
+    }
+
+    /**
+     * Record the removal as reported without writing anything, e.g. while the sweep's breaker holds it back. Reads what
+     * is held for the report; fails like {@link #apply}.
+     */
+    public Mono<RemovalOutcome> withhold(String publisherId, String did, RemovalMode mode, String reason) {
+        return Mono.defer(() -> adapter.heldEntry(did))
+                .map(held -> new RemovalOutcome(publisherId, did, RemovalTrigger.RECONCILIATION, mode.tagValue(),
+                        held.isPresent() ? RemovalAction.REPORTED : RemovalAction.NOT_HELD, false,
+                        held.orElseGet(() -> RemovalPlan.emptyEntry(did))))
+                .map(outcome -> finish(outcome, reason))
+                .onErrorMap(e -> failed(publisherId, did, RemovalTrigger.RECONCILIATION, mode, e));
+    }
+
+    private ParticipantRemovalException failed(String publisherId, String did, RemovalTrigger trigger, RemovalMode mode,
+                                               Throwable cause) {
+        count(publisherId, mode.tagValue(), RemovalAction.FAILED);
+        report.record(new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), RemovalAction.FAILED, false, null));
+        return new ParticipantRemovalException(publisherId, did, cause);
     }
 
     private Mono<RemovalOutcome> decide(String publisherId, String did, RemovalTrigger trigger,
@@ -155,7 +170,10 @@ public class ParticipantRemoval {
         return outcome;
     }
 
-    private void count(String publisherId, String modeTag, RemovalAction action) {
+    /**
+     * Count a decision in {@value #METRIC_NAME}; also used for the sweep's outcomes without an identifier.
+     */
+    void count(String publisherId, String modeTag, RemovalAction action) {
         meterRegistry.counter(METRIC_NAME, PUBLISHER_TAG, publisherId, MODE_TAG, modeTag, ACTION_TAG, action.tagValue())
                 .increment();
     }
