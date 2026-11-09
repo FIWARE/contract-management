@@ -909,4 +909,24 @@ class DataSpaceEventsPropertiesTest {
         assertEquals(AdoptionPolicy.OFF, properties().adoption());
         assertFalse(properties().removalWritesConfigured());
     }
+
+    // Pins the binding gap that the Step 7 publisher-entries guard detects from the raw property list.
+    @ParameterizedTest(name = "{0} drops the publisher entry")
+    @MethodSource("unconvertiblePolicies")
+    void unconvertiblePolicyDropsPublisherEntryButKeepsRawEntry(String name, Map<String, Object> policy) {
+        config.put(PREFIX + "publishers", List.of(
+                Map.of("id", ANCHOR_1, "origin", PROVIDER_ORIGIN, "types", List.of(REMOVED), "on-participant-removed", policy),
+                Map.of("id", ANCHOR_2, "origin", CONSUMER_ORIGIN, "types", List.of(REMOVED))));
+        refresh();
+
+        assertEquals(List.of(ANCHOR_2), properties().getPublishers().stream().map(DataSpaceEventsProperties.Publisher::getId).toList());
+        assertEquals(2, context.getEnvironment().getProperty(PREFIX + "publishers", List.class).orElseThrow().size());
+    }
+
+    static Stream<Arguments> unconvertiblePolicies() {
+        return Stream.of(
+                Arguments.of("misspelt mode", Map.of("mode", "dataspce")),
+                Arguments.of("misspelt override mode", Map.of("overrides", List.of(Map.of("id", REMOVED_DID, "mode", "ful")))),
+                Arguments.of("non-numeric max-removals-per-run", Map.of("max-removals-per-run", "many")));
+    }
 }
