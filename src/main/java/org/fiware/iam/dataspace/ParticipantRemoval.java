@@ -63,19 +63,20 @@ public class ParticipantRemoval {
     public Mono<RemovalOutcome> apply(String publisherId, String did, RemovalTrigger trigger) {
         return Mono.defer(() -> {
             String ownId = properties.ownId(generalProperties);
-            Optional<RemovalMode> mode = properties.removalMode(publisherId, did, ownId);
-            if (mode.isEmpty()) {
+            // mode and registry-url from one read, so a refresh cannot leave a writing mode without its registry
+            Optional<DataSpaceEventsProperties.EffectiveRemoval> removal = properties.effectiveRemoval(publisherId, did, ownId);
+            if (removal.isEmpty()) {
                 String keptBy = did.equals(ownId) ? "it is this participant" : "it is on the keep list of " + properties.keptBy(did).orElse(publisherId);
                 return Mono.just(finish(new RemovalOutcome(publisherId, did, trigger, RemovalMode.KEEP_TAG_VALUE,
                         RemovalAction.KEPT, false, null), keptBy));
             }
-            RemovalMode removalMode = mode.get();
+            RemovalMode removalMode = removal.get().mode();
             return capabilities.requireSupported()
                     .thenReturn(true)
                     // report writes nothing, so an old list only costs it the read of what is held
                     .onErrorResume(e -> !removalMode.writes() && isTooOld(e), e -> Mono.just(false))
                     .flatMap(supported -> supported
-                            ? decide(publisherId, did, trigger, removalMode)
+                            ? decide(publisherId, did, trigger, removal.get())
                             : Mono.just(new RemovalOutcome(publisherId, did, trigger, removalMode.tagValue(),
                             RemovalAction.REPORTED, false, null)))
                     .map(outcome -> finish(outcome, null))
@@ -88,10 +89,12 @@ public class ParticipantRemoval {
         });
     }
 
-    private Mono<RemovalOutcome> decide(String publisherId, String did, RemovalTrigger trigger, RemovalMode mode) {
+    private Mono<RemovalOutcome> decide(String publisherId, String did, RemovalTrigger trigger,
+                                        DataSpaceEventsProperties.EffectiveRemoval removal) {
+        RemovalMode mode = removal.mode();
         // the TIL keeps no grant timestamps, so only the registry can tell a late event about a re-admitted participant
         Mono<Boolean> listedAgain = mode.writes() && trigger == RemovalTrigger.EVENT
-                ? registryLookup.isListed(registryUrl(publisherId), did)
+                ? registryLookup.isListed(removal.registryUrl(), did)
                 : Mono.just(false);
         return listedAgain.flatMap(listed -> listed
                 ? Mono.just(new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), RemovalAction.STILL_LISTED, false, null))
@@ -106,29 +109,40 @@ public class ParticipantRemoval {
             return Mono.just(new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), plan.action(), false, before));
         }
         // sequential, so the publisher's membership revoke (always last) runs only once everything before it succeeded
-        Mono<HeldEntry> state = Mono.just(before);
+        Mono<Progress> progress = Mono.just(new Progress(before, false));
         for (RemovalPlan.Operation operation : plan.operations()) {
-            state = state.flatMap(current -> run(did, operation, current));
+            progress = progress.flatMap(current -> run(did, operation, current.state())
+                    .map(step -> new Progress(step.state(), current.wrote() || step.wrote())));
         }
-        return state.map(after -> new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), plan.action(), true, after));
+        return progress.map(after -> new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), plan.action(),
+                after.wrote(), after.state()));
     }
 
-    private Mono<HeldEntry> run(String did, RemovalPlan.Operation operation, HeldEntry current) {
+    private Mono<Progress> run(String did, RemovalPlan.Operation operation, HeldEntry current) {
         return switch (operation) {
             case RemovalPlan.RevokeGrant revoke -> adapter.revokeGrant(did, revoke.scope(), revoke.type())
-                    .thenReturn(operation.applyTo(current));
-            case RemovalPlan.RevokeUnattributed ignored -> adapter.revokeUnattributed(did).thenReturn(operation.applyTo(current));
-            case RemovalPlan.DeleteIssuer ignored -> adapter.deleteIssuer(did).thenReturn(RemovalPlan.emptyEntry(did));
+                    .thenReturn(Progress.written(operation.applyTo(current)));
+            case RemovalPlan.RevokeUnattributed ignored -> adapter.revokeUnattributed(did)
+                    .thenReturn(Progress.written(operation.applyTo(current)));
+            case RemovalPlan.DeleteIssuer ignored -> adapter.deleteIssuer(did).thenReturn(Progress.written(RemovalPlan.emptyEntry(did)));
             // re-read right before the delete, so whatever was granted since the first read survives
             case RemovalPlan.DeleteIfEmpty deleteIfEmpty -> adapter.heldEntry(did).flatMap(fresh -> {
                 if (fresh.isEmpty() || deleteIfEmpty.deletes(fresh.get())) {
-                    return adapter.deleteIssuer(did).thenReturn(RemovalPlan.emptyEntry(did));
+                    return adapter.deleteIssuer(did).thenReturn(Progress.written(RemovalPlan.emptyEntry(did)));
                 }
                 return deleteIfEmpty.replaced() == null
-                        ? Mono.just(fresh.get())
+                        ? Mono.just(new Progress(fresh.get(), false))
                         : run(did, deleteIfEmpty.replaced(), fresh.get());
             });
         };
+    }
+
+    // the entry as the writes so far left it, and whether any of them reached the list
+    private record Progress(HeldEntry state, boolean wrote) {
+
+        static Progress written(HeldEntry state) {
+            return new Progress(state, true);
+        }
     }
 
     private RemovalOutcome finish(RemovalOutcome outcome, @Nullable String reason) {
@@ -143,14 +157,6 @@ public class ParticipantRemoval {
     private void count(String publisherId, String modeTag, RemovalAction action) {
         meterRegistry.counter(METRIC_NAME, PUBLISHER_TAG, publisherId, MODE_TAG, modeTag, ACTION_TAG, action.tagValue())
                 .increment();
-    }
-
-    private String registryUrl(String publisherId) {
-        return properties.removalPublishers().stream()
-                .filter(publisher -> publisher.getId().equals(publisherId))
-                .findFirst()
-                .map(publisher -> publisher.getOnParticipantRemoved().getRegistryUrl())
-                .orElseThrow(() -> new IllegalStateException("No registry-url for the writing publisher " + publisherId));
     }
 
     private static boolean isTooOld(Throwable e) {

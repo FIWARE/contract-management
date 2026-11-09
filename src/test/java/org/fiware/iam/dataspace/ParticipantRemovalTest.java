@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
@@ -157,6 +158,21 @@ class ParticipantRemovalTest {
 
         verify(adapter).deleteIssuer(X);
         assertNull(held);
+        assertTrue(report.entries(P1).get(0).outcome().applied());
+    }
+
+    @Test
+    void emptyEntryGainingAGrantBeforeTheDeleteIsNotApplied() {
+        configure(publisher(P1, RemovalMode.DATASPACE));
+        held = entry(0);
+        beforeSecondRead = entry -> entry(0, order());
+
+        RemovalOutcome outcome = apply(P1);
+
+        verify(adapter, never()).deleteIssuer(X);
+        verify(adapter, never()).revokeGrant(anyString(), anyString(), any());
+        assertFalse(outcome.applied());
+        assertEquals(entry(0, order()), outcome.held());
     }
 
     @Test
@@ -360,7 +376,7 @@ class ParticipantRemovalTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RemovalMode.class, names = {"DATASPACE", "FULL"})
+    @EnumSource(RemovalMode.class)
     void keepOfOnePublisherProtectsAgainstAll(RemovalMode p2Mode) {
         DataSpaceEventsProperties.Publisher p1 = publisher(P1, RemovalMode.REPORT);
         p1.getOnParticipantRemoved().setKeep(List.of(X));

@@ -80,9 +80,9 @@ class RemovalPlanTest {
                 RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.RECONCILIATION, true));
     }
 
-    @ParameterizedTest(name = "{0}")
-    @EnumSource(RemovalMode.class)
-    void keepTouchesNothing(RemovalMode ignored) {
+    // that keep beats every configured mode is decided by removalMode, see ParticipantRemovalTest
+    @Test
+    void keepTouchesNothing() {
         assertEquals(RemovalPlan.KEPT,
                 RemovalPlan.of(Optional.empty(), held(CREDENTIALS, membership(P1), order()), P1, RemovalTrigger.EVENT, true));
     }

@@ -55,11 +55,11 @@ public class RemovedParticipantsReport {
     public record Entry(RemovalOutcome outcome, Instant lastSeen) {
 
         /**
-         * True if a grant explains what is still held, null if the entry was not read.
+         * {@link org.fiware.iam.til.HeldEntry#isAttributable()} of what is still held, null if the entry was not read.
          */
         @Nullable
         public Boolean attributable() {
-            return outcome.held() == null ? null : !outcome.held().grants().isEmpty();
+            return outcome.held() == null ? null : outcome.held().isAttributable();
         }
     }
 }

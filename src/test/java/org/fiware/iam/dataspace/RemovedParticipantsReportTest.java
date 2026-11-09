@@ -58,7 +58,7 @@ class RemovedParticipantsReportTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("attributability")
-    void tellsWhetherAGrantExplainsTheEntry(String description, HeldEntry held, Boolean expected) {
+    void tellsWhetherGrantsExplainTheWholeEntry(String description, HeldEntry held, Boolean expected) {
         report.record(new RemovalOutcome(P1, X, RemovalTrigger.EVENT, "report", RemovalAction.REPORTED, false, held));
 
         assertEquals(expected, report.entries(P1).get(0).attributable());
@@ -71,7 +71,7 @@ class RemovedParticipantsReportTest {
                 Arguments.of("nothing held", new HeldEntry(X, List.of(), 0), false),
                 Arguments.of("unattributed only", new HeldEntry(X, List.of(), 1), false),
                 Arguments.of("granted", new HeldEntry(X, List.of(membership), 0), true),
-                Arguments.of("mixed", new HeldEntry(X, List.of(membership), 1), true));
+                Arguments.of("mixed", new HeldEntry(X, List.of(membership), 1), false));
     }
 
     private static RemovalOutcome outcome(String publisher, String did, RemovalAction action) {
