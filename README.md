@@ -397,14 +397,107 @@ dataspace:
         scopes: [ "default" ]
 ```
 
+#### Watching the trust anchor registry
+
+The CM of the **trust anchor** can announce participants that left the data space. With
+`dataspace.events.tir-watcher.enabled`, it polls the Trusted Issuers Registry (TIR) configured as the HTTP service
+`trusted-issuers-registry` (`micronaut.http.services.trusted-issuers-registry.url`) every `interval`, enumerates all listed
+DIDs through `GET /v4/issuers` and compares them with the previous snapshot. A DID that is missing for `confirmations`
+consecutive complete cycles is published to the subscribers as an event of type `org.fiware.dataspace.participant.removed`
+with `subject` and `data.participantId` set to the DID. Additions are taken into the snapshot but never announced. The latency
+of an announcement is therefore about `confirmations × interval` (by default 2 minutes).
+
+Startup fails with a message naming the key unless `publisher.enabled` is `true` (the events go out through the publisher),
+`own-participant-id` or `general.did` is set (it is the event `source`), and every `tir-watcher.*` value is in its range.
+
+| Key (`dataspace.events.tir-watcher.`) | Default | Range | Meaning |
+|---|---|---|---|
+| `enabled` | `false` | | Startup-time condition, needs a restart. |
+| `initial-delay` | `PT30S` | positive | Delay of the first cycle after startup. |
+| `interval` | `PT1M` | positive | Delay between the end of one cycle and the start of the next. |
+| `page-size` | `100` | 1..100 | `page[size]` of the first request. |
+| `max-pages` | `1000` | >= 1 | Pages per enumeration; a registry that needs more is never enumerated completely. |
+| `confirmations` | `2` | >= 1 | Consecutive complete cycles a DID must be missing before its removal is announced. |
+| `max-removals-per-cycle` | `5` | >= 0 | Circuit breaker, see below. `0` holds back every removal for the operator. |
+
+An out-of-range value fails startup. After a refresh it is clamped into its range instead; an `interval` or `initial-delay`
+that is not positive or empty falls back to its default.
+
+**Safeguards.** The watcher only ever acts on a registry it can trust:
+
+* **Complete enumeration only.** A cycle counts only if every page answered `2xx`, every non-empty page reports the `total` of
+  the first page, no DID is blank, and the number of distinct DIDs equals that `total`. The pages are followed through the
+  `page[after]` (and `page[size]`) of each page's `links.next`; host and path of the link are ignored, so the registry may
+  report a host CM cannot reach. The cursor must be an **integer**, as the TIR API specifies it (FIWARE trusted-issuers-list
+  and 0- or 1-based registries work). A registry with string cursors never completes an enumeration and logs a WARN every
+  cycle; nothing is ever announced from it. An incomplete cycle (outcome `incomplete`) changes nothing and logs a WARN
+  (`tir_enumeration_failed`); it neither confirms nor refutes a pending removal.
+* **Confirmations.** A removal is announced only after `confirmations` complete cycles in a row. A DID that is listed again
+  before that is forgotten.
+* **Circuit breaker.** If more than `max-removals-per-cycle` DIDs are missing at once, nothing changes and nothing is
+  announced (outcome `breaker`, alert `tir_mass_removal`). The count covers **all** DIDs missing from the snapshot, including
+  those still awaiting confirmation from earlier cycles, so a registry that loses entries a few at a time is caught as well.
+  Example (cap 5, confirmations 2): 3 DIDs removed in one cycle and 3 more in the next are 6 missing, and the breaker trips.
+  It trips again on every cycle until the registry is restored or the cap is raised. If the removals are legitimate, raise
+  `max-removals-per-cycle` through `POST :9090/refresh` and keep it raised for at least `confirmations` cycles
+  (≈ `confirmations × interval`): a tripped cycle does not count as a confirmation, so lowering the cap earlier trips the
+  breaker again and the removals stay pending.
+* **Empty registry.** A registry that turns empty (from at least one participant to none) is far likelier wiped or
+  misconfigured than really empty. Nothing changes and nothing is announced (outcome `empty`, alert `tir_empty`) until a
+  participant is listed again. Consequently the removal of the **last** participant is never announced; it would have no
+  recipient anyway. A TIR that is empty from the start is not alerted on: the first cycle logs one WARN
+  (`The trust anchor registry is empty; nothing to watch yet.`) and the watcher waits for participants.
+* **Silent first cycle.** The first complete cycle only takes the snapshot (outcome `initial`). The state is kept in memory,
+  so after a restart the first cycle is silent again, and removals that happened while CM was down are not announced.
+
+**Delivery.** A confirmed removal is published once at least one subscription of a participant **other than the removed one**
+is registered for `org.fiware.dataspace.participant.removed` (the removed participant's own lease may still be active). Until
+then, e.g. right after a publisher restart or in a subscriber's lease gap, it is retried on every **complete** cycle. While
+cycles end `incomplete`, `empty` or `breaker`, the retry waits, so an alert or an unreachable registry also delays already
+confirmed removals. Once the event is queued for at least one such subscription, the watcher is done with it: a queue that
+overflows or a delivery that exhausts its retries afterwards is not retried by the watcher, and subscribers that register
+later do not get it.
+
+**Alerts** (`tir_empty`, `tir_mass_removal`) are visible in three ways:
+
+* an ERROR log line with the code and the counts when the alert is raised, DEBUG while it persists, and INFO when the next
+  `complete` or `initial` cycle clears it;
+* the counter `dataspace.tir.cycles` with tag `outcome` (`initial`, `complete`, `incomplete`, `empty`, `breaker`), counted every
+  cycle; announced removals count in `dataspace.tir.removals`;
+* the health indicator `dataspace-tir-watcher`, which reports `DEGRADED` with `reason` `tir_empty` or `tir_mass_removal`. It
+  also reports `DEGRADED` with `reason: no_successful_cycle` when no cycle ended `complete` or `initial` for
+  `3 × interval` (counted from when the first cycle was due, so the initial delay never counts). Its details show the last
+  outcome, the last successful cycle and the sizes of the snapshot, the pending and the undelivered removals. As for the
+  subscriptions, `DEGRADED` keeps `/health` and the liveness and readiness probes at `200`.
+
+```yaml
+dataspace:
+  events:
+    own-participant-id: "did:web:trust-anchor.org"
+    publisher:
+      enabled: true
+      origin: "cm.trust-anchor.org"
+    tir-watcher:
+      enabled: true
+      interval: PT1M
+      confirmations: 2
+      max-removals-per-cycle: 5
+micronaut:
+  http:
+    services:
+      trusted-issuers-registry:
+        url: http://trusted-issuers-list:8080
+```
+
 #### Changing the configuration without a restart
 
-All `dataspace.events.*` values except `listener.enabled`, `listener.watch.enabled`, `publisher.enabled`, `subscriber.enabled`
-(startup-time conditions) and `publisher.sink-connect-timeout`/`publisher.sink-read-timeout` (used to build the sink client) are
+All `dataspace.events.*` values except `listener.enabled`, `listener.watch.enabled`, `publisher.enabled`, `subscriber.enabled`,
+`tir-watcher.enabled` (startup-time conditions) and `publisher.sink-connect-timeout`/`publisher.sink-read-timeout` (used to build the sink client) are
 refreshable; these need a restart. All other `publisher.*` values, e.g. the caps, the lease and the delivery settings, apply to
 the next request or delivery attempt (`delivery.queue-size` only to subscriptions that receive their first event afterwards).
 All other `subscriber.*` values and the publishers' `subscriptions-url`, `client-id` and `scopes` are refreshable as well; see
 [Subscribing to publishers](#subscribing-to-publishers) for how the subscriber reacts.
+All other `tir-watcher.*` values apply from the next cycle on.
 A refresh is triggered by:
 
 * `POST :9090/refresh` reloads the configuration. The management port is not authenticated, keep port 9090 cluster-internal.

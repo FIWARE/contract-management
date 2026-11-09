@@ -60,8 +60,8 @@ class TrustedIssuersRegistryReaderHttpTest implements TestPropertyProvider {
         properties.put("dataspace.events.own-participant-id", "did:web:provider.org");
         properties.put("dataspace.events.tir-watcher.enabled", "true");
         properties.put("dataspace.events.tir-watcher.page-size", String.valueOf(PAGE_SIZE));
-        properties.put("micronaut.executors.tir-watcher.type", "scheduled");
-        properties.put("micronaut.executors.tir-watcher.core-pool-size", "1");
+        // keeps the scheduled watcher from paging the fake registry during the test
+        properties.put("dataspace.events.tir-watcher.initial-delay", "PT1H");
         properties.put("micronaut.http.services.trusted-issuers-registry.url", "http://localhost:" + port);
         properties.put("micronaut.http.services.trusted-issuers-registry.path", "/");
         return properties;
