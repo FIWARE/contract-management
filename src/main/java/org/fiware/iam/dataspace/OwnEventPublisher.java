@@ -31,10 +31,11 @@ public class OwnEventPublisher {
 
     public Optional<PublishedEvent> publish(String type, @Nullable String subject, @Nullable Object data,
                                             @Nullable String id) {
-        if (!hasSource()) {
+        // read once: dataspace.events is refreshable, so a second read could find the source emptied
+        String source = properties.ownId(generalProperties);
+        if (!present(source)) {
             return Optional.empty();
         }
-        String source = properties.ownId(generalProperties);
         DataSpaceEventVO event = new DataSpaceEventVO()
                 .specversion(DataSpaceEventVO.Specversion._1_0)
                 .id(id == null || id.isBlank() ? UUID.randomUUID().toString() : id)
@@ -52,7 +53,10 @@ public class OwnEventPublisher {
      * Whether an own participant id is configured, i.e. whether {@link #publish} would publish at all.
      */
     public boolean hasSource() {
-        String source = properties.ownId(generalProperties);
+        return present(properties.ownId(generalProperties));
+    }
+
+    private static boolean present(@Nullable String source) {
         return source != null && !source.isBlank();
     }
 

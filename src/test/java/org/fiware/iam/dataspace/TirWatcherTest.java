@@ -250,6 +250,10 @@ class TirWatcherTest {
                         .confirmations(1).outcomes(INITIAL, EMPTY, COMPLETE, COMPLETE, COMPLETE)
                         .published("3:B", "4:B", "5:B").announced(1).snapshot(2).errors(1).warnings(1)
                         .info("cleared"),
+                scenario("publish fails after a benign retry: WARN again for the new reason",
+                        ok("A", "B"), ok("A").subscribedBy(), ok("A").publishFails(), ok("A").publishFails(), ok("A"))
+                        .confirmations(1).outcomes(INITIAL, COMPLETE, COMPLETE, COMPLETE, COMPLETE)
+                        .published("3:B", "4:B", "5:B").announced(1).warnings(2),
                 scenario("additions are never announced",
                         ok("A"), ok("A", "B"))
                         .outcomes(INITIAL, COMPLETE).snapshot(2));

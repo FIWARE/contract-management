@@ -91,11 +91,20 @@ public class TirWatcher {
      * A confirmed removal awaiting announcement; the event id is fixed at confirmation, so every retry is the same
      * event to the receivers' deduplication.
      */
-    private record Removal(String eventId, boolean warned) {
+    private record Removal(String eventId, @Nullable RetryReason warnedFor) {
 
-        Removal asWarned() {
-            return new Removal(eventId, true);
+        Removal withWarning(RetryReason reason) {
+            return new Removal(eventId, reason);
         }
+    }
+
+    /**
+     * Why a confirmed removal is kept for retry; a change of reason is logged at WARN again, so a failing delivery
+     * path is not hidden behind an earlier benign WARN.
+     */
+    private enum RetryReason {
+        NOT_SUBSCRIBED,
+        PUBLISH_FAILED
     }
 
     public TirWatcher(TrustedIssuersRegistryReader reader, OwnEventPublisher publisher,
@@ -172,7 +181,7 @@ public class TirWatcher {
             if (cycles >= confirmations) {
                 snapshot.remove(did);
                 pending.remove(did);
-                undelivered.put(did, new Removal(UUID.randomUUID().toString(), false));
+                undelivered.put(did, new Removal(UUID.randomUUID().toString(), null));
             }
         }
         announceUndelivered();
@@ -193,7 +202,7 @@ public class TirWatcher {
                 }
             } catch (RuntimeException e) {
                 // keeps the rest of the cycle (snapshot, alert, metric, status) intact
-                keepForRetry(did, "publishing failed: " + DownstreamError.reason(e), e);
+                keepForRetry(did, RetryReason.PUBLISH_FAILED, "publishing failed: " + DownstreamError.reason(e), e);
             }
         }
     }
@@ -205,7 +214,7 @@ public class TirWatcher {
         boolean othersSubscribed = subscriptionRegistry.active(PARTICIPANT_REMOVED_TYPE).stream()
                 .anyMatch(subscription -> !did.equals(subscription.subscriberId()));
         if (!othersSubscribed) {
-            keepForRetry(did, "no other participant subscribed", null);
+            keepForRetry(did, RetryReason.NOT_SUBSCRIBED, "no other participant subscribed", null);
             return true;
         }
         Optional<OwnEventPublisher.PublishedEvent> published =
@@ -217,7 +226,7 @@ public class TirWatcher {
         }
         int subscriptions = published.get().subscriptions();
         if (subscriptions < MIN_ANNOUNCED_SUBSCRIPTIONS) {
-            keepForRetry(did, "it matched no subscription", null);
+            keepForRetry(did, RetryReason.NOT_SUBSCRIBED, "it matched no subscription", null);
             return true;
         }
         meterRegistry.counter(REMOVALS_METRIC).increment();
@@ -237,10 +246,10 @@ public class TirWatcher {
         }
     }
 
-    private void keepForRetry(String did, String why, @Nullable Throwable cause) {
+    private void keepForRetry(String did, RetryReason reason, String why, @Nullable Throwable cause) {
         Removal removal = undelivered.get(did);
-        undelivered.put(did, removal.asWarned());
-        if (removal.warned()) {
+        undelivered.put(did, removal.withWarning(reason));
+        if (removal.warnedFor() == reason) {
             log.debug("Removal of participant {} still not announced: {}.", did, why, cause);
         } else {
             log.warn("Removal of participant {} not announced yet: {}; retried on the next complete cycle.", did, why,
