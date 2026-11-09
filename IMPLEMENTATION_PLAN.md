@@ -77,9 +77,11 @@ an unreachable list does not stop start-up.
   `TirLookupException` (`TIR_LOOKUP_FAILED`), answered `502`, so the publisher retries. The check runs only for
   writing modes (`report` writes nothing to protect); every writing mode has a `registry-url` (*Bounded publisher
   retries* below). A registry that lags
-  behind the announcement also yields `still_listed`; the next sweep (which reads `local − listed` fresh) then
-  completes the cleanup, so nothing is lost. The sweep itself needs no extra lookup: its window between the listing and
-  the writes is one run.
+  behind the announcement also yields `still_listed`; for an entry holding P's membership grant the next sweep (which
+  reads `local − listed` fresh) then completes the cleanup. An unattributed-only entry (footnote ¹) is not in `local`,
+  so the sweep never removes it: it follows the adoption caveat under *Bounded publisher retries* (adopted while still
+  listed, it converges; delisted before adoption, it stays until a later event names it). The sweep itself needs no
+  extra lookup: its window between the listing and the writes is one run.
 - **No empty issuer entries.** `deleteCredentialsByScope` keeps the issuer "even when no credential remains", so a
   `dataspace`/`granted` cleanup (or the adoption-path `revokeUnattributed`) can leave an issuer with zero credentials,
   still listed in the TIL's TIR view. That is not harmless: FIWARE VCVerifier (`verifier/trustedissuer.go`,
@@ -117,11 +119,16 @@ an unreachable list does not stop start-up.
   about 15 s in total) and then drops the event (`dropped`); other publishers have their own limits. So a TIL outage
   longer than the retry window loses the event, and only the sweep completes the cleanup (it reads `local − listed`
   fresh, so it needs no event). The sweep needs P's `registry-url`, therefore **`registry-url` is required** for a
-  publisher with a writing mode, a writing override or `adopt-unattributed: true`: the start-up guard (Step 7) fails
-  with a `ConfigurationException` whose message names the consequence ("without registry-url a failed or dropped
-  removal event is never completed"). After a refresh the guard does not run, so `removalMode` clamps a writing mode
+  publisher with a writing mode or a writing override: the start-up guard (Step 7) fails with a
+  `ConfigurationException` whose message names the consequence ("without registry-url a failed or dropped removal
+  event is never completed"). Adoption needs it too, to list P's participants, but a refused adoption writes nothing
+  and stays non-fatal (as everywhere else in this plan): the guard fails for `adopt-unattributed: true` without
+  `registry-url` only when that is the **only** obstacle, i.e. `adoption()` is `REFUSED` with reason
+  `NO_REGISTRY_URL`, with its own message ("adopt-unattributed requires registry-url: adoption lists P's participants
+  from it"). If adoption is refused for another reason as well (two removal publishers, no `dataspace-id`), that
+  reason is reported (WARN, `adoption_refused`) and start-up continues. After a refresh the guard does not run, so `removalMode` clamps a writing mode
   (or override) of a publisher without `registry-url` to `report`, and `adoption()` is `REFUSED` (reason
-  `no registry-url`), following the `effective*()` pattern; the sweep run logs an ERROR once per configuration change.
+  `NO_REGISTRY_URL`), following the `effective*()` pattern; the sweep run logs an ERROR once per configuration change.
   `report` without `registry-url` stays valid (events are reported, nothing is written, there is no sweep). One loss
   remains and is documented in the README: with adoption allowed, an unattributed-only entry that P delisted before the
   sweep adopted it is removed only by an event (the sweep never removes unattributed entries), so if that event is
@@ -285,11 +292,13 @@ Add the configuration only, without any behaviour.
       own id excludes nothing); otherwise an override of `publisherId` wins over its mode. A writing mode of a
       publisher without `registry-url` is clamped to `report` (*Bounded publisher retries*). A companion
       `keptBy(did)` returns the publisher whose `keep` applies, for the log line.
-    - `adoption()`: the `AdoptionPolicy` record `{State state (ALLOWED|REFUSED|OFF), @Nullable String reason}` under
-      the rule in *Decisions* (*Adoption assumes one data space*). `OFF` when no removal publisher sets
-      `adopt-unattributed`; `REFUSED` with the reason (more than one removal publisher, no `dataspace-id`, or no
-      `registry-url`) otherwise; `ALLOWED` only for exactly one removal publisher with the flag, a `registry-url` and a
-      `dataspace-id`. Pure configuration,
+    - `adoption()`: the `AdoptionPolicy` record `{State state (ALLOWED|REFUSED|OFF), @Nullable RefusalReason reason}`
+      under the rule in *Decisions* (*Adoption assumes one data space*). `RefusalReason` is an enum
+      (`MULTIPLE_PUBLISHERS`, `NO_DATASPACE_ID`, `NO_REGISTRY_URL`) with a log text each. `OFF` when no removal
+      publisher sets `adopt-unattributed`; otherwise `REFUSED` with the first failing check, in exactly that order, so
+      `NO_REGISTRY_URL` means the missing `registry-url` is the only obstacle (the start-up guard, Step 7, relies on
+      it); `ALLOWED` only for exactly one removal publisher with the flag, a `registry-url` and a `dataspace-id`. Pure
+      configuration,
       so `TilCapabilities` (Step 2), `RemovalPlan` (Step 3) and the sweep (Step 5) all read the same answer.
     - `removalWritesConfigured()`: true if any removal publisher has a mode or an override other than `report`, or
       `adoption()` is `ALLOWED`. The start-up guard (Step 7) fails on a too-old TIL only then.
@@ -305,7 +314,9 @@ Add the configuration only, without any behaviour.
   P1's `keep` excluding the DID for P2 in `full` (and P2's override), and the own id excluded even with a `full`
   override, and a writing mode and a writing override of a publisher without `registry-url` clamped to `report`.
   `adoption()` covers off, allowed, refused for two removal publishers, for a missing `dataspace-id` and for a
-  missing `registry-url`, and a peer publisher for other types that does not refuse it.
+  missing `registry-url`, the reason order (two publishers or no `dataspace-id` together with a missing
+  `registry-url` give `MULTIPLE_PUBLISHERS` / `NO_DATASPACE_ID`, not `NO_REGISTRY_URL`), and a peer publisher for
+  other types that does not refuse it.
   `removalWritesConfigured` covers report-only, a writing mode, a writing override, allowed adoption (true) and refused
   adoption with report-only (false). Also cover the effective clamps, `removalPublishers`, the binding of lower-case modes and of an `overrides` list with
   DIDs (a small `ApplicationContext.run(Map)` test).
@@ -640,10 +651,12 @@ and whether it is attributable.
   `ConfigurationException` that names the key and the value:
   - Configuration checks: an override with a blank id or no mode; a `registry-url` that is not an absolute http(s) URL;
     timing, cap and paging values outside their range (use the `requireEffective` pattern); a publisher with a
-    writing mode, a writing override or `adopt-unattributed: true` but no `registry-url`, with the message naming the
-    consequence (`... requires registry-url: without it there is no sweep, so a failed or dropped removal event is
-    never completed`; see *Bounded publisher retries*). As a WARN only, a DID on any publisher's `keep` that also
-    appears in any `overrides`.
+    writing mode or a writing override but no `registry-url`, with the message naming the consequence
+    (`... requires registry-url: without it there is no sweep, so a failed or dropped removal event is never
+    completed`; see *Bounded publisher retries*); `adoption()` `REFUSED` with reason `NO_REGISTRY_URL` (the only
+    obstacle to adoption), with its own message (`adopt-unattributed requires registry-url: adoption lists <P>'s
+    participants from it`). An adoption refused for another reason is not a failure; the guard logs the refusal WARN
+    (Step 5). As a WARN only, a DID on any publisher's `keep` that also appears in any `overrides`.
   - TIL capabilities (probes and `TilCapabilities` from Step 2): the guard probes the required capabilities once,
     concurrently, each bounded by `PROBE_TIMEOUT`, so a hanging TIL delays start-up by at most that and yields
     `UNVERIFIED`.
@@ -657,9 +670,11 @@ and whether it is attributable.
   - `README.md`: a new section *Reacting to participant removals* after *Watching the trust anchor registry*. It covers
     the modes table (with footnote ²: order grants are revoked in `granted` only for an entry attributed to P alone),
     keep/overrides (`keep` protects against every publisher; an override `report` is the per-publisher alternative),
-    stale events (`still_listed` via `registry-url`), the bounded publisher retries (a TIL outage longer than the
-    retry window drops the event; the sweep completes it, hence `registry-url` is required for writing modes and
-    adoption; an unattributed-only entry delisted before adoption is lost from the cleanup when its event is dropped), empty issuer
+    stale events (`still_listed` via `registry-url`; for an unattributed-only entry it points to the adoption caveat
+    below, since the sweep does not complete that cleanup), the bounded publisher retries (a TIL outage longer than the
+    retry window drops the event; the sweep completes it, hence `registry-url` is required for writing modes and an
+    otherwise allowed adoption; an unattributed-only entry delisted before adoption is lost from the cleanup when its
+    event is dropped or answered `still_listed`), empty issuer
     entries are deleted after a cleanup (why, and the race of a credential written just before the delete),
     the own id (an event whose `subject` is the own id is answered `SELF` and never counted; only the
     `data.participantId` fallback and the sweep count it as `mode=keep`), multi-membership, a subsection *Writing membership grants* for other
@@ -673,14 +688,16 @@ and whether it is attributable.
     deployments whose publishers already list participant.removed in `types` activate the feature (in `report` mode,
     reads only, degrading instead of failing on a too-old TIL; health turns DEGRADED, never DOWN, so the liveness
     and readiness probes are not affected), and start-up fails only if a writing mode or
-    adoption is configured and the TIL answers too old (or a writing mode lacks `registry-url`, which is new
+    adoption is configured and the TIL answers too old (or a writing mode or an otherwise allowed adoption lacks `registry-url`, which is new
     configuration and so cannot affect existing deployments).
   - `src/main/resources/application.yaml`: commented example.
   - `AGENTS.md`: list the new classes under `dataspace/`.
 - Tests: `ParticipantRemovedStartupGuardTest`, parameterized over invalid configurations and over
   `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` / `PENDING` × `report`-only / writing mode / writing override / allowed adoption / refused
-  adoption (behaves as `report`-only), the failure for a writing mode, a writing override and `adopt-unattributed`
-  without `registry-url` (message names the consequence; `report` without it starts), the WARN for a cross-publisher
+  adoption (behaves as `report`-only), the failure for a writing mode and a writing override without `registry-url`
+  (message names the consequence; `report` without it starts), the failure for `adopt-unattributed` without
+  `registry-url` when that is the only obstacle (adoption's own message), and no failure when that adoption is also
+  refused for two removal publishers or a missing `dataspace-id` (WARN only), the WARN for a cross-publisher
   `keep`/override, a hanging TIL (a real `TilCapabilities` over an adapter whose probes never answer: start-up
   completes after `PROBE_TIMEOUT` with the capabilities `UNVERIFIED`), otherwise with a mocked
   `TilCapabilities` (the probe classification itself is tested in Step 2). Unreachable: start-up succeeds, health
