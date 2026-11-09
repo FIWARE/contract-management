@@ -115,6 +115,26 @@ class TirWatcherTest {
         assertEquals(1, meterRegistry.counter(TirWatcher.REMOVALS_METRIC).count(), "announced");
     }
 
+    @Test
+    void restartForgetsRemovalsThatHappenedAcrossIt() {
+        List<String> published = new ArrayList<>();
+        Map<String, Set<String>> eventIds = new HashMap<>();
+        TirWatcher beforeRestart = newWatcher();
+        arrange(ok("A", "B"), 1, published, eventIds);
+        beforeRestart.cycle();
+        arrange(ok("A"), 2, published, eventIds);
+        assertEquals(COMPLETE, beforeRestart.cycle());
+        assertEquals(1, beforeRestart.status().pendingSize(), "B awaits its second confirmation");
+
+        TirWatcher afterRestart = newWatcher();
+        arrange(ok("A"), 3, published, eventIds);
+
+        assertEquals(INITIAL, afterRestart.cycle());
+        assertEquals(1, afterRestart.status().snapshotSize(), "snapshot");
+        assertEquals(0, afterRestart.status().pendingSize(), "pending");
+        assertEquals(List.of(), published, "the removal of B is not announced");
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("scenarios")
     void runsScenario(Scenario scenario) {
@@ -198,9 +218,6 @@ class TirWatcherTest {
                 scenario("reappearance",
                         ok("A", "B", "C"), ok("A", "B"), ok("A", "B", "C"), ok("A", "B"))
                         .outcomes(INITIAL, COMPLETE, COMPLETE, COMPLETE).snapshot(3).pending(1),
-                scenario("restart",
-                        ok("A"))
-                        .outcomes(INITIAL).snapshot(1),
                 scenario("over the cap",
                         ok("A", "B", "C", "D"), ok("A"))
                         .cap(2).outcomes(INITIAL, BREAKER).alert(FailureReason.TIR_MASS_REMOVAL).snapshot(4)
