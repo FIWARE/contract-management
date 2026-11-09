@@ -19,6 +19,9 @@ micronaut:
     notification-subscriber:
       type: scheduled
       core-pool-size: 1
+    tir-watcher:
+      type: scheduled
+      core-pool-size: 1
 
   http:
     services:

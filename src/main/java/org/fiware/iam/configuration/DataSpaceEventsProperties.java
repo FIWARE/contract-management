@@ -43,6 +43,12 @@ public class DataSpaceEventsProperties {
     public static final Duration DEFAULT_SUBSCRIBER_MIN_RENEWAL_DELAY = Duration.ofSeconds(10);
     public static final Duration DEFAULT_SUBSCRIBER_CONFLICT_RENEWAL_INTERVAL = Duration.ofHours(1);
     public static final Duration DEFAULT_SUBSCRIBER_RECONCILE_INTERVAL = Duration.ofMinutes(1);
+    public static final Duration DEFAULT_TIR_WATCHER_INITIAL_DELAY = Duration.ofSeconds(30);
+    public static final Duration DEFAULT_TIR_WATCHER_INTERVAL = Duration.ofMinutes(1);
+    public static final int DEFAULT_TIR_WATCHER_PAGE_SIZE = TirWatcherSettings.MAX_PAGE_SIZE;
+    public static final int DEFAULT_TIR_WATCHER_MAX_PAGES = 1000;
+    public static final int DEFAULT_TIR_WATCHER_CONFIRMATIONS = 2;
+    public static final int DEFAULT_TIR_WATCHER_MAX_REMOVALS_PER_CYCLE = 5;
 
     /**
      * Id of the data space this instance belongs to. Events carrying a different dataspaceid are rejected.
@@ -70,6 +76,11 @@ public class DataSpaceEventsProperties {
      * The subscribing side: registration of the own listener at the configured publishers.
      */
     private SubscriberSettings subscriber = new SubscriberSettings();
+
+    /**
+     * The trust anchor side: announces participants removed from the trusted issuers registry. Requires the publisher.
+     */
+    private TirWatcherSettings tirWatcher = new TirWatcherSettings();
 
     /**
      * Participants allowed to publish events, with the event types each of them may publish.
@@ -376,6 +387,89 @@ public class DataSpaceEventsProperties {
     }
 
     /**
+     * Polling of the trusted issuers registry. A refreshed value out of range is clamped by its effective getter, which
+     * all readers use; at startup such a value is rejected instead.
+     */
+    @Data
+    @ConfigurationProperties("tir-watcher")
+    public static class TirWatcherSettings {
+
+        // Bounds of page[size] in the trusted issuers registry API.
+        public static final int MIN_PAGE_SIZE = 1;
+        public static final int MAX_PAGE_SIZE = 100;
+
+        public static final int MIN_MAX_PAGES = 1;
+        public static final int MIN_CONFIRMATIONS = 1;
+        public static final int MIN_MAX_REMOVALS_PER_CYCLE = 0;
+
+        /**
+         * Enables the watcher. Requires the publisher. Evaluated at startup only.
+         */
+        private boolean enabled = false;
+
+        /**
+         * Delay of the first cycle after startup. Null or non-positive falls back to the default.
+         */
+        @Nullable
+        private Duration initialDelay = DEFAULT_TIR_WATCHER_INITIAL_DELAY;
+
+        /**
+         * Wait between the end of a cycle and the start of the next. Null or non-positive falls back to the default.
+         */
+        @Nullable
+        private Duration interval = DEFAULT_TIR_WATCHER_INTERVAL;
+
+        /**
+         * Requested page[size], clamped to 1..100. The registry may still answer with smaller pages.
+         */
+        private int pageSize = DEFAULT_TIR_WATCHER_PAGE_SIZE;
+
+        /**
+         * Pages fetched per enumeration at most; a registry needing more is treated as incomplete. At least 1.
+         */
+        private int maxPages = DEFAULT_TIR_WATCHER_MAX_PAGES;
+
+        /**
+         * Consecutive complete cycles a participant must be missing before its removal is announced. At least 1.
+         */
+        private int confirmations = DEFAULT_TIR_WATCHER_CONFIRMATIONS;
+
+        /**
+         * Circuit breaker: more participants missing at once (newly missing plus those awaiting confirmation) stops the
+         * cycle with an alert. 0 lets every removal trip it, so none is announced until the cap is raised.
+         */
+        private int maxRemovalsPerCycle = DEFAULT_TIR_WATCHER_MAX_REMOVALS_PER_CYCLE;
+
+        public Duration effectiveInitialDelay() {
+            return positiveOrDefault(initialDelay, DEFAULT_TIR_WATCHER_INITIAL_DELAY);
+        }
+
+        public Duration effectiveInterval() {
+            return positiveOrDefault(interval, DEFAULT_TIR_WATCHER_INTERVAL);
+        }
+
+        public int effectivePageSize() {
+            return Math.clamp(pageSize, MIN_PAGE_SIZE, MAX_PAGE_SIZE);
+        }
+
+        public int effectiveMaxPages() {
+            return Math.max(maxPages, MIN_MAX_PAGES);
+        }
+
+        public int effectiveConfirmations() {
+            return Math.max(confirmations, MIN_CONFIRMATIONS);
+        }
+
+        public int effectiveMaxRemovalsPerCycle() {
+            return Math.max(maxRemovalsPerCycle, MIN_MAX_REMOVALS_PER_CYCLE);
+        }
+
+        private static Duration positiveOrDefault(@Nullable Duration value, Duration fallback) {
+            return value == null || value.isZero() || value.isNegative() ? fallback : value;
+        }
+    }
+
+    /**
      * A participant allowed to publish events. The id is matched against the token, the origin against the webhook handshake.
      */
     @Data
@@ -465,6 +559,18 @@ public class DataSpaceEventsProperties {
                     .getListener()
                     .getWatch()
                     .isEnabled();
+        }
+    }
+
+    /**
+     * Enables the trust anchor watcher, which publishes through the sending side.
+     */
+    public static class TirWatcherCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context) {
+            DataSpaceEventsProperties properties = context.getBean(DataSpaceEventsProperties.class);
+            return properties.getPublisher().isEnabled() && properties.getTirWatcher().isEnabled();
         }
     }
 }

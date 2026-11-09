@@ -135,7 +135,7 @@ class PublishEndpointTest implements TestPropertyProvider {
             body.put("data", payload.data());
         }
 
-        HttpResponse<PublishEndpoint.PublishedEvent> response = post(body);
+        HttpResponse<OwnEventPublisher.PublishedEvent> response = post(body);
 
         DataSpaceEventVO event = published();
         assertEquals(HttpStatus.ACCEPTED, response.getStatus());
@@ -148,14 +148,14 @@ class PublishEndpointTest implements TestPropertyProvider {
         assertEquals(DATASPACE_ID, event.getDataspaceid());
         assertEquals(MediaType.APPLICATION_JSON, event.getDatacontenttype());
         assertEquals(payload.data(), event.getData());
-        assertEquals(new PublishEndpoint.PublishedEvent(event.getId(), MATCHING_SUBSCRIPTIONS), response.body());
+        assertEquals(new OwnEventPublisher.PublishedEvent(event.getId(), MATCHING_SUBSCRIPTIONS), response.body());
     }
 
     @Test
     void keepsAnExplicitId() {
         String id = "urn:event:4711";
 
-        HttpResponse<PublishEndpoint.PublishedEvent> response = post(Map.of("type", TYPE, "id", id));
+        HttpResponse<OwnEventPublisher.PublishedEvent> response = post(Map.of("type", TYPE, "id", id));
 
         assertEquals(id, published().getId());
         assertEquals(id, response.body().id());
@@ -209,8 +209,8 @@ class PublishEndpointTest implements TestPropertyProvider {
     record Payload(Object data) {
     }
 
-    private HttpResponse<PublishEndpoint.PublishedEvent> post(Map<String, Object> body) {
-        return client.toBlocking().exchange(HttpRequest.POST(EVENTS_PATH, body), PublishEndpoint.PublishedEvent.class);
+    private HttpResponse<OwnEventPublisher.PublishedEvent> post(Map<String, Object> body) {
+        return client.toBlocking().exchange(HttpRequest.POST(EVENTS_PATH, body), OwnEventPublisher.PublishedEvent.class);
     }
 
     private DataSpaceEventVO published() {

@@ -66,6 +66,7 @@ api/
   contract-management.yaml          # OpenAPI of CM's own API -> generated org.fiware.iam.cm.api/.model (*VO)
   dataspace-events.yaml             # Data space events API -> org.fiware.iam.events.api/.model (DataSpaceEventVO)
   rainbow.yaml                      # Rainbow client spec -> org.fiware.rainbow.*
+  (pom only) til.api.url            # TIL management spec -> org.fiware.iam.til.* (TrustedIssuersListAdapter)
 ```
 
 ## Build & Test
@@ -101,6 +102,9 @@ mvn test -Dtest=TMForumAdapterTest
 - Refresh reactions: a `RefreshEvent` listener may run before Micronaut has rebound the properties; do the work async
   inside `ConfigurationRefreshLock.exclusively` (released only after the rebind). `dataspace.EventListener` clashes with
   Micronaut's `@EventListener` annotation in that package; implement `ApplicationEventListener<...>` there instead
+- Scheduled work: own `micronaut.executors.<name>` (type scheduled) + `@Named` `TaskScheduler` bean (see
+  `NotificationBeanFactory`); refreshable intervals via a self-rescheduling one-shot chain (`DataSpaceEventSubscriber`);
+  tests drive it with `dataspace/RecordingTaskScheduler`
 - Time in tests: inject `java.time.Clock` (`bean/ClockFactory`), drive it with `dataspace/MutableClock` in tests
 - Metrics: inject `Optional<MeterRegistry>`, fall back to `CompositeMeterRegistry` (see `EventListener`); bounded tag values
 - Doc-comment density is low: one-line Javadoc on classes/interfaces and interface methods, Javadoc on configuration
