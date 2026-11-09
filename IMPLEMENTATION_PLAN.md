@@ -286,7 +286,8 @@ Add the configuration only, without any behaviour.
     `effective*()` getter, as `TirWatcherSettings` does. Also add `page-size`/`max-pages` for reading the TIL and the
     publisher registries, reusing the `TirWatcherSettings.MIN/MAX_PAGE_SIZE` bounds.
   - Add helpers on the properties:
-    - `removalPublishers()`: the publishers with a non-blank id whose `types` contain the participant.removed type.
+    - `removalPublishers()`: the publishers with a non-blank id whose `types` contain the participant.removed type,
+      one per id (the first entry; Step 7 rejects repeated ids with conflicting policies).
       Move `TirWatcher.PARTICIPANT_REMOVED_TYPE` to a shared constant or reference it.
     - `removalMode(publisherId, did, ownId)`: the effective mode. Returns empty when the DID is on the `keep` list of
       **any** removal publisher (see *Decisions*) or equals `ownId` (callers pass `ownId(generalProperties)`; a blank
@@ -672,7 +673,7 @@ and whether it is attributable.
     - `PENDING` (`scopes-endpoint` on an empty TIL): no failure; INFO, resolved by a later re-probe (*Decisions*).
 - New `src/main/java/org/fiware/iam/dataspace/PublisherEntriesGuard.java`, a `@Context` bean with
   `@Requires(condition = ListenerCondition)`. It is deliberately **not** gated by `ParticipantRemovedCondition`, because
-  both mistakes it catches can turn that condition false. It runs two checks, implemented as a pure helper in
+  two of the mistakes it catches can turn that condition false. It runs three checks, implemented as a pure helper in
   `configuration/` (e.g. `PublisherEntryCheck`) so that the sweep can reuse them:
   - **Dropped entries.** Read the unconverted entries with
     `environment.getProperty("dataspace.events.publishers", List.class)` and compare them with `getPublishers()` as
@@ -689,15 +690,23 @@ and whether it is attributable.
     (`!equals(new OnParticipantRemoved())`, Lombok `@Data`) but whose `types` lack participant.removed gets a WARN:
     `on-participant-removed of <id> is ignored: its types do not include org.fiware.dataspace.participant.removed`.
     This is a WARN, not a failure: an ignored policy writes nothing, and `removalWritesConfigured()` rightly ignores it.
+    The check is per entry, so it also catches a publisher split over two entries whose policy sits on the entry
+    without the type.
+  - **Repeated removal publisher ids.** `removalPublishers()` (Step 1) keeps one entry per id, the first, so a
+    publisher split over several entries counts once for adoption and `removalMode` reads one policy. If two removal
+    entries of the same id carry different `on-participant-removed` policies (`!equals`), the later one would be
+    silently ignored: fail with a `ConfigurationException` naming both indexes and the id. Identical policies (e.g.
+    both default, as in existing deployments) are accepted.
   - After a refresh the guard does not run, so Step 7 also calls the helper at the start of each
-    `ParticipantReconciler` run. It logs once per configuration change: ERROR for a dropped removal entry, WARN for the
-    other findings.
+    `ParticipantReconciler` run. It logs once per configuration change: ERROR for a dropped removal entry and for
+    conflicting repeated ids (the first entry's policy applies), WARN for the other findings.
 - Docs:
   - `README.md`: a new section *Reacting to participant removals* after *Watching the trust anchor registry*. It covers
     the modes table (with footnote ²: order grants are revoked in `granted` only for an entry attributed to P alone),
     keep/overrides (`keep` protects against every publisher; an override `report` is the per-publisher alternative),
     invalid policy values (an unconvertible value drops the whole publisher entry; start-up fails for a removal
-    publisher; `on-participant-removed` takes effect only when `types` include participant.removed), stale events (`still_listed` via `registry-url`; for an unattributed-only entry it points to the adoption caveat
+    publisher; `on-participant-removed` takes effect only when `types` include participant.removed; a publisher split over
+    several entries needs one policy, conflicting ones fail start-up), stale events (`still_listed` via `registry-url`; for an unattributed-only entry it points to the adoption caveat
     below, since the sweep does not complete that cleanup), the bounded publisher retries (a TIL outage longer than the
     retry window drops the event; the sweep completes it, hence `registry-url` is required for writing modes and an
     otherwise allowed adoption; an unattributed-only entry delisted before adoption is lost from the cleanup when its
@@ -733,7 +742,8 @@ and whether it is attributable.
 - `PublisherEntriesGuardTest` (context tests, parameterized): start-up fails for a removal publisher with a misspelt
   mode, a misspelt override mode or a non-numeric `max-removals-per-run`, also when it is the only removal publisher
   (so `ParticipantRemovedCondition` is false); a peer entry dropped for another field only WARNs; a non-default
-  `on-participant-removed` on a publisher without the participant.removed type WARNs, and a default one does not; the
+  `on-participant-removed` on a publisher without the participant.removed type WARNs, and a default one does not;
+  two removal entries of one id fail start-up with different policies and start with identical ones; the
   reconciler run logs a dropped entry after a refresh once per configuration change.
 
 **Acceptance:** a configured writing mode or adoption that needs a newer trusted-issuers-list makes start-up fail with

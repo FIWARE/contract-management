@@ -8,8 +8,10 @@ import lombok.Data;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -139,11 +141,14 @@ public class DataSpaceEventsProperties {
 
     /**
      * The publishers with an id that may publish participant.removed, each carrying its on-participant-removed policy.
+     * One per id: of entries repeating an id, the first one's policy applies (the start-up guard rejects conflicting ones).
      */
     public List<Publisher> removalPublishers() {
+        Set<String> ids = new HashSet<>();
         return publishers.stream()
                 .filter(publisher -> !isBlank(publisher.getId()))
                 .filter(publisher -> publisher.getTypes() != null && publisher.getTypes().contains(PARTICIPANT_REMOVED_TYPE))
+                .filter(publisher -> ids.add(publisher.getId()))
                 .toList();
     }
 
@@ -727,7 +732,14 @@ public class DataSpaceEventsProperties {
      */
     @Data
     public static class ModeOverride {
+        /**
+         * Identifier (DID) the mode applies to; compared with the event subject.
+         */
         private String id;
+
+        /**
+         * Replaces the publisher's mode for this identifier, but not keep or the own-id exclusion.
+         */
         private RemovalMode mode;
     }
 

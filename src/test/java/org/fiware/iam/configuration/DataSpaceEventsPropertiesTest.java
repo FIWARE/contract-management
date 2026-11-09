@@ -681,7 +681,10 @@ class DataSpaceEventsPropertiesTest {
                         AdoptionPolicy.refused(AdoptionPolicy.RefusalReason.MULTIPLE_PUBLISHERS)),
                 Arguments.of("missing dataspace-id reported before a missing registry-url",
                         propertiesWith("", removalPublisher(ANCHOR_1, null, adopt)),
-                        AdoptionPolicy.refused(AdoptionPolicy.RefusalReason.NO_DATASPACE_ID)));
+                        AdoptionPolicy.refused(AdoptionPolicy.RefusalReason.NO_DATASPACE_ID)),
+                Arguments.of("allowed for one publisher split over two entries", propertiesWith(DATASPACE_ID,
+                                removalPublisher(ANCHOR_1, REGISTRY_URL, adopt), removalPublisher(ANCHOR_1, REGISTRY_URL, adopt)),
+                        AdoptionPolicy.ALLOWED));
     }
 
     @ParameterizedTest(name = "writes configured: {0}")
@@ -727,6 +730,18 @@ class DataSpaceEventsPropertiesTest {
         DataSpaceEventsProperties properties = propertiesWith(null, removal, peer(ANCHOR_2), withoutId, withoutTypes);
 
         assertEquals(List.of(removal), properties.removalPublishers());
+    }
+
+    @Test
+    void removalPublishersKeepTheFirstEntryPerId() {
+        DataSpaceEventsProperties.Publisher first = removalPublisher(ANCHOR_1, REGISTRY_URL, p -> p.setMode(RemovalMode.GRANTED));
+        DataSpaceEventsProperties.Publisher repeated = removalPublisher(ANCHOR_1, REGISTRY_URL, p -> p.setMode(RemovalMode.FULL));
+        DataSpaceEventsProperties.Publisher other = removalPublisher(ANCHOR_2, REGISTRY_URL, p -> {
+        });
+        DataSpaceEventsProperties properties = propertiesWith(null, first, repeated, other);
+
+        assertEquals(List.of(first, other), properties.removalPublishers());
+        assertEquals(Optional.of(RemovalMode.GRANTED), properties.removalMode(ANCHOR_1, REMOVED_DID, OWN_ID));
     }
 
     @ParameterizedTest(name = "{0}")
