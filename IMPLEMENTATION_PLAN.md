@@ -29,12 +29,11 @@ an unreachable list does not stop start-up.
   ¹ Revoked instead when adoption is allowed (`adopt-unattributed`, Step 5) and the identifier comes from an **event**:
   P's explicit announcement attributes an entry that holds *nothing but* unattributed credentials to P. A mixed entry is
   never adopted or revoked, because `CredentialsVO` carries no scope and its credentials cannot be split.
-  **Open question for the ticket owner:** this departs from the literal acceptance line "unattributed entries survive
-  every mode but `full`". It applies only when the operator opted into `adopt-unattributed` (which declares that
-  unattributed entries of this participant belong to P's data space); without adoption, that acceptance line holds as
-  written. If the owner rejects it, the footnote is dropped and such entries stay in `dataspace`/`granted` (one branch
-  of `RemovalPlan`). `RemovalPlanTest` names the case explicitly
-  (`unattributedOnlyEntryIsRevokedByEventWhenAdoptionAllowed`).
+  **Confirmed by the ticket owner** as a deliberate departure from the literal acceptance line "unattributed entries
+  survive every mode but `full`". It applies only when adoption is allowed (the operator opted into
+  `adopt-unattributed`, declaring that unattributed entries of this participant belong to P's data space); without
+  adoption, that acceptance line holds as written. `RemovalPlanTest` names the case explicitly
+  (`unattributedOnlyEntryIsRevokedByEventWhenAdoptionAllowed`), and the README states it.
 
   **The sweep never removes unattributed entries** (deliberate asymmetry). It acts only on entries that hold P's
   membership grant (`local`). An unattributed-only entry that P no longer lists is indistinguishable from an
@@ -45,8 +44,9 @@ an unreachable list does not stop start-up.
 
   An identifier on `keep` and this participant's **own id** (`DataSpaceEventsProperties.ownId(generalProperties)`:
   `own-participant-id`, falling back to `general.did`, as the `TirWatcher` resolves it) are never touched, by the event
-  path or by the sweep. Both are excluded inside `removalMode`, so neither path can forget it: a `full` event about our
-  own removal never deletes our own issuer entry. An override for an identifier replaces the publisher's mode for that
+  path, the sweep or adoption. Both are excluded inside `removalMode`, and every path (adoption included, Step 5)
+  drops identifiers for which it is empty, so none can forget it: a `full` event about our own removal never deletes
+  our own issuer entry, and an operator-provisioned unattributed own entry is never adopted. An override for an identifier replaces the publisher's mode for that
   identifier.
 - **Who writes membership grants.** Contract-management writes a `dataspace-membership` grant in exactly one place:
   adoption (Step 5, `TrustedIssuersListAdapter.grantMembership`). Its order paths (`TilProductOrderHandler`,
@@ -100,9 +100,11 @@ an unreachable list does not stop start-up.
 - **Adoption limit.** Adoption is not a removal and is not under the breaker. It has its own
   `max-adoptions-per-run` (default 50) that applies the first N candidates per run and continues on the next run.
   Truncation is safe here, because adoption only adds a membership grant before it removes the duplicate unattributed
-  credentials; it never takes trust away.
+  credentials. Adoption re-reads the entry before the removal and skips it if the unattributed credentials changed
+  since they were copied (Step 5); the TIL has no conditional delete, so a credential added between that re-read and
+  the delete is still lost. This remaining window is an accepted race, documented in the README.
 - **Adoption assumes one data space.** An unattributed entry can only be attributed to P if this participant belongs to
-  P's data space alone. Adoption is therefore allowed only when `dataspace.events.dataspace-id` is set (the operator
+  P's data space alone. Adoption is therefore allowed (`DataSpaceEventsProperties.adoption()`, Step 1) only when `dataspace.events.dataspace-id` is set (the operator
   declares the instance's single data space) **and**
   `removalPublishers()` contains exactly one publisher, which has `adopt-unattributed: true`. Counting all
   configured publishers instead was rejected: `dataspace.events.publishers` also lists peers that publish other event
@@ -118,7 +120,10 @@ an unreachable list does not stop start-up.
   management port (9090), following `PublishEndpoint`. A management-port guard (as `ManagementPortGuard`) fails start-up
   when `endpoints.all.port` is unset or equals the server port. No OpenAPI change is needed.
 - **TIL capabilities** (holder and probes in Step 2, used by Steps 3–7). The TIL has no version endpoint, so
-  side-effect-free probes decide each required capability. `TilCapabilities` keeps one state per capability:
+  side-effect-free probes decide each required capability. There are three: `typed-scopes` (the typed list filter,
+  TIL-1), `scopes-endpoint` (`GET /issuer/{did}/scopes`, TIL-2) and `unscoped` (TIL-3). `/scopes` gets its own probe
+  because a list may have the filter without it (TIL-1 without TIL-2, or a proxy that does not route the path), and
+  every mode, `report` included, reads it through `heldEntry`. `TilCapabilities` keeps one state per capability:
   `SUPPORTED`, `TOO_OLD` or `UNVERIFIED`. Answers map as follows:
   | probe answer | state |
   |---|---|
@@ -127,8 +132,14 @@ an unreachable list does not stop start-up.
   | `401`, `403`, `408`, `429` (not a version signal) | `UNVERIFIED` |
   | `5xx`, connection error, timeout | `UNVERIFIED` |
 
-  Required capabilities follow the current (refreshable) configuration: typed scopes always; `unscoped` only if a
-  publisher has `adopt-unattributed`. While a required capability is not `SUPPORTED`, every TIL access of this feature
+  The `scopes-endpoint` probe asks for an issuer that cannot exist, so its positive answer is a `404`, not a `400`: it
+  is `SUPPORTED` only on a `404` whose body is the TIL's `ProblemDetails` with the issuer-not-found message (a named
+  constant, confirmed against the TIL source). Any other `404` (a route that does not exist: Micronaut's
+  `Page Not Found`, a proxy page, an empty body) is `TOO_OLD`; the other rows of the table apply unchanged.
+
+  Required capabilities follow the current (refreshable) configuration: `typed-scopes` and `scopes-endpoint` always;
+  `unscoped` only while adoption is **allowed** (`adoption()`, Step 1). A refused adoption makes no `unscoped` call, so
+  it requires nothing; the refusal is already reported through its WARN and `action=adoption_refused`. While a required capability is not `SUPPORTED`, every TIL access of this feature
   fails with `TrustedIssuersException` (new `FailureReason`s `TIL_CAPABILITY_UNVERIFIED` / `TIL_TOO_OLD`, naming the
   capability), so the `TrustedIssuersException` → `502` mapping that Step 3 adds to `EventListener.dispatch` covers
   events (today `dispatch` answers every handler error with `500`). `UNVERIFIED` is re-probed
@@ -137,7 +148,7 @@ an unreachable list does not stop start-up.
 - **Start-up and an old or unreachable TIL.** `ParticipantRemovedCondition` activates on configuration that existing
   deployments may already have (a publisher whose `types` include participant.removed). So:
   - Start-up fails only when the TIL definitively answers `TOO_OLD` **and** the configuration needs writes: a publisher
-    mode or an override other than `report`, or `adopt-unattributed`. That is what the ticket's "a configured mode
+    mode or an override other than `report`, or an allowed adoption (a refused `adopt-unattributed` writes nothing). That is what the ticket's "a configured mode
     needs a newer TIL" means; `report` is the default, not a choice to fail on.
   - A `report`-only configuration with a `TOO_OLD` TIL degrades instead: ERROR logged once, health DOWN, the report
     endpoint shows `til: too-old`, no sweep runs.
@@ -176,8 +187,13 @@ Add the configuration only, without any behaviour.
     - `removalMode(publisherId, did, ownId)`: the effective mode. Returns empty when the DID is on `keep` or equals
       `ownId` (callers pass `ownId(generalProperties)`; a blank own id excludes nothing); otherwise an override wins
       over the publisher's mode.
+    - `adoption()`: the `AdoptionPolicy` record `{State state (ALLOWED|REFUSED|OFF), @Nullable String reason}` under
+      the rule in *Decisions* (*Adoption assumes one data space*). `OFF` when no removal publisher sets
+      `adopt-unattributed`; `REFUSED` with the reason (more than one removal publisher, or no `dataspace-id`)
+      otherwise; `ALLOWED` only for exactly one removal publisher with the flag and a `dataspace-id`. Pure configuration,
+      so `TilCapabilities` (Step 2), `RemovalPlan` (Step 3) and the sweep (Step 5) all read the same answer.
     - `removalWritesConfigured()`: true if any removal publisher has a mode or an override other than `report`, or
-      `adopt-unattributed`. The start-up guard (Step 7) fails on a too-old TIL only then.
+      `adoption()` is `ALLOWED`. The start-up guard (Step 7) fails on a too-old TIL only then.
   - Add `ParticipantRemovedCondition`: the listener is enabled **and** at least one publisher is authorized for
     participant.removed.
 - New enum `org.fiware.iam.configuration.RemovalMode` (`REPORT, DATASPACE, GRANTED, FULL`), with a `tagValue()` in lower
@@ -187,8 +203,10 @@ Add the configuration only, without any behaviour.
   block and `participant-removed.reconcile`.
 - Tests (`src/test/java/org/fiware/iam/configuration/DataSpaceEventsPropertiesTest.java`, parameterized):
   `removalMode` covers the default, the publisher mode, an override beating the mode, `keep` beating an override, and
-  the own id excluded even with a `full` override. `removalWritesConfigured` covers report-only, a writing mode, a
-  writing override and adoption. Also cover the effective clamps, `removalPublishers`, the binding of lower-case modes and of an `overrides` list with
+  the own id excluded even with a `full` override. `adoption()` covers off, allowed, refused for two removal
+  publishers and for a missing `dataspace-id`, and a peer publisher for other types that does not refuse it.
+  `removalWritesConfigured` covers report-only, a writing mode, a writing override, allowed adoption (true) and refused
+  adoption with report-only (false). Also cover the effective clamps, `removalPublishers`, the binding of lower-case modes and of an `overrides` list with
   DIDs (a small `ApplicationContext.run(Map)` test).
 
 **Acceptance:** `mvn test` is green. Without configuration, nothing changes for existing deployments.
@@ -199,7 +217,8 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
 - `Mono<Optional<HeldEntry>> heldEntry(String did)`: reads `getIssuer` first, then `getIssuerScopes`. Only a `404` of
   `getIssuer` means "not held" (empty). A `404` of `getIssuerScopes` after `getIssuer` answered `200` means the
   `/scopes` endpoint is missing (an old TIL or a proxy), not that nothing is held: it fails with `TIL_READ_FAILED`, so
-  an event answers `502` and is retried instead of being recorded as `not_held`.
+  an event answers `502` and is retried instead of being recorded as `not_held`. With the `scopes-endpoint` probe this
+  is only a backstop (e.g. a proxy route removed after start-up).
   `HeldEntry` is a new record in `til/` with the did, `List<Grant(String scope, @Nullable ScopeTypeVO type, int count)>`
   and `int unattributedCount`, and helpers such as `membershipOf(publisherId)`, `otherMemberships(publisherId)`,
   `orderGrants()` and `isAttributable()`.
@@ -217,14 +236,16 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
   *Decisions* (*TIL capabilities*):
   - typed scopes and the list filter: `GET /issuer?scopeType=dataspace-membership` without a scope; `SUPPORTED` only
     on `400` with the `requireScope` validation message.
+  - `scopes-endpoint` (`probeScopesEndpoint()`): `GET /issuer/{PROBE_DID}/scopes` with a DID that cannot exist
+    (`PROBE_DID_PREFIX` + random UUID); `SUPPORTED` only on the issuer-not-found `404` described in *Decisions*.
   - `unscoped`: `DELETE /issuer/{PROBE_DID}/credential?unscoped=true&scope=<random UUID>`; `SUPPORTED` only on `400`
     with the unscoped/scope validation message. Harmless on an old list, since the random scope matches nothing.
 
-  Before implementing, confirm both requests and the exact messages against `FIWARE/trusted-issuers-list`
+  Before implementing, confirm all three requests and the exact messages against `FIWARE/trusted-issuers-list`
   `TrustedIssuersListController` and keep the messages as named constants.
 - New `src/main/java/org/fiware/iam/til/TilCapabilities.java` (`@Singleton`): holds the state per capability, derives
-  the required set from the current `DataSpaceEventsProperties` (typed scopes always, `unscoped` with
-  `adopt-unattributed`), and offers `Mono<Void> requireSupported()`. That re-probes `UNVERIFIED` capabilities (throttled
+  the required set from the current `DataSpaceEventsProperties` (`typed-scopes` and `scopes-endpoint` always,
+  `unscoped` only while `adoption()` is `ALLOWED`), and offers `Mono<Void> requireSupported()`. That re-probes `UNVERIFIED` capabilities (throttled
   by `PROBE_RETRY_INTERVAL`, injected `Clock`) and fails with `TrustedIssuersException` (`TIL_CAPABILITY_UNVERIFIED`
   or `TIL_TOO_OLD`, naming the capability) unless all required ones are `SUPPORTED`. Also `state()` for health and
   report, and a log of the transition to `TOO_OLD` (ERROR, once). A refresh resets `TOO_OLD` to `UNVERIFIED`, so an
@@ -242,9 +263,11 @@ Extend `src/main/java/org/fiware/iam/til/TrustedIssuersListAdapter.java`, leavin
     unattributed credentials; `404` of `getIssuer` gives empty, `404` of `getIssuerScopes` after a `200` of `getIssuer`
     gives `TIL_READ_FAILED`
   - that order grants are still written untyped
-  - every row of the probe classification for both probes: `400` with and without the expected message, `404`, `405`,
-    another `4xx`, `401`/`403`/`408`/`429`, `2xx`, `5xx`, connection error, timeout
-- `TilCapabilitiesTest`: required set per configuration; `requireSupported` fails with the right reason per state; an
+  - every row of the probe classification for all three probes: `400` with and without the expected message, `404`,
+    `405`, another `4xx`, `401`/`403`/`408`/`429`, `2xx`, `5xx`, connection error, timeout; for `scopes-endpoint` the
+    issuer-not-found `404` (`SUPPORTED`) against a route-not-found `404`, a proxy `404` and an empty `404` (`TOO_OLD`)
+- `TilCapabilitiesTest`: required set per configuration (`unscoped` required with allowed adoption, not with refused
+  adoption); `requireSupported` fails with the right reason per state; an
   `UNVERIFIED` capability is re-probed, but not within `PROBE_RETRY_INTERVAL` (`MutableClock`); `TOO_OLD` is logged once
   and reset by a refresh.
 
@@ -273,11 +296,16 @@ still pass.
 - New `src/main/java/org/fiware/iam/dataspace/ParticipantRemovedHandler.java`, a `DataSpaceEventHandler` for the
   participant.removed type:
   - The participant is `event.getSubject()`, falling back to `data.participantId` (see `TirWatcher.PARTICIPANT_ID_KEY`).
-    An event that has neither is answered with `400`; an `InvalidEventException` mapped in `EventListener` is enough.
+    An event that has neither raises a new `InvalidEventException` (`ContractManagementException` subclass, new
+    `FailureReason` `INVALID_EVENT`, naming the event id and source), created in this step.
   - The publisher is `event.getSource()`, which `EventAuthorizer` has already matched against the caller and the
     configured publishers.
-- `EventListener.dispatch`: a failure whose cause chain contains a `TrustedIssuersException` answers `502`
-  (outcome `downstream_failed`). Other failures still answer `500`.
+- `EventListener.dispatch`: today every handler error answers `500` and calls `deduplicator.forget(key)`. Split by the
+  cause chain:
+  - `InvalidEventException`: `400` (outcome `invalid_event`), and `deduplicator.complete(key)` instead of `forget`,
+    because a redelivery of the same event can never succeed. Logged once at WARN.
+  - `TrustedIssuersException`: `502` (outcome `downstream_failed`), `forget`, so the publisher retries.
+  - anything else: `500` and `forget`, unchanged.
 - Tests (`src/test/java/org/fiware/iam/dataspace/`):
   - `RemovalPlanTest`: parameterized `@MethodSource` over mode × origin of the entry (P's membership, another
     publisher's membership, order grant, unattributed only, mixed grants + unattributed, the combinations, not held),
@@ -293,8 +321,9 @@ still pass.
     `mode=keep, action=kept`. An unverified capability raises `TrustedIssuersException` before any read; with a
     `TOO_OLD` TIL, an event whose effective mode is `report` records `reported` with `held` unknown, also when another
     publisher (or an override) is in a writing mode, while an event whose effective mode writes raises the exception.
-  - `EventListenerTest`: a TIL failure and an unverified capability answer `502`, and a redelivery is then handled
-    again.
+  - `EventListenerTest` (parameterized over the three failure kinds): a TIL failure and an unverified capability answer
+    `502` and a redelivery is handled again; an event without a participant answers `400` and its redelivery is a
+    duplicate (`202`, not dispatched again); another handler error still answers `500`.
 
 **Acceptance:** all mode × origin (including the mixed entry), keep/override and multi-membership tests pass. A failing
 TIL call answers `502`, P's membership grant survives, and a retry completes the cleanup.
@@ -369,13 +398,22 @@ lists is handled with P's policy at start-up and on every interval, within the c
     entry cannot be attributed to one of them` or `... dataspace.events.dataspace-id is not set`.
   - Count `action=adoption_refused`, and mark the publisher in the report (Step 6) as `adoption: refused`.
 
-  Put this logic in a small `AdoptionPolicy` helper on the properties or in `dataspace/`.
+  The decision itself is `DataSpaceEventsProperties.adoption()` (Step 1); this step adds the WARN, the metric and the
+  report flag.
 - **Sweep** (`ParticipantReconciler`): when adoption is allowed, the adoption candidates are
-  `(allIssuers() ∩ listed(P)) − local`; `local` (step 1 of the sweep) already holds P's membership, so adopted
-  entries are never read again. Each candidate whose `heldEntry` holds *only* unattributed credentials (no grants) is
-  adopted. First `grantMembership(did, P, credentials of getIssuer)`, then
-  `revokeUnattributed(did)`, in that order, so a failure in between leaves a duplicate but no loss, and the next run
-  converges. Entries that hold grants and unattributed credentials together (mixed) cannot be split, because
+  `(allIssuers() ∩ listed(P)) − local`, minus every DID for which `removalMode(P, did, ownId)` is empty (`keep` and
+  the own id are never adopted, see *Decisions*). `local` (step 1 of the sweep) already holds P's membership, so
+  adopted entries are never read again. Each candidate whose `heldEntry` holds *only* unattributed credentials (no
+  grants) is adopted:
+  1. `grantMembership(did, P, C)`, where `C` is the credential list read from `getIssuer`.
+  2. Re-read the entry (`heldEntry` and `getIssuer`). Continue only if it now holds exactly P's membership grant with
+     `|C|` credentials and its unattributed credentials are still exactly `C` (the issuer's credentials are the
+     multiset `C + C`). Otherwise an operator changed the entry in the meantime: skip the revoke, log a WARN naming the
+     DID, and leave the duplicate in place. Nothing is lost, and the operator resolves the duplicate.
+  3. `revokeUnattributed(did)`.
+
+  A failure between the steps leaves a duplicate but no loss. The TIL has no conditional delete, so a credential added
+  between the re-read and the revoke is still deleted; that window is the accepted race from *Decisions*. Entries that hold grants and unattributed credentials together (mixed) cannot be split, because
   `CredentialsVO` carries no scope. They are reported as unattributed and not adopted. Adoptions count as
   `action=adopted`. They are not under the removal breaker; `max-adoptions-per-run` (Step 1 config, default 50, clamped
   to `>= 0`) applies the first N candidates per run, and the rest follow on later runs.
@@ -392,7 +430,9 @@ lists is handled with P's policy at start-up and on every interval, within the c
   unattributed credentials stay untouched.
 - Tests (parameterized): one publisher adopts, in the sweep and the event path; two publishers, or a missing
   `dataspace-id`, refuse it and say so (log captured or a health/report flag asserted, no TIL write); a peer publisher
-  configured for other types only does not refuse it; an unattributed-only entry that P no longer lists is removed by
+  configured for other types only does not refuse it; an unattributed-only entry listed by P that is on `keep` or is
+  the own id (`own-participant-id` and the `general.did` fallback) is not adopted and gets no TIL call; an entry whose
+  unattributed credentials change between the grant and the re-read keeps them (no revoke, WARN); an unattributed-only entry that P no longer lists is removed by
   an event but not by the sweep; a mixed entry is not adopted and, in the event path,
   keeps its unattributed credentials; more adoption candidates than `max-adoptions-per-run` adopts the first N and the
   rest on the next run; adoption leaves no loss when `revokeUnattributed` fails; the membership grant is written with
@@ -435,8 +475,8 @@ and whether it is attributable.
     `overrides`, as a WARN only.
   - TIL capabilities (probes and `TilCapabilities` from Step 2): the guard probes the required capabilities once.
     - `TOO_OLD` **and** `removalWritesConfigured()`: start-up fails with a `ConfigurationException` naming the
-      capability, the configured mode or `adopt-unattributed` that needs it, and the trusted-issuers-list ticket
-      (TIL-1/2 for typed scopes and `/scopes`, TIL-3 for `unscoped`).
+      capability, the configured mode or the allowed adoption that needs it, and the trusted-issuers-list ticket
+      (TIL-1 for `typed-scopes`, TIL-2 for `scopes-endpoint`, TIL-3 for `unscoped`).
     - `TOO_OLD` in a `report`-only configuration: no failure; ERROR once, the degraded behaviour from *Decisions*.
     - `UNVERIFIED`: no failure; WARN, and `TilCapabilities` re-probes later (Steps 3 and 4).
 - Docs:
@@ -444,7 +484,8 @@ and whether it is attributable.
     the modes table, keep/overrides, the own id, multi-membership, a subsection *Writing membership grants* for other
     components (exact `scope=<publisher id>`, `scopeType=dataspace-membership`, an example request, what happens to
     untyped or unscoped entries; CM itself writes them only through adoption), adoption with its one-data-space
-    assumption and per-run limit, the sweep (it never removes unattributed entries; only events do) and
+    assumption, per-run limit, the exclusion of `keep`/own id and the accepted race (a credential added between the
+    re-read and the revoke is lost), the sweep (it never removes unattributed entries; only events do) and
     its breaker, the convergent cleanup with the `502` and retry, the metric with its tag values and the `held` gauge,
     the management endpoint `GET :9090/participants-removed`, the required TIL version, and the **upgrade impact**:
     deployments whose publishers already list participant.removed in `types` activate the feature (in `report` mode,
@@ -453,10 +494,11 @@ and whether it is attributable.
   - `src/main/resources/application.yaml`: commented example.
   - `AGENTS.md`: list the new classes under `dataspace/`.
 - Tests: `ParticipantRemovedStartupGuardTest`, parameterized over invalid configurations and over
-  `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` × `report`-only / writing mode / writing override / adoption, with a mocked
+  `SUPPORTED` / `TOO_OLD` / `UNVERIFIED` × `report`-only / writing mode / writing override / allowed adoption / refused
+  adoption (behaves as `report`-only), with a mocked
   `TilCapabilities` (the probe classification itself is tested in Step 2). Unreachable: start-up succeeds, health
   DOWN, sweep and event writes blocked until a later probe succeeds. A context test checks that start-up fails with a
-  too-old TIL when the mode is `dataspace` or `adopt-unattributed` is set, and succeeds with `report` only.
+  too-old TIL when the mode is `dataspace` or adoption is allowed, and succeeds with `report` only or a refused adoption.
 
 **Acceptance:** a configured writing mode or adoption that needs a newer trusted-issuers-list makes start-up fail with
 a clear message; `report` only and an unreachable TIL do not.
