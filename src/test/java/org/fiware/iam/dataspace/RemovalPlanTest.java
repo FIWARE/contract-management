@@ -25,6 +25,8 @@ class RemovalPlanTest {
     private static final String ORDER = "order-1";
     private static final int CREDENTIALS = 2;
     private static final int NONE = 0;
+    // as many unattributed credentials as membership() holds: an interrupted adoption's copy
+    private static final int COPY_OF_MEMBERSHIP = 1;
 
     private static final RemovalPlan.Operation REVOKE_P1 = new RemovalPlan.RevokeGrant(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP);
     private static final RemovalPlan.Operation REVOKE_ORDER = new RemovalPlan.RevokeGrant(ORDER, null);
@@ -33,7 +35,7 @@ class RemovalPlanTest {
     @MethodSource("modeTimesOrigin")
     void plansEachModeAndOrigin(String origin, RemovalMode mode, boolean adoptionAllowed, Optional<HeldEntry> held,
                                 RemovalPlan expected) {
-        assertEquals(expected, RemovalPlan.of(Optional.of(mode), held, P1, RemovalTrigger.EVENT, adoptionAllowed));
+        assertEquals(expected, RemovalPlan.of(Optional.of(mode), held, P1, RemovalTrigger.EVENT, adoptionAllowed, false));
     }
 
     static Stream<Arguments> modeTimesOrigin() {
@@ -73,24 +75,41 @@ class RemovalPlanTest {
         RemovalAction revoked = mode == RemovalMode.GRANTED ? RemovalAction.REVOKED_GRANTED : RemovalAction.REVOKED_MEMBERSHIP;
 
         assertEquals(plan(revoked, deleteIfEmpty(new RemovalPlan.RevokeUnattributed())),
-                RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.EVENT, true));
-        assertEquals(RemovalPlan.REPORTED, RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.EVENT, false));
+                RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.EVENT, true, false));
+        assertEquals(RemovalPlan.REPORTED, RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.EVENT, false, false));
         // the sweep cannot tell such an entry from an operator-managed one
         assertEquals(RemovalPlan.REPORTED,
-                RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.RECONCILIATION, true));
+                RemovalPlan.of(Optional.of(mode), unattributedOnly, P1, RemovalTrigger.RECONCILIATION, true, false));
+    }
+
+    @ParameterizedTest(name = "{0}, {1}")
+    @MethodSource("writingModesAndTriggers")
+    void adoptionCopyIsRevokedBeforeTheMembershipWhenAdoptionAllowed(RemovalMode mode, RemovalTrigger trigger) {
+        Optional<HeldEntry> copy = held(COPY_OF_MEMBERSHIP, membership(P1));
+        RemovalAction revoked = mode == RemovalMode.GRANTED ? RemovalAction.REVOKED_GRANTED : RemovalAction.REVOKED_MEMBERSHIP;
+
+        assertEquals(plan(revoked, new RemovalPlan.RevokeUnattributed(), deleteIfEmpty(REVOKE_P1)),
+                RemovalPlan.of(Optional.of(mode), copy, P1, trigger, true, true));
+        // without adoption, the copy is left like the unattributed credentials of any mixed entry
+        assertEquals(plan(revoked, REVOKE_P1), RemovalPlan.of(Optional.of(mode), copy, P1, trigger, false, true));
+    }
+
+    static Stream<Arguments> writingModesAndTriggers() {
+        return Stream.of(RemovalMode.DATASPACE, RemovalMode.GRANTED).flatMap(mode -> Arrays.stream(RemovalTrigger.values())
+                .map(trigger -> Arguments.of(mode, trigger)));
     }
 
     // that keep beats every configured mode is decided by removalMode, see ParticipantRemovalTest
     @Test
     void keepTouchesNothing() {
         assertEquals(RemovalPlan.KEPT,
-                RemovalPlan.of(Optional.empty(), held(CREDENTIALS, membership(P1), order()), P1, RemovalTrigger.EVENT, true));
+                RemovalPlan.of(Optional.empty(), held(CREDENTIALS, membership(P1), order()), P1, RemovalTrigger.EVENT, true, false));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("removedByP1InGranted")
     void attributesOrderGrantsThroughTheOnlyMembership(String description, Optional<HeldEntry> held, RemovalPlan expected) {
-        assertEquals(expected, RemovalPlan.of(Optional.of(RemovalMode.GRANTED), held, P1, RemovalTrigger.EVENT, false));
+        assertEquals(expected, RemovalPlan.of(Optional.of(RemovalMode.GRANTED), held, P1, RemovalTrigger.EVENT, false, false));
     }
 
     static Stream<Arguments> removedByP1InGranted() {
@@ -106,7 +125,7 @@ class RemovalPlanTest {
     @ParameterizedTest(name = "{0}")
     @EnumSource(value = RemovalMode.class, names = {"DATASPACE", "GRANTED"})
     void revokesTheMembershipLast(RemovalMode mode) {
-        RemovalPlan plan = RemovalPlan.of(Optional.of(mode), held(NONE, membership(P1), order()), P1, RemovalTrigger.EVENT, false);
+        RemovalPlan plan = RemovalPlan.of(Optional.of(mode), held(NONE, membership(P1), order()), P1, RemovalTrigger.EVENT, false, false);
 
         RemovalPlan.Operation last = plan.operations().get(plan.operations().size() - 1);
         assertTrue(last.equals(REVOKE_P1) || last.equals(deleteIfEmpty(REVOKE_P1)));

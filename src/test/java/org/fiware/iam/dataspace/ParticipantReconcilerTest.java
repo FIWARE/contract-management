@@ -92,7 +92,8 @@ class ParticipantReconcilerTest {
         }
     };
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
-            removal, report, properties, generalProperties, refreshLock, Optional.of(meterRegistry));
+            removal, new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties, refreshLock,
+            Optional.of(meterRegistry), clock);
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(ParticipantReconciler.class);
     private final ListAppender<ILoggingEvent> logged = new ListAppender<>();

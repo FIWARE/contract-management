@@ -28,10 +28,12 @@ public record RemovalPlan(RemovalAction action, List<Operation> operations) {
 
     /**
      * Plan the removal of the entry as read; an empty mode means keep. An entry of nothing but unattributed credentials is
-     * revoked only for an event while adoption is allowed: the announcement then attributes it to the publisher.
+     * revoked only for an event while adoption is allowed: the announcement then attributes it to the publisher. So is an
+     * unattributed copy of the publisher's membership ({@code adoptionCopy}, see {@code IssuerContent#holdsAdoptionCopyOf}),
+     * for the sweep too: the TIL cannot tell an interrupted adoption from identical credentials granted by someone else.
      */
     public static RemovalPlan of(Optional<RemovalMode> mode, Optional<HeldEntry> held, String publisherId,
-                                 RemovalTrigger trigger, boolean adoptionAllowed) {
+                                 RemovalTrigger trigger, boolean adoptionAllowed, boolean adoptionCopy) {
         if (mode.isEmpty()) {
             return KEPT;
         }
@@ -42,7 +44,7 @@ public record RemovalPlan(RemovalAction action, List<Operation> operations) {
             case REPORT -> REPORTED;
             case FULL -> new RemovalPlan(RemovalAction.DELETED_ISSUER, List.of(new DeleteIssuer()));
             case DATASPACE, GRANTED -> cleanup(mode.get(), held.get(), publisherId,
-                    trigger == RemovalTrigger.EVENT && adoptionAllowed);
+                    trigger == RemovalTrigger.EVENT && adoptionAllowed, adoptionAllowed && adoptionCopy);
         };
     }
 
@@ -57,7 +59,8 @@ public record RemovalPlan(RemovalAction action, List<Operation> operations) {
         return remaining;
     }
 
-    private static RemovalPlan cleanup(RemovalMode mode, HeldEntry entry, String publisherId, boolean claimsUnattributedOnly) {
+    private static RemovalPlan cleanup(RemovalMode mode, HeldEntry entry, String publisherId, boolean claimsUnattributedOnly,
+                                       boolean adoptionCopy) {
         RemovalAction action = mode == RemovalMode.GRANTED ? RemovalAction.REVOKED_GRANTED : RemovalAction.REVOKED_MEMBERSHIP;
         if (entry.isEmpty()) {
             return new RemovalPlan(action, List.of(new DeleteIfEmpty(null)));
@@ -68,7 +71,8 @@ public record RemovalPlan(RemovalAction action, List<Operation> operations) {
         if (mode == RemovalMode.GRANTED && membership.isPresent() && entry.otherMemberships(publisherId).isEmpty()) {
             entry.orderGrants().forEach(grant -> operations.add(new RevokeGrant(grant.scope(), grant.type())));
         }
-        if (claimsUnattributedOnly && entry.isUnattributedOnly()) {
+        // an interrupted adoption's copy would otherwise keep the participant trusted once its membership is gone
+        if (claimsUnattributedOnly && entry.isUnattributedOnly() || adoptionCopy && entry.mayHoldAdoptionCopyOf(publisherId)) {
             operations.add(new RevokeUnattributed());
         }
         membership.ifPresent(grant -> operations.add(new RevokeGrant(grant.scope(), grant.type())));

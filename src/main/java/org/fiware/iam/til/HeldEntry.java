@@ -57,6 +57,15 @@ public record HeldEntry(String did, List<Grant> grants, int unattributedCount) {
     }
 
     /**
+     * True if the counts fit an interrupted adoption: the publisher's membership is the only grant, next to as many
+     * unattributed credentials. Only {@link IssuerContent#holdsAdoptionCopyOf} can tell from the credentials.
+     */
+    public boolean mayHoldAdoptionCopyOf(String publisherId) {
+        return grants.size() == 1 && unattributedCount > 0
+                && membershipOf(publisherId).filter(grant -> grant.count() == unattributedCount).isPresent();
+    }
+
+    /**
      * True if the issuer exists without any credential.
      */
     public boolean isEmpty() {
