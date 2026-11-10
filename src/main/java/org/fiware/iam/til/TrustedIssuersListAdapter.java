@@ -155,32 +155,26 @@ public class TrustedIssuersListAdapter {
      * endpoint is missing), or if the issuer changed between the two reads so that the counts contradict each other.
      */
     public Mono<Optional<HeldEntry>> heldEntry(String did) {
-        return call(() -> apiClient.getIssuer(did))
-                .map(response -> response.getBody()
-                        .map(TrustedIssuerVO::getCredentials)
-                        .map(List::size)
-                        .orElse(0))
-                .flatMap(credentialCount -> call(() -> apiClient.getIssuerScopes(did))
-                        .onErrorMap(TrustedIssuersListAdapter::isNotFound, e -> new TrustedIssuersException(FailureReason.TIL_READ_FAILED,
-                                "The trusted-issuers-list holds issuer %s but lists no scopes for it - its /scopes endpoint is missing.".formatted(did), e))
-                        .map(response -> toHeldEntry(did, credentialCount, response.getBody().orElse(List.of()))))
-                .map(Optional::of)
-                .onErrorResume(TrustedIssuersListAdapter::isNotFound, e -> Mono.just(Optional.empty()))
-                .onErrorMap(e -> !(e instanceof TrustedIssuersException), e -> new TrustedIssuersException(FailureReason.TIL_READ_FAILED,
-                        "The trusted-issuers-list could not be read for issuer %s.".formatted(did), e));
+        return content(did).map(content -> content.map(IssuerContent::held));
     }
 
     /**
-     * Every credential the list holds for the issuer, whatever grants it. Empty if the issuer is unknown.
+     * Read what the list holds for the issuer together with its credentials, from the same reads; as {@link #heldEntry}.
      */
-    public Mono<Optional<List<CredentialsVO>>> credentials(String did) {
+    public Mono<Optional<IssuerContent>> content(String did) {
         return call(() -> apiClient.getIssuer(did))
-                .map(response -> Optional.of(response.getBody()
+                .map(response -> response.getBody()
                         .map(TrustedIssuerVO::getCredentials)
                         .<List<CredentialsVO>>map(List::copyOf)
-                        .orElse(List.of())))
+                        .orElse(List.of()))
+                .flatMap(credentials -> call(() -> apiClient.getIssuerScopes(did))
+                        .onErrorMap(TrustedIssuersListAdapter::isNotFound, e -> new TrustedIssuersException(FailureReason.TIL_READ_FAILED,
+                                "The trusted-issuers-list holds issuer %s but lists no scopes for it - its /scopes endpoint is missing.".formatted(did), e))
+                        .map(response -> new IssuerContent(
+                                toHeldEntry(did, credentials.size(), response.getBody().orElse(List.of())), credentials)))
+                .map(Optional::of)
                 .onErrorResume(TrustedIssuersListAdapter::isNotFound, e -> Mono.just(Optional.empty()))
-                .onErrorMap(e -> new TrustedIssuersException(FailureReason.TIL_READ_FAILED,
+                .onErrorMap(e -> !(e instanceof TrustedIssuersException), e -> new TrustedIssuersException(FailureReason.TIL_READ_FAILED,
                         "The trusted-issuers-list could not be read for issuer %s.".formatted(did), e));
     }
 

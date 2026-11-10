@@ -14,9 +14,11 @@ import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemov
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 import org.fiware.iam.configuration.GeneralProperties;
 import org.fiware.iam.configuration.RemovalMode;
+import org.fiware.iam.exception.AdoptionIncompleteException;
 import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
+import org.fiware.iam.til.model.CredentialsVO;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -78,6 +80,9 @@ public class ParticipantReconciler {
     private final Map<String, String> loggedMissingRegistry = new HashMap<>();
     // publisher -> DID -> when it was found not adoptable; only touched by run()
     private final Map<String, Map<String, Instant>> notAdoptable = new HashMap<>();
+    // publisher -> DID -> credentials copied by an adoption that failed from its grant on; only touched by run().
+    // Not persisted: after a restart such a duplicate is left for the operator (the failure WARN says so)
+    private final Map<String, Map<String, List<CredentialsVO>>> incompleteAdoptions = new HashMap<>();
     // the refused adoption configuration last warned about, null while adoption is not refused; only touched by run()
     @Nullable
     private String loggedAdoptionRefusal;
@@ -122,7 +127,8 @@ public class ParticipantReconciler {
     private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
                          Set<String> kept,
                          Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write,
-                         Map<String, EffectiveRemoval> adopt, int adoptionCap) {
+                         Map<String, EffectiveRemoval> adopt, int adoptionCap,
+                         Map<String, EffectiveRemoval> completable) {
     }
 
     /**
@@ -180,14 +186,11 @@ public class ParticipantReconciler {
         candidates.removeAll(listed);
         Set<String> unadopted = new TreeSet<>(listed);
         unadopted.removeAll(local);
-        if (adopting && !unadopted.isEmpty()) {
-            unadopted.retainAll(adapter.allIssuers().blockOptional().orElse(Set.of()));
-        } else {
-            unadopted.clear();
-        }
+        Map<String, List<CredentialsVO>> incomplete = incompleteAdoptions.computeIfAbsent(publisherId, id -> new TreeMap<>());
 
         // decided under the lock and passed on to every apply, so a refresh during the run cannot write past the breaker
-        Split split = refreshLock.exclusively(() -> split(publisherId, candidates, unadopted));
+        Split split = refreshLock.exclusively(() -> split(publisherId, candidates, adopting ? unadopted : Set.of(),
+                incomplete.keySet()));
         if (!registryUrl.equals(split.registryUrl())) {
             // the candidates were listed from a registry the current configuration no longer names
             log.info("Participant reconciliation of publisher {} skipped: its registry-url changed or it stopped "
@@ -200,6 +203,8 @@ public class ParticipantReconciler {
             }
             return;
         }
+        // before the removals: a delisted entry still holding both copies would otherwise keep its unattributed originals
+        completeAdoptions(publisherId, incomplete, split.completable());
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
         // re-listed or released otherwise since: the report must not show it as current drift
@@ -233,18 +238,19 @@ public class ParticipantReconciler {
         }
         heldGauge(publisherId).set(stillHeld.size());
         withholdAll(publisherId, unapplied, writeCandidates.keySet(), withheldReason, seenOfPublisher);
-        adoptAll(publisherId, split.adopt(), split.adoptionCap());
+        adoptAll(publisherId, split.publisherMode(), split.adopt(), split.adoptionCap(), incomplete);
     }
 
     // no I/O: runs under the refresh lock; the policy is re-read so its cap matches the modes.
     // A publisher no longer announcing removals gets a split without registry-url, so the run skips it.
-    private Split split(String publisherId, Set<String> candidates, Set<String> adoptionCandidates) {
+    private Split split(String publisherId, Set<String> candidates, Set<String> adoptionCandidates,
+                        Set<String> incompleteAdoptions) {
         Optional<OnParticipantRemoved> found = properties.removalPublishers().stream()
                 .filter(publisher -> publisher.getId().equals(publisherId))
                 .findFirst()
                 .map(Publisher::getOnParticipantRemoved);
         if (found.isEmpty()) {
-            return new Split(null, null, 0, RemovalMode.REPORT, Set.of(), Map.of(), Map.of(), Map.of(), 0);
+            return new Split(null, null, 0, RemovalMode.REPORT, Set.of(), Map.of(), Map.of(), Map.of(), 0, Map.of());
         }
         OnParticipantRemoved current = found.get();
         String ownId = properties.ownId(generalProperties);
@@ -262,12 +268,15 @@ public class ParticipantReconciler {
             }
         }
         Map<String, EffectiveRemoval> adopt = new TreeMap<>();
+        Map<String, EffectiveRemoval> completable = new TreeMap<>();
         if (properties.adoption().isAllowed() && current.isAdoptUnattributed()) {
             adoptionCandidates.forEach(did -> properties.effectiveRemoval(publisherId, did, ownId)
                     .ifPresent(decided -> adopt.put(did, decided)));
+            incompleteAdoptions.forEach(did -> properties.effectiveRemoval(publisherId, did, ownId)
+                    .ifPresent(decided -> completable.put(did, decided)));
         }
         return new Split(current.getRegistryUrl(), ownId, current.effectiveMaxRemovalsPerRun(), current.effectiveMode(),
-                kept, reportCandidates, writeCandidates, adopt, current.effectiveMaxAdoptionsPerRun());
+                kept, reportCandidates, writeCandidates, adopt, current.effectiveMaxAdoptionsPerRun(), completable);
     }
 
     // applies the candidate; true if it no longer holds the publisher's membership afterwards
@@ -308,10 +317,44 @@ public class ParticipantReconciler {
         }
     }
 
+    // an adoption that failed from its grant on holds the copies twice, and in `local` it is no adoption candidate any more
+    private void completeAdoptions(String publisherId, Map<String, List<CredentialsVO>> incomplete,
+                                   Map<String, EffectiveRemoval> completable) {
+        for (String did : List.copyOf(incomplete.keySet())) {
+            List<CredentialsVO> copied = incomplete.remove(did);
+            EffectiveRemoval decided = completable.get(did);
+            if (decided == null) {
+                log.warn("Participant {} listed by {}: its adoption is not completed, adoption is no longer allowed for it; "
+                        + "resolve the duplicate of its unattributed credentials manually.", did, publisherId);
+                continue;
+            }
+            try {
+                adoption.complete(publisherId, did, decided.mode().tagValue(), copied).block();
+            } catch (RuntimeException e) {
+                incomplete.put(did, copied);
+                warnIncomplete(publisherId, did, decided.mode().tagValue(), e);
+            }
+        }
+    }
+
     // not under the breaker: an adoption only adds a grant before it removes the duplicate, so truncating is safe
-    private void adoptAll(String publisherId, Map<String, EffectiveRemoval> candidates, int cap) {
+    private void adoptAll(String publisherId, RemovalMode publisherMode, Map<String, EffectiveRemoval> candidates, int cap,
+                          Map<String, List<CredentialsVO>> incomplete) {
         Map<String, Instant> notAdoptableOfPublisher = notAdoptable.computeIfAbsent(publisherId, id -> new HashMap<>());
         notAdoptableOfPublisher.keySet().retainAll(candidates.keySet());
+        if (candidates.isEmpty() || cap == 0) {
+            return;
+        }
+        Set<String> held;
+        try {
+            // only issuers the list holds are read; a failure here skips adoption, never the removals before it
+            held = adapter.allIssuers().blockOptional().orElse(Set.of());
+        } catch (RuntimeException e) {
+            log.warn("Adoption for publisher {} skipped in this run, its issuers could not be listed: {}", publisherId,
+                    DownstreamError.reason(e), e);
+            removal.count(publisherId, publisherMode.tagValue(), RemovalAction.FAILED);
+            return;
+        }
         Instant now = clock.instant();
         int reads = 0;
         int attempts = 0;
@@ -321,7 +364,7 @@ public class ParticipantReconciler {
             }
             String did = candidate.getKey();
             Instant readAt = notAdoptableOfPublisher.get(did);
-            if (readAt != null && now.isBefore(readAt.plus(NOT_ADOPTABLE_RECHECK_INTERVAL))) {
+            if (!held.contains(did) || readAt != null && now.isBefore(readAt.plus(NOT_ADOPTABLE_RECHECK_INTERVAL))) {
                 continue;
             }
             reads++;
@@ -336,13 +379,24 @@ public class ParticipantReconciler {
                 if (result != ParticipantAdoption.Result.SKIPPED) {
                     attempts++;
                 }
+            } catch (AdoptionIncompleteException e) {
+                attempts++;
+                incomplete.put(did, e.getCopied());
+                warnIncomplete(publisherId, did, modeTag, e);
             } catch (RuntimeException e) {
                 attempts++;
-                log.warn("Participant {} listed by {}: adoption failed, retried in the next run: {}", did, publisherId,
-                        DownstreamError.reason(e), e);
+                log.warn("Participant {} listed by {}: adoption failed before anything was written, retried in the next run: {}",
+                        did, publisherId, DownstreamError.reason(e), e);
                 removal.count(publisherId, modeTag, RemovalAction.FAILED);
             }
         }
+    }
+
+    private void warnIncomplete(String publisherId, String did, String modeTag, RuntimeException e) {
+        log.warn("Participant {} listed by {}: adoption incomplete, its membership grant may hold a duplicate of its "
+                        + "unattributed credentials; completed in the next run (after a restart, resolve the duplicate manually): {}",
+                did, publisherId, DownstreamError.reason(e), e);
+        removal.count(publisherId, modeTag, RemovalAction.FAILED);
     }
 
     // configuration only, so it is checked even while runs are skipped: it is the start-up and refresh warning
@@ -420,6 +474,13 @@ public class ParticipantReconciler {
     private void forgetAllBut(Set<String> publisherIds) {
         seen.keySet().retainAll(publisherIds);
         notAdoptable.keySet().retainAll(publisherIds);
+        incompleteAdoptions.forEach((id, incomplete) -> {
+            if (!publisherIds.contains(id) && !incomplete.isEmpty()) {
+                log.warn("Publisher {} no longer announces removals, so the incomplete adoptions of {} are not completed; "
+                        + "resolve the duplicates of their unattributed credentials manually.", id, incomplete.keySet());
+            }
+        });
+        incompleteAdoptions.keySet().retainAll(publisherIds);
         loggedMissingRegistry.keySet().retainAll(publisherIds);
         breakers.keySet().retainAll(publisherIds);
         heldGauges.forEach((id, gauge) -> {

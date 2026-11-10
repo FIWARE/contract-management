@@ -342,29 +342,38 @@ class TrustedIssuersListAdapterTest {
     }
 
     @Test
-    void credentials_readsEveryCredentialOfTheIssuer() {
-        TrustedIssuerVO issuer = issuer(2);
+    void content_readsTheHeldEntryAndEveryCredentialFromTheSameReads() {
+        TrustedIssuerVO issuer = issuer(3);
         doReturn(Mono.just(HttpResponse.ok(issuer))).when(apiClient).getIssuer(ISSUER_DID);
+        doReturn(Mono.just(HttpResponse.ok(List.of(membership(PUBLISHER, 1))))).when(apiClient).getIssuerScopes(ISSUER_DID);
 
-        Assertions.assertEquals(Optional.of(issuer.getCredentials()), membershipAdapter().credentials(ISSUER_DID).block());
+        IssuerContent content = membershipAdapter().content(ISSUER_DID).block().orElseThrow();
+
+        Assertions.assertEquals(issuer.getCredentials(), content.credentials());
+        Assertions.assertEquals(new HeldEntry(ISSUER_DID, List.of(new HeldEntry.Grant(PUBLISHER,
+                ScopeTypeVO.DATASPACE_MEMBERSHIP, 1)), 2), content.held());
+        verify(apiClient, times(1)).getIssuer(ISSUER_DID);
+        verify(apiClient, times(1)).getIssuerScopes(ISSUER_DID);
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("credentialAnswers")
-    void credentials_mapsTheAnswer(String description, Mono<?> answer, @Nullable Optional<?> expected) {
+    @MethodSource("contentAnswers")
+    void content_mapsTheAnswer(String description, Mono<?> answer, @Nullable Optional<?> expected) {
         doReturn(answer).when(apiClient).getIssuer(ISSUER_DID);
+        doReturn(Mono.just(HttpResponse.ok(List.of()))).when(apiClient).getIssuerScopes(ISSUER_DID);
 
         if (expected == null) {
-            Assertions.assertThrows(TrustedIssuersException.class, () -> membershipAdapter().credentials(ISSUER_DID).block());
+            Assertions.assertThrows(TrustedIssuersException.class, () -> membershipAdapter().content(ISSUER_DID).block());
         } else {
-            Assertions.assertEquals(expected, membershipAdapter().credentials(ISSUER_DID).block());
+            Assertions.assertEquals(expected, membershipAdapter().content(ISSUER_DID).block());
         }
     }
 
-    private static Stream<Arguments> credentialAnswers() {
+    private static Stream<Arguments> contentAnswers() {
         return Stream.of(
                 Arguments.of("unknown issuer", error(HttpStatus.NOT_FOUND), Optional.empty()),
-                Arguments.of("empty body", Mono.just(HttpResponse.ok()), Optional.of(List.of())),
+                Arguments.of("empty body", Mono.just(HttpResponse.ok()),
+                        Optional.of(new IssuerContent(new HeldEntry(ISSUER_DID, List.of(), 0), List.of()))),
                 Arguments.of("failure", error(HttpStatus.BAD_GATEWAY), null));
     }
 

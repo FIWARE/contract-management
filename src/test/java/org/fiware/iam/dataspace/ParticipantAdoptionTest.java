@@ -12,6 +12,7 @@ import org.fiware.iam.configuration.RemovalMode;
 import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.HeldEntry;
+import org.fiware.iam.til.IssuerContent;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import org.fiware.iam.til.model.CredentialsVO;
@@ -80,7 +81,7 @@ class ParticipantAdoptionTest {
     private final ParticipantRemoval removal = new ParticipantRemoval(adapter, capabilities, registryLookup, report,
             properties, generalProperties, Optional.of(meterRegistry));
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
-            removal, new ParticipantAdoption(adapter, removal, report), report, properties, generalProperties,
+            removal, new ParticipantAdoption(adapter, removal), report, properties, generalProperties,
             new ConfigurationRefreshLock(), Optional.of(meterRegistry), clock);
 
     private final List<Logger> loggers = List.of((Logger) LoggerFactory.getLogger(ParticipantReconciler.class),
@@ -129,8 +130,8 @@ class ParticipantAdoptionTest {
         }));
         when(adapter.heldEntry(anyString())).thenAnswer(invocation ->
                 Mono.fromSupplier(() -> heldEntry((String) invocation.getArguments()[0])));
-        when(adapter.credentials(anyString())).thenAnswer(invocation ->
-                Mono.fromSupplier(() -> credentialsOf((String) invocation.getArguments()[0])));
+        when(adapter.content(anyString())).thenAnswer(invocation ->
+                Mono.fromSupplier(() -> contentOf((String) invocation.getArguments()[0])));
         when(adapter.grantMembership(anyString(), anyString(), any())).thenAnswer(invocation -> Mono.fromRunnable(() -> {
             String did = (String) invocation.getArguments()[0];
             @SuppressWarnings("unchecked")
@@ -168,9 +169,7 @@ class ParticipantAdoptionTest {
         assertFalse(unattributed.containsKey(X), "the unattributed originals are revoked");
         verify(adapter).grantMembership(X, P1, CREDENTIALS);
         assertEquals(1, count(P1, "report", RemovalAction.ADOPTED));
-        RemovalOutcome outcome = report.entries(P1).get(0).outcome();
-        assertEquals(RemovalAction.ADOPTED, outcome.action());
-        assertTrue(outcome.applied(), "an adoption is history, not standing drift");
+        assertTrue(report.entries(P1).isEmpty(), "an adoption is no removal, it takes no slot in the report");
     }
 
     @Test
@@ -261,6 +260,7 @@ class ParticipantAdoptionTest {
 
         assertEquals(CREDENTIALS, unattributed.get(X));
         verify(adapter, never()).heldEntry(X);
+        verify(adapter, never()).content(X);
         verify(adapter, never()).grantMembership(anyString(), anyString(), any());
     }
 
@@ -301,6 +301,7 @@ class ParticipantAdoptionTest {
 
         assertEquals(CREDENTIALS, unattributed.get(X), "the sweep never removes unattributed entries");
         verify(adapter, never()).heldEntry(X);
+        verify(adapter, never()).content(X);
 
         removal.apply(P1, X, RemovalTrigger.EVENT).block();
         assertEquals(Optional.empty(), heldEntry(X));
@@ -339,19 +340,82 @@ class ParticipantAdoptionTest {
         assertEquals(3, count(P1, "report", RemovalAction.ADOPTED));
     }
 
-    @Test
-    void failedRevokeLeavesADuplicateButNoLoss() {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("failuresAfterTheCopy")
+    void failedAdoptionLeavesNoLossAndIsCompletedInTheNextRun(String description,
+                                                           Consumer<ParticipantAdoptionTest> failOnce, boolean granted) {
         configure(adopting(P1));
         unattributed.put(X, CREDENTIALS);
         listed.put(P1, Set.of(X));
-        when(adapter.revokeUnattributed(anyString())).thenReturn(Mono.error(
-                new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER, "unavailable")));
+        failOnce.accept(this);
 
         reconciler.run();
 
-        assertEquals(CREDENTIALS, unattributed.get(X));
-        assertEquals(CREDENTIALS, grants.get(X).get(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP)));
+        assertTrue(contentOf(X).orElseThrow().credentials().containsAll(CREDENTIALS), "nothing is lost");
+        assertEquals(granted, grants.containsKey(X), "the membership grant may already be written");
         assertEquals(1, count(P1, "report", RemovalAction.FAILED));
+        assertTrue(logs(Level.WARN).stream().anyMatch(event -> event.getFormattedMessage().contains("adoption incomplete")));
+
+        reconciler.run();
+
+        assertEquals(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS), grants.get(X));
+        assertFalse(unattributed.containsKey(X), "the duplicate is resolved");
+        assertEquals(1, count(P1, "report", RemovalAction.ADOPTED));
+    }
+
+    static Stream<Arguments> failuresAfterTheCopy() {
+        TrustedIssuersException unavailable = new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER, "unavailable");
+        return Stream.of(
+                Arguments.of("revoke fails", (Consumer<ParticipantAdoptionTest>) test -> when(test.adapter.revokeUnattributed(X))
+                        .thenReturn(Mono.error(unavailable))
+                        .thenAnswer(invocation -> Mono.fromRunnable(() -> test.unattributed.remove(X))), true),
+                Arguments.of("revoke written, its answer lost", (Consumer<ParticipantAdoptionTest>) test ->
+                        when(test.adapter.revokeUnattributed(X)).thenReturn(Mono.fromRunnable(() -> test.unattributed.remove(X))
+                                .then(Mono.error(unavailable))), true),
+                Arguments.of("grant written, its answer lost", (Consumer<ParticipantAdoptionTest>) test ->
+                        test.afterGrant = did -> {
+                            test.afterGrant = ignored -> {
+                            };
+                            throw unavailable;
+                        }, true),
+                Arguments.of("grant fails without writing", (Consumer<ParticipantAdoptionTest>) test ->
+                        when(test.adapter.grantMembership(X, P1, CREDENTIALS))
+                                .thenReturn(Mono.error(unavailable))
+                                .thenAnswer(invocation -> Mono.fromRunnable(() -> test.grants
+                                        .computeIfAbsent(X, id -> new LinkedHashMap<>())
+                                        .put(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS))), false));
+    }
+
+    @Test
+    void incompleteAdoptionOfADelistedEntryIsCompletedBeforeItsRemoval() {
+        configure(writing(adopting(P1)));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        when(adapter.revokeUnattributed(X))
+                .thenReturn(Mono.error(new TrustedIssuersException(FailureReason.TIL_REJECTED_ISSUER, "unavailable")))
+                .thenAnswer(invocation -> Mono.fromRunnable(() -> unattributed.remove(X)));
+        reconciler.run();
+
+        listed.put(P1, Set.of());
+        reconciler.run();
+
+        assertEquals(Optional.empty(), heldEntry(X), "the originals are revoked first, so the removal leaves nothing trusted");
+    }
+
+    @Test
+    void failingIssuerListingSkipsAdoptionButNotTheRemovals() {
+        configure(writing(adopting(P1)));
+        unattributed.put(X, CREDENTIALS);
+        grants.put(Y, new LinkedHashMap<>(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS)));
+        listed.put(P1, Set.of(X));
+        when(adapter.allIssuers()).thenReturn(Mono.error(new TrustedIssuersException(FailureReason.TIL_READ_FAILED, "too many pages")));
+
+        reconciler.run();
+
+        assertEquals(Optional.empty(), heldEntry(Y), "the delisted participant is still removed");
+        assertEquals(CREDENTIALS, unattributed.get(X), "nothing is adopted");
+        assertEquals(1, count(P1, "dataspace", RemovalAction.FAILED));
+        assertTrue(logs(Level.WARN).stream().anyMatch(event -> event.getFormattedMessage().contains("Adoption for publisher")));
     }
 
     @Test
@@ -366,18 +430,18 @@ class ParticipantAdoptionTest {
         reconciler.run();
 
         // X: once for the decision, once to verify the duplicate; Y: once for the decision
-        verify(adapter, times(2)).heldEntry(X);
-        verify(adapter, times(1)).heldEntry(Y);
+        verify(adapter, times(2)).content(X);
+        verify(adapter, times(1)).content(Y);
 
         grants.remove(Y);
         clock.advance(ParticipantReconciler.NOT_ADOPTABLE_RECHECK_INTERVAL.minus(Duration.ofSeconds(1)));
         reconciler.run();
-        verify(adapter, times(1)).heldEntry(Y);
+        verify(adapter, times(1)).content(Y);
 
         clock.advance(Duration.ofSeconds(1));
         reconciler.run();
         assertFalse(unattributed.containsKey(Y), "an entry that lost its grants is adopted on the recheck");
-        verify(adapter, times(2)).heldEntry(X);
+        verify(adapter, times(2)).content(X);
     }
 
     private void configure(DataSpaceEventsProperties.Publisher... publishers) {
@@ -420,14 +484,13 @@ class ParticipantAdoptionTest {
         return Optional.of(new HeldEntry(did, heldGrants, loose == null ? 0 : loose.size()));
     }
 
-    private Optional<List<CredentialsVO>> credentialsOf(String did) {
-        if (heldEntry(did).isEmpty()) {
-            return Optional.empty();
-        }
-        List<CredentialsVO> all = new ArrayList<>();
-        Optional.ofNullable(grants.get(did)).ifPresent(held -> held.values().forEach(all::addAll));
-        all.addAll(unattributed.getOrDefault(did, List.of()));
-        return Optional.of(all);
+    private Optional<IssuerContent> contentOf(String did) {
+        return heldEntry(did).map(held -> {
+            List<CredentialsVO> all = new ArrayList<>();
+            Optional.ofNullable(grants.get(did)).ifPresent(granted -> granted.values().forEach(all::addAll));
+            all.addAll(unattributed.getOrDefault(did, List.of()));
+            return new IssuerContent(held, all);
+        });
     }
 
     private List<ILoggingEvent> logs(Level level) {

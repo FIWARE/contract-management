@@ -40,7 +40,8 @@ public enum FailureReason {
 	TIR_MASS_REMOVAL("tir_mass_removal"),
 	TIR_LOOKUP_FAILED("tir_lookup_failed"),
 	INVALID_EVENT("invalid_event"),
-	PARTICIPANT_REMOVAL_FAILED("participant_removal_failed");
+	PARTICIPANT_REMOVAL_FAILED("participant_removal_failed"),
+	ADOPTION_INCOMPLETE("adoption_incomplete");
 
 	private final String code;
 
