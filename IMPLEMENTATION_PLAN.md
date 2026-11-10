@@ -631,12 +631,18 @@ lists is handled with P's policy at start-up and on every interval, within the c
 **Acceptance:** `adopt-unattributed: true` with one publisher adopts; with two publishers it refuses and says so.
 
 ### Step 6: Removed-participants report and GET :9090/participants-removed
-- Response (`@Serdeable` records in `dataspace/`, no OpenAPI change since it is a management endpoint): a list of
+- Response (`@Introspected` records nested in the endpoint; the project serializes with `micronaut-jackson-databind`,
+  so not `@Serdeable`; `@JsonInclude(ALWAYS)` keeps `null` and `[]` apart; no OpenAPI change since it is a management
+  endpoint): a list of
   `{publisher, mode, til: supported|pending|unverified|too-old, adoption: allowed|refused|off, breaker: tripped|clear,
   participants: [{id, trigger: event|reconciliation, lastSeen, mode, action, applied: bool, attributable: bool|null,
   held: [{scope, scopeType, credentialCount}] | null, unattributedCount}]}`. `held`/`attributable` are `null` when the
   entry was not read (own id/keep, `still_listed`, or a `report`-mode event against a `TOO_OLD` TIL); `held: []` with
   `unattributedCount: 0` means nothing is held (after a cleanup that deleted the emptied issuer, or `not_held`).
+  `unattributedCount` is `null` together with `held`. `mode` of a publisher is its own effective mode (no overrides,
+  clamped to `report` without `registry-url`); `til` is the least usable state among the required capabilities (shared
+  by all publishers); `adoption` is `off` for a publisher without `adopt-unattributed`, else `adoption()`'s state. Only
+  the currently configured removal publishers are listed, participants seen most recently first.
 - New `RemovedParticipantsEndpoint`: `@Endpoint(id = "participants-removed", defaultSensitive = false)`,
   `@Requires(condition = ParticipantRemovedCondition)`, one `@Read` method that assembles the response from the
   report store (Step 3), `TilCapabilities.state()` (Step 2), `adoption()` (Step 1) and the reconciler's breaker state

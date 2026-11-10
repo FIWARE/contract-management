@@ -3,6 +3,7 @@ package org.fiware.iam.dataspace;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.exceptions.BeanInstantiationException;
 import io.micronaut.context.exceptions.ConfigurationException;
+import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -16,27 +17,50 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Checks that a publisher only starts with a management port separate from the server port.
+ * Checks that a publisher or the participant.removed handling only starts with a management port separate from the
+ * server port.
  */
 class ManagementPortGuardTest {
 
     private static final String MANAGEMENT_PORT = "endpoints.all.port";
     private static final String SERVER_PORT = "micronaut.server.port";
     private static final String PUBLISHER_ENABLED = "dataspace.events.publisher.enabled";
+    private static final String LISTENER_ENABLED = "dataspace.events.listener.enabled";
+    private static final String PUBLISHER_ID = "dataspace.events.publishers[0].id";
+    private static final String REMOVAL_PUBLISHER = "did:web:anchor.org";
 
     static Stream<Arguments> startingConfigurations() {
         return Stream.of(
                 Arguments.of("distinct ports", Map.of(PUBLISHER_ENABLED, "true", MANAGEMENT_PORT, "9090", SERVER_PORT, "8080")),
                 Arguments.of("distinct from the default server port", Map.of(PUBLISHER_ENABLED, "true", MANAGEMENT_PORT, "9090")),
                 Arguments.of("publisher disabled, no management port", Map.of(PUBLISHER_ENABLED, "false")),
-                Arguments.of("publisher disabled, same ports", Map.of(PUBLISHER_ENABLED, "false", MANAGEMENT_PORT, "8080")));
+                Arguments.of("publisher disabled, same ports", Map.of(PUBLISHER_ENABLED, "false", MANAGEMENT_PORT, "8080")),
+                Arguments.of("removal handling, distinct ports", removalHandling(Map.of(MANAGEMENT_PORT, "9090"))),
+                Arguments.of("listener without removal publisher, no management port",
+                        Map.of(LISTENER_ENABLED, "true", PUBLISHER_ID, REMOVAL_PUBLISHER)));
     }
 
     static Stream<Arguments> failingConfigurations() {
         return Stream.of(
-                Arguments.of("no management port", Map.of(PUBLISHER_ENABLED, "true", SERVER_PORT, "8080")),
-                Arguments.of("same as the server port", Map.of(PUBLISHER_ENABLED, "true", MANAGEMENT_PORT, "8081", SERVER_PORT, "8081")),
-                Arguments.of("same as the default server port", Map.of(PUBLISHER_ENABLED, "true", MANAGEMENT_PORT, "8080")));
+                Arguments.of("no management port", Map.of(PUBLISHER_ENABLED, "true", SERVER_PORT, "8080"),
+                        ManagementPortGuard.PUBLISH_ENDPOINT),
+                Arguments.of("same as the server port", Map.of(PUBLISHER_ENABLED, "true", MANAGEMENT_PORT, "8081", SERVER_PORT, "8081"),
+                        ManagementPortGuard.PUBLISH_ENDPOINT),
+                Arguments.of("same as the default server port", Map.of(PUBLISHER_ENABLED, "true", MANAGEMENT_PORT, "8080"),
+                        ManagementPortGuard.PUBLISH_ENDPOINT),
+                Arguments.of("removal handling, no management port", removalHandling(Map.of()),
+                        ManagementPortGuard.REPORT_ENDPOINT),
+                Arguments.of("removal handling, same as the default server port", removalHandling(Map.of(MANAGEMENT_PORT, "8080")),
+                        ManagementPortGuard.REPORT_ENDPOINT));
+    }
+
+    // the listener with a publisher of participant.removed enables the removed-participants report
+    private static Map<String, Object> removalHandling(Map<String, Object> ports) {
+        Map<String, Object> properties = new HashMap<>(ports);
+        properties.put(LISTENER_ENABLED, "true");
+        properties.put(PUBLISHER_ID, REMOVAL_PUBLISHER);
+        properties.put("dataspace.events.publishers[0].types[0]", DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE);
+        return properties;
     }
 
     @ParameterizedTest(name = "{0}")
@@ -49,10 +73,11 @@ class ManagementPortGuardTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("failingConfigurations")
-    void failsStartup(String description, Map<String, Object> ports) {
+    void failsStartup(String description, Map<String, Object> ports, String endpoint) {
         BeanInstantiationException exception = assertThrows(BeanInstantiationException.class, () -> run(ports).close());
         ConfigurationException cause = assertInstanceOf(ConfigurationException.class, rootCause(exception));
-        assertTrue(cause.getMessage().contains(MANAGEMENT_PORT) && cause.getMessage().contains(SERVER_PORT), cause.getMessage());
+        assertTrue(cause.getMessage().contains(MANAGEMENT_PORT) && cause.getMessage().contains(SERVER_PORT)
+                && cause.getMessage().contains(endpoint), cause.getMessage());
     }
 
     private static ApplicationContext run(Map<String, Object> ports) {
