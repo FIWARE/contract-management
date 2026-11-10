@@ -82,7 +82,7 @@ class ParticipantAdoptionTest {
     private final ParticipantRemoval removal = new ParticipantRemoval(adapter, capabilities, registryLookup, report,
             properties, generalProperties, Optional.of(meterRegistry));
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
-            removal, new ParticipantAdoption(adapter, removal), report, properties, generalProperties,
+            removal, new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties,
             new ConfigurationRefreshLock(), Optional.of(meterRegistry), clock);
 
     private final List<Logger> loggers = List.of((Logger) LoggerFactory.getLogger(ParticipantReconciler.class),
@@ -307,7 +307,8 @@ class ParticipantAdoptionTest {
 
         assertEquals(List.of(CREDENTIALS.get(0), added), unattributed.get(X), "nothing is revoked");
         verify(adapter, never()).revokeUnattributed(anyString());
-        assertTrue(logs(Level.WARN).stream().anyMatch(event -> event.getFormattedMessage().contains(X)));
+        assertTrue(logs(Level.WARN).stream().anyMatch(event -> event.getFormattedMessage().contains(X)
+                && event.getFormattedMessage().contains(CREDENTIALS.get(1).getCredentialsType())), "names the grant's credentials");
         assertEquals(0, count(P1, "report", RemovalAction.ADOPTED));
     }
 
@@ -463,6 +464,76 @@ class ParticipantAdoptionTest {
 
         assertEquals(Optional.empty(), heldEntry(X));
         assertEquals(0, count(P1, "dataspace", RemovalAction.ADOPTED));
+    }
+
+    @Test
+    void migrationIntoTheMembershipBetweenTheReadAndTheGrantOfAListedParticipantIsKept() {
+        configure(adopting(P1));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        when(registryLookup.isListed(REGISTRY_URLS.get(P1), X)).thenReturn(Mono.just(true));
+        // another component moves the credentials into P1's membership itself, as the adoption would
+        beforeGrant = did -> {
+            grants.computeIfAbsent(did, id -> new LinkedHashMap<>())
+                    .put(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS);
+            unattributed.remove(did);
+        };
+
+        reconciler.run();
+
+        assertEquals(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS), grants.get(X),
+                "a participant P1 still lists keeps its membership");
+        verify(adapter, never()).deleteIssuer(anyString());
+        assertEquals(1, count(P1, "report", RemovalAction.ADOPTED));
+    }
+
+    @Test
+    void failingLookupBeforeAWithdrawalDeletesNothingAndIsCompletedInTheNextRun() {
+        configure(adopting(P1));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        when(registryLookup.isListed(REGISTRY_URLS.get(P1), X))
+                .thenReturn(Mono.error(new IllegalStateException("registry unavailable")))
+                .thenReturn(Mono.just(false));
+        beforeGrant = did -> {
+            beforeGrant = ignored -> {
+            };
+            // removed meanwhile: delisted by P1 and its originals revoked
+            listed.put(P1, Set.of());
+            unattributed.remove(did);
+        };
+
+        reconciler.run();
+
+        assertEquals(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS), grants.get(X),
+                "nothing is deleted while the registry cannot tell");
+        verify(adapter, never()).deleteIssuer(anyString());
+
+        reconciler.run();
+
+        assertEquals(Optional.empty(), heldEntry(X), "the delisted participant's re-created issuer is withdrawn");
+        assertEquals(0, count(P1, "report", RemovalAction.ADOPTED));
+    }
+
+    @Test
+    void originalsPartlyRemovedBetweenTheReadAndTheGrantAreDroppedFromTheMembership() {
+        configure(adopting(P1));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        List<CredentialsVO> left = List.of(CREDENTIALS.get(1));
+        beforeGrant = did -> {
+            beforeGrant = ignored -> {
+            };
+            unattributed.put(did, left);
+        };
+
+        reconciler.run();
+
+        assertEquals(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), left), grants.get(X),
+                "the grant does not restore the credential removed meanwhile");
+        assertFalse(unattributed.containsKey(X), "the remaining original is revoked");
+        assertEquals(1, count(P1, "report", RemovalAction.ADOPTED));
+        assertTrue(logs(Level.WARN).isEmpty(), "nothing is left to resolve manually");
     }
 
     @Test

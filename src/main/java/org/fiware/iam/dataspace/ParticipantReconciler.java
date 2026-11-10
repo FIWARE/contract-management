@@ -131,7 +131,6 @@ public class ParticipantReconciler {
     }
 
     // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted
-
     private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
                          Set<String> kept,
                          Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write,
@@ -212,7 +211,7 @@ public class ParticipantReconciler {
             return;
         }
         // before the removals: a delisted entry still holding both copies would otherwise keep its unattributed originals
-        completeAdoptions(publisherId, incomplete, split.completable());
+        completeAdoptions(publisherId, registryUrl, incomplete, split.completable());
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
         // re-listed or released otherwise since: the report must not show it as current drift
@@ -246,7 +245,7 @@ public class ParticipantReconciler {
         }
         heldGauge(publisherId).set(stillHeld.size());
         withholdAll(publisherId, unapplied, writeCandidates.keySet(), withheldReason, seenOfPublisher);
-        adoptAll(publisherId, split.publisherMode(), split.adopt(), split.adoptionCap(), incomplete);
+        adoptAll(publisherId, registryUrl, split.publisherMode(), split.adopt(), split.adoptionCap(), incomplete);
     }
 
     // no I/O: runs under the refresh lock; the policy is re-read so its cap matches the modes.
@@ -326,7 +325,7 @@ public class ParticipantReconciler {
     }
 
     // an adoption that failed from its grant on holds the copies twice, and in `local` it is no adoption candidate any more
-    private void completeAdoptions(String publisherId, Map<String, AdoptionIncompleteException> incomplete,
+    private void completeAdoptions(String publisherId, String registryUrl, Map<String, AdoptionIncompleteException> incomplete,
                                    Map<String, EffectiveRemoval> completable) {
         for (String did : List.copyOf(incomplete.keySet())) {
             AdoptionIncompleteException pending = incomplete.remove(did);
@@ -337,8 +336,8 @@ public class ParticipantReconciler {
                 continue;
             }
             try {
-                adoption.complete(publisherId, did, decided.mode().tagValue(), pending.getCopied(), pending.isRevokeAttempted())
-                        .block();
+                adoption.complete(publisherId, registryUrl, did, decided.mode().tagValue(), pending.getCopied(),
+                        pending.isRevokeAttempted()).block();
             } catch (AdoptionIncompleteException e) {
                 incomplete.put(did, e);
                 warnIncomplete(publisherId, did, decided.mode().tagValue(), e);
@@ -350,8 +349,8 @@ public class ParticipantReconciler {
     }
 
     // not under the breaker: an adoption only adds a grant before it removes the duplicate, so truncating is safe
-    private void adoptAll(String publisherId, RemovalMode publisherMode, Map<String, EffectiveRemoval> candidates, int cap,
-                          Map<String, AdoptionIncompleteException> incomplete) {
+    private void adoptAll(String publisherId, String registryUrl, RemovalMode publisherMode,
+                          Map<String, EffectiveRemoval> candidates, int cap, Map<String, AdoptionIncompleteException> incomplete) {
         Map<String, Instant> notAdoptableOfPublisher = notAdoptable.computeIfAbsent(publisherId, id -> new HashMap<>());
         notAdoptableOfPublisher.keySet().retainAll(candidates.keySet());
         if (candidates.isEmpty() || cap == 0) {
@@ -388,7 +387,7 @@ public class ParticipantReconciler {
             reads++;
             String modeTag = candidate.getValue().mode().tagValue();
             try {
-                ParticipantAdoption.Result result = adoption.adopt(publisherId, did, modeTag).block();
+                ParticipantAdoption.Result result = adoption.adopt(publisherId, registryUrl, did, modeTag).block();
                 if (result == ParticipantAdoption.Result.NOT_ADOPTABLE) {
                     notAdoptableOfPublisher.put(did, now);
                     continue;
