@@ -44,6 +44,8 @@ public class ParticipantReconciler {
      */
     static final int MAX_NEW_CANDIDATES_PER_RUN = 200;
     static final String HELD_METRIC_NAME = ParticipantRemoval.METRIC_NAME + ".held";
+    // a wrongly truncated registry trips the breaker with thousands of DIDs; the full set stays in trippedBreakers()
+    static final int BREAKER_LOG_SAMPLE_SIZE = 20;
     private static final String NO_REGISTRY_URL_CONSEQUENCE =
             "without registry-url a failed or dropped removal event is never completed";
 
@@ -160,8 +162,6 @@ public class ParticipantReconciler {
                 reportCandidates.put(did, mode.get());
             }
         }
-        heldGauge(publisherId).set((int) candidates.stream().filter(did -> !did.equals(ownId)).count());
-
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
         for (String did : kept) {
@@ -173,6 +173,8 @@ public class ParticipantReconciler {
         Map<String, RemovalMode> unapplied = new HashMap<>(reportCandidates);
         String withheldReason = null;
         int cap = policy.effectiveMaxRemovalsPerRun();
+        Set<String> stillHeld = new HashSet<>(candidates);
+        stillHeld.remove(ownId);
         if (writeCandidates.size() > cap) {
             trip(publisherId, policy.effectiveMode(), writeCandidates.keySet(), cap);
             unapplied.putAll(writeCandidates);
@@ -180,19 +182,27 @@ public class ParticipantReconciler {
                     .formatted(writeCandidates.size(), cap);
         } else {
             clear(publisherId);
-            new TreeSet<>(writeCandidates.keySet()).forEach(did -> applyCandidate(publisherId, did, seenOfPublisher));
+            for (String did : new TreeSet<>(writeCandidates.keySet())) {
+                if (releasedBy(publisherId, did, seenOfPublisher)) {
+                    stillHeld.remove(did);
+                }
+            }
         }
+        heldGauge(publisherId).set(stillHeld.size());
         withholdAll(publisherId, unapplied, writeCandidates.keySet(), withheldReason, seenOfPublisher);
     }
 
-    private void applyCandidate(String publisherId, String did, Map<String, String> seenOfPublisher) {
+    // applies the candidate; true if it no longer holds the publisher's membership afterwards
+    private boolean releasedBy(String publisherId, String did, Map<String, String> seenOfPublisher) {
         // an applied candidate that stays (e.g. a failed write) is reported anew if the breaker later holds it back
         seenOfPublisher.remove(did);
         try {
-            removal.apply(publisherId, did, RemovalTrigger.RECONCILIATION).block();
+            RemovalOutcome outcome = removal.apply(publisherId, did, RemovalTrigger.RECONCILIATION).block();
+            return outcome != null && outcome.held() != null && outcome.held().membershipOf(publisherId).isEmpty();
         } catch (RuntimeException e) {
             log.warn("Participant {} removed by {}: reconciliation failed, retried in the next run: {}", did, publisherId,
                     DownstreamError.reason(e), e);
+            return false;
         }
     }
 
@@ -225,9 +235,15 @@ public class ParticipantReconciler {
         if (!breaker.equals(previous)) {
             log.error("Participant reconciliation of publisher {} tripped its breaker: {} participants to remove exceed "
                             + "max-removals-per-run {}, none is applied: {}", publisherId, writeCandidates.size(), cap,
-                    new TreeSet<>(writeCandidates));
+                    sample(writeCandidates));
             removal.count(publisherId, publisherMode.tagValue(), RemovalAction.BREAKER);
         }
+    }
+
+    private static String sample(Set<String> dids) {
+        List<String> sample = new TreeSet<>(dids).stream().limit(BREAKER_LOG_SAMPLE_SIZE).toList();
+        String joined = String.join(", ", sample);
+        return dids.size() > BREAKER_LOG_SAMPLE_SIZE ? joined + ", …" : joined;
     }
 
     private void clear(String publisherId) {
@@ -239,6 +255,8 @@ public class ParticipantReconciler {
     private void skipWithoutRegistry(String publisherId, OnParticipantRemoved policy) {
         clear(publisherId);
         seen.remove(publisherId);
+        // not reconciled any more, so its last value would be exported for good
+        Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
         if (!policy.configuresWrites()) {
             log.debug("Publisher {} has no registry-url and only reports; it is not reconciled.", publisherId);
             return;

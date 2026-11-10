@@ -88,7 +88,7 @@ public class ParticipantRemoval {
      * Record the removal as reported without writing anything, e.g. while the sweep's breaker holds it back. Reads what
      * is held for the report; fails like {@link #apply}.
      */
-    public Mono<RemovalOutcome> withhold(String publisherId, String did, RemovalMode mode, String reason) {
+    public Mono<RemovalOutcome> withhold(String publisherId, String did, RemovalMode mode, @Nullable String reason) {
         return Mono.defer(() -> adapter.heldEntry(did))
                 .map(held -> new RemovalOutcome(publisherId, did, RemovalTrigger.RECONCILIATION, mode.tagValue(),
                         held.isPresent() ? RemovalAction.REPORTED : RemovalAction.NOT_HELD, false,

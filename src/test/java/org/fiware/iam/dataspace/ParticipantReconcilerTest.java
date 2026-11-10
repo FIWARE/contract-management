@@ -148,6 +148,7 @@ class ParticipantReconcilerTest {
         assertEquals(1, count(P1, mode.tagValue(), expected));
         assertEquals(RemovalTrigger.RECONCILIATION, report.entries(P1).get(0).outcome().trigger());
         assertEquals(List.of(X), report.entries(P1).stream().map(entry -> entry.outcome().did()).toList());
+        assertEquals(0, heldGauge(P1), "the gauge counts what is still held after the run's writes");
         verifyZeroInteractions(registryLookup);
     }
 
@@ -202,6 +203,26 @@ class ParticipantReconcilerTest {
         assertEquals(tripped ? 1 : 0, count(P1, "dataspace", RemovalAction.BREAKER));
         dids.forEach(did -> assertEquals(tripped, holdsMembership(did, P1)));
         assertEquals(tripped ? writeCandidates : 0, count(P1, "dataspace", RemovalAction.REPORTED));
+        assertEquals(tripped ? writeCandidates : 0, heldGauge(P1));
+    }
+
+    @Test
+    void breakerAlertNamesTheCountAndABoundedSample() {
+        int writeCandidates = ParticipantReconciler.BREAKER_LOG_SAMPLE_SIZE + 5;
+        DataSpaceEventsProperties.Publisher p1 = publisher(P1, RemovalMode.DATASPACE);
+        p1.getOnParticipantRemoved().setMaxRemovalsPerRun(1);
+        configure(p1);
+        List<String> dids = dids(writeCandidates);
+        dids.forEach(did -> held(did, membership(P1)));
+
+        reconciler.run();
+
+        String alert = logs(Level.ERROR).get(0).getFormattedMessage();
+        assertTrue(alert.contains(writeCandidates + " participants to remove"));
+        assertTrue(alert.contains(dids.get(ParticipantReconciler.BREAKER_LOG_SAMPLE_SIZE - 1)));
+        assertFalse(alert.contains(dids.get(ParticipantReconciler.BREAKER_LOG_SAMPLE_SIZE)));
+        assertTrue(alert.endsWith("…"));
+        assertEquals(writeCandidates, reconciler.trippedBreakers().get(P1).writeCandidates().size());
     }
 
     @Test
@@ -402,8 +423,23 @@ class ParticipantReconcilerTest {
         assertTrue(holdsMembership(X, P1));
         assertFalse(holdsMembership(Y, P1));
         assertEquals(1, count(P1, "dataspace", RemovalAction.FAILED));
+        assertEquals(1, heldGauge(P1), "a failed candidate still holds the membership");
         assertEquals(1, logs(Level.WARN).size());
         assertTrue(logs(Level.WARN).get(0).getThrowableProxy() != null, "the exception is attached");
+    }
+
+    @Test
+    void removedRegistryUrlResetsTheHeldGauge() {
+        DataSpaceEventsProperties.Publisher p1 = publisher(P1, RemovalMode.REPORT);
+        configure(p1);
+        held(X, membership(P1));
+        reconciler.run();
+        assertEquals(1, heldGauge(P1));
+
+        p1.getOnParticipantRemoved().setRegistryUrl(null);
+        reconciler.run();
+
+        assertEquals(0, heldGauge(P1));
     }
 
     @Test
