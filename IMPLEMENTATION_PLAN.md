@@ -649,7 +649,9 @@ lists is handled with P's policy at start-up and on every interval, within the c
   (Step 4). Unauthenticated, so
   it relies on the management port being cluster-internal, like `PublishEndpoint`.
 - Management-port guard: extend `ManagementPortGuard` to `PublisherCondition` **or** `ParticipantRemovedCondition`
-  (or add a sibling guard) and name the endpoint in its message, so the report can never land on the public port.
+  (or add a sibling guard) and name the endpoint in its message, so the report can never land on the public port. An endpoint
+  counts only while it is enabled (`endpoints.<id>.enabled`, falling back to `endpoints.all.enabled`, default true,
+  as micronaut-management decides), so disabling the report avoids the separate port.
 - Tests: an HTTP test of the endpoint on the management port, following the `PublishEndpoint` tests, with entries in `report`
   mode showing what is still held, and assert that the main port answers `404` for the path.
 
@@ -731,7 +733,11 @@ and whether it is attributable.
     reads only, degrading instead of failing on a too-old TIL; health turns DEGRADED, never DOWN, so the liveness
     and readiness probes are not affected), and start-up fails only if a writing mode or
     adoption is configured and the TIL answers too old (or a writing mode or an otherwise allowed adoption lacks `registry-url`, which is new
-    configuration and so cannot affect existing deployments).
+    configuration and so cannot affect existing deployments). One exception the README must name: such a deployment
+    that runs the management endpoints on the server port (or leaves `endpoints.all.port` unset) now fails start-up
+    in `ManagementPortGuard`, also in `report` mode, because `GET /participants-removed` would be public. The fix is a
+    separate cluster-internal `endpoints.all.port`, or `endpoints.participants-removed.enabled: false` (the guard
+    then skips the report; PR #11 review).
   - `src/main/resources/application.yaml`: commented example.
   - `AGENTS.md`: list the new classes under `dataspace/`.
 - Tests: `ParticipantRemovedStartupGuardTest`, parameterized over invalid configurations and over

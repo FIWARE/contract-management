@@ -28,6 +28,9 @@ class ManagementPortGuardTest {
     private static final String LISTENER_ENABLED = "dataspace.events.listener.enabled";
     private static final String PUBLISHER_ID = "dataspace.events.publishers[0].id";
     private static final String REMOVAL_PUBLISHER = "did:web:anchor.org";
+    private static final String ALL_ENDPOINTS_ENABLED = "endpoints.all.enabled";
+    private static final String PUBLISH_ENDPOINT_ENABLED = "endpoints." + PublishEndpoint.ID + ".enabled";
+    private static final String REPORT_ENDPOINT_ENABLED = "endpoints." + RemovedParticipantsEndpoint.ID + ".enabled";
 
     static Stream<Arguments> startingConfigurations() {
         return Stream.of(
@@ -37,7 +40,15 @@ class ManagementPortGuardTest {
                 Arguments.of("publisher disabled, same ports", Map.of(PUBLISHER_ENABLED, "false", MANAGEMENT_PORT, "8080")),
                 Arguments.of("removal handling, distinct ports", removalHandling(Map.of(MANAGEMENT_PORT, "9090"))),
                 Arguments.of("listener without removal publisher, no management port",
-                        Map.of(LISTENER_ENABLED, "true", PUBLISHER_ID, REMOVAL_PUBLISHER)));
+                        Map.of(LISTENER_ENABLED, "true", PUBLISHER_ID, REMOVAL_PUBLISHER)),
+                Arguments.of("publish endpoint disabled, same ports",
+                        Map.of(PUBLISHER_ENABLED, "true", PUBLISH_ENDPOINT_ENABLED, "false", MANAGEMENT_PORT, "8080")),
+                Arguments.of("removal handling, report endpoint disabled, same ports",
+                        removalHandling(Map.of(REPORT_ENDPOINT_ENABLED, "false", MANAGEMENT_PORT, "8080"))),
+                Arguments.of("removal handling, report endpoint disabled, no management port",
+                        removalHandling(Map.of(REPORT_ENDPOINT_ENABLED, "false"))),
+                Arguments.of("removal handling, all endpoints disabled, no management port",
+                        removalHandling(Map.of(ALL_ENDPOINTS_ENABLED, "false"))));
     }
 
     static Stream<Arguments> failingConfigurations() {
@@ -51,6 +62,12 @@ class ManagementPortGuardTest {
                 Arguments.of("removal handling, no management port", removalHandling(Map.of()),
                         ManagementPortGuard.REPORT_ENDPOINT),
                 Arguments.of("removal handling, same as the default server port", removalHandling(Map.of(MANAGEMENT_PORT, "8080")),
+                        ManagementPortGuard.REPORT_ENDPOINT),
+                Arguments.of("removal handling, report endpoint enabled although all are disabled",
+                        removalHandling(Map.of(ALL_ENDPOINTS_ENABLED, "false", REPORT_ENDPOINT_ENABLED, "true")),
+                        ManagementPortGuard.REPORT_ENDPOINT),
+                Arguments.of("publish endpoint disabled, removal handling, no management port",
+                        removalHandling(Map.of(PUBLISHER_ENABLED, "true", PUBLISH_ENDPOINT_ENABLED, "false")),
                         ManagementPortGuard.REPORT_ENDPOINT));
     }
 
