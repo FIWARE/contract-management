@@ -1,5 +1,6 @@
 package org.fiware.iam.dataspace;
 
+import org.fiware.iam.configuration.AdoptionPolicy;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.RemovalMode;
 import org.fiware.iam.dataspace.RemovedParticipantsEndpoint.AdoptionState;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.Clock;
@@ -75,6 +77,18 @@ class RemovedParticipantsEndpointTest {
                 Arguments.of(State.UNVERIFIED, State.PENDING, TilState.UNVERIFIED),
                 Arguments.of(State.TOO_OLD, State.UNVERIFIED, TilState.TOO_OLD),
                 Arguments.of(State.SUPPORTED, State.TOO_OLD, TilState.TOO_OLD));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(State.class)
+    void everyCapabilityStateHasATilState(State state) {
+        assertEquals(state.name(), TilState.of(state).name());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(AdoptionPolicy.State.class)
+    void everyAdoptionStateIsMapped(AdoptionPolicy.State state) {
+        assertEquals(state.name(), AdoptionState.of(new AdoptionPolicy(state, null)).name());
     }
 
     @ParameterizedTest(name = "typed-scopes {0}, scopes-endpoint {1} -> {2}")

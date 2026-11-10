@@ -119,7 +119,12 @@ public class RemovedParticipantsEndpoint {
         TOO_OLD;
 
         static TilState of(TilCapability.State state) {
-            return valueOf(state.name());
+            return switch (state) {
+                case SUPPORTED -> SUPPORTED;
+                case PENDING -> PENDING;
+                case UNVERIFIED -> UNVERIFIED;
+                case TOO_OLD -> TOO_OLD;
+            };
         }
 
         @JsonValue
@@ -137,7 +142,11 @@ public class RemovedParticipantsEndpoint {
         OFF;
 
         static AdoptionState of(AdoptionPolicy policy) {
-            return valueOf(policy.state().name());
+            return switch (policy.state()) {
+                case ALLOWED -> ALLOWED;
+                case REFUSED -> REFUSED;
+                case OFF -> OFF;
+            };
         }
 
         @JsonValue
