@@ -80,6 +80,20 @@ class RemovedParticipantsReportTest {
     }
 
     @ParameterizedTest(name = "{0}")
+    @MethodSource("standingDrift")
+    void dropsTheDriftOfPublishersNoLongerReconciled(String description, RemovalTrigger trigger, boolean applied,
+                                                    Set<String> candidates, boolean retainedAsCandidate) {
+        report.record(new RemovalOutcome(P1, X, trigger, "report", RemovalAction.REPORTED, applied, null));
+        report.record(new RemovalOutcome(P2, X, RemovalTrigger.RECONCILIATION, "report", RemovalAction.REPORTED, false, null));
+
+        report.retainStandingDriftOf(Set.of(P2));
+
+        boolean history = applied || trigger == RemovalTrigger.EVENT;
+        assertEquals(history ? 1 : 0, report.entries(P1).size());
+        assertEquals(1, report.entries(P2).size(), "reconciled publishers are not affected");
+    }
+
+    @ParameterizedTest(name = "{0}")
     @MethodSource("attributability")
     void tellsWhetherGrantsExplainTheWholeEntry(String description, HeldEntry held, Boolean expected) {
         report.record(new RemovalOutcome(P1, X, RemovalTrigger.EVENT, "report", RemovalAction.REPORTED, false, held));

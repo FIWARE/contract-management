@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -275,6 +276,7 @@ class ParticipantReconcilerTest {
 
         assertEquals(0, heldGauge(P1));
         assertEquals(1, count(P1, "report", RemovalAction.REPORTED));
+        assertTrue(dids(P1).isEmpty(), "its drift is no longer reported");
     }
 
     static Stream<Arguments> breakerCaps() {
@@ -378,6 +380,31 @@ class ParticipantReconcilerTest {
         assertTrue(logs(Level.INFO).stream().anyMatch(event -> event.getFormattedMessage().contains("breaker cleared")));
         assertFalse(holdsMembership(X, P1));
         assertFalse(holdsMembership(Y, P1));
+    }
+
+    @Test
+    void withheldCandidateGoneBeforeItsReadIsReportedNotHeldAndNotReadAgain() {
+        DataSpaceEventsProperties.Publisher p1 = publisher(P1, RemovalMode.DATASPACE);
+        p1.getOnParticipantRemoved().setMaxRemovalsPerRun(0);
+        configure(p1);
+        held(X, membership(P1));
+        // deleted at the list between the listing of P1's members and the read
+        when(adapter.heldEntry(X)).thenAnswer(invocation -> Mono.fromSupplier(() -> {
+            reads.merge(X, 1, Integer::sum);
+            return Optional.empty();
+        }));
+
+        reconciler.run();
+        reconciler.run();
+
+        RemovedParticipantsReport.Entry entry = report.entries(P1).get(0);
+        assertEquals(RemovalAction.NOT_HELD, entry.outcome().action());
+        assertFalse(entry.outcome().applied());
+        assertEquals(List.of(), entry.outcome().held().grants());
+        assertEquals(0, entry.outcome().held().unattributedCount());
+        assertEquals(1, count(P1, "dataspace", RemovalAction.NOT_HELD));
+        assertEquals(Map.of(X, 1), reads, "a seen candidate is not read again");
+        assertTrue(holdsMembership(X, P1), "a tripped breaker writes nothing");
     }
 
     @Test
@@ -542,18 +569,31 @@ class ParticipantReconcilerTest {
         assertTrue(logs(Level.WARN).get(0).getThrowableProxy() != null, "the exception is attached");
     }
 
-    @Test
-    void removedRegistryUrlResetsTheHeldGauge() {
+    static Stream<Arguments> publishersNoLongerReconciled() {
+        return Stream.of(
+                Arguments.of("registry-url removed",
+                        (Consumer<DataSpaceEventsProperties.Publisher>) p -> p.getOnParticipantRemoved().setRegistryUrl(null)),
+                Arguments.of("publisher no longer announces removals",
+                        (Consumer<DataSpaceEventsProperties.Publisher>) p -> p.setTypes(List.of(PEER_TYPE))));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("publishersNoLongerReconciled")
+    void publisherNoLongerReconciledStopsExportingItsDrift(String description,
+                                                          Consumer<DataSpaceEventsProperties.Publisher> refresh) {
         DataSpaceEventsProperties.Publisher p1 = publisher(P1, RemovalMode.REPORT);
         configure(p1);
         held(X, membership(P1));
+        report.record(new RemovalOutcome(P1, Z, RemovalTrigger.EVENT, "report", RemovalAction.REPORTED, false, null));
         reconciler.run();
         assertEquals(1, heldGauge(P1));
+        assertEquals(List.of(Z, X), dids(P1));
 
-        p1.getOnParticipantRemoved().setRegistryUrl(null);
+        refresh.accept(p1);
         reconciler.run();
 
         assertEquals(0, heldGauge(P1));
+        assertEquals(List.of(Z), dids(P1), "nobody re-checks X any more, the event entry stays as history");
     }
 
     @Test

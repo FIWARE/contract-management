@@ -17,8 +17,9 @@ import java.util.Set;
  * In-memory record of the latest outcome per (publisher, participant), bounded per publisher by evicting the entries seen
  * longest ago. Not persisted: after a restart the reconciliation refills the attributable entries.
  * <p>
- * Unapplied reconciliation entries are standing drift and are dropped once the sweep no longer finds them; applied ones
- * and event entries are history, kept until evicted.
+ * One entry per pair, so a later outcome replaces the earlier one, whatever its trigger. Unapplied reconciliation entries
+ * are standing drift and are dropped once the sweep no longer finds them or stops reconciling their publisher; the other
+ * entries are history, kept until evicted or replaced.
  */
 @Singleton
 @Requires(condition = DataSpaceEventsProperties.ParticipantRemovedCondition.class)
@@ -63,10 +64,23 @@ public class RemovedParticipantsReport {
     public synchronized void retainStandingDrift(String publisherId, Set<String> candidates) {
         LinkedHashMap<String, Entry> entries = byPublisher.get(publisherId);
         if (entries != null) {
-            entries.values().removeIf(entry -> entry.outcome().trigger() == RemovalTrigger.RECONCILIATION
-                    && !entry.outcome().applied()
-                    && !candidates.contains(entry.outcome().did()));
+            entries.values().removeIf(entry -> isStandingDrift(entry) && !candidates.contains(entry.outcome().did()));
         }
+    }
+
+    /**
+     * Drop the unapplied reconciliation entries of every publisher not among the given ones: nobody re-checks them any more.
+     */
+    public synchronized void retainStandingDriftOf(Set<String> reconciledPublisherIds) {
+        byPublisher.forEach((publisherId, entries) -> {
+            if (!reconciledPublisherIds.contains(publisherId)) {
+                entries.values().removeIf(RemovedParticipantsReport::isStandingDrift);
+            }
+        });
+    }
+
+    private static boolean isStandingDrift(Entry entry) {
+        return entry.outcome().trigger() == RemovalTrigger.RECONCILIATION && !entry.outcome().applied();
     }
 
     /**

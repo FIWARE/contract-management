@@ -166,6 +166,7 @@ public class ParticipantReconciler {
                 // not reconciled any more; the run's forgetAllBut still counts it as configured
                 Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
                 breakers.remove(publisherId);
+                report.retainStandingDrift(publisherId, Set.of());
             }
             return;
         }
@@ -299,6 +300,7 @@ public class ParticipantReconciler {
         seen.remove(publisherId);
         // not reconciled any more, so its last value would be exported for good
         Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
+        report.retainStandingDrift(publisherId, Set.of());
         if (!policy.configuresWrites()) {
             log.debug("Publisher {} has no registry-url and only reports; it is not reconciled.", publisherId);
             return;
@@ -315,7 +317,7 @@ public class ParticipantReconciler {
                 Tags.of(ParticipantRemoval.PUBLISHER_TAG, id), new AtomicInteger()));
     }
 
-    // a publisher removed by a refresh neither keeps a breaker tripped nor counts as holding drift
+    // a publisher removed by a refresh neither keeps a breaker tripped nor counts or reports drift
     private void forgetAllBut(Set<String> publisherIds) {
         seen.keySet().retainAll(publisherIds);
         loggedMissingRegistry.keySet().retainAll(publisherIds);
@@ -325,5 +327,6 @@ public class ParticipantReconciler {
                 gauge.set(0);
             }
         });
+        report.retainStandingDriftOf(publisherIds);
     }
 }
