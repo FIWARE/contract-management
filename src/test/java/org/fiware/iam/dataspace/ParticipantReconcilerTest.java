@@ -27,6 +27,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -35,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -70,13 +72,25 @@ class ParticipantReconcilerTest {
     private final PublisherRegistryLookup registryLookup = mock(PublisherRegistryLookup.class);
     private final TrustedIssuersRegistryReader registryReader = mock(TrustedIssuersRegistryReader.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    private final RemovedParticipantsReport report = new RemovedParticipantsReport(new MutableClock(Instant.EPOCH));
+    private final MutableClock clock = new MutableClock(Instant.EPOCH);
+    private final RemovedParticipantsReport report = new RemovedParticipantsReport(clock);
     private final DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
     private final GeneralProperties generalProperties = new GeneralProperties();
     private final ParticipantRemoval removal = new ParticipantRemoval(adapter, capabilities, registryLookup, report,
             properties, generalProperties, Optional.of(meterRegistry));
+    // lets a test land a refresh right after the sweep decided, before any write
+    private Runnable refreshAfterDecision = () -> {
+    };
+    private final ConfigurationRefreshLock refreshLock = new ConfigurationRefreshLock() {
+        @Override
+        public <T> T exclusively(Supplier<T> work) {
+            T result = super.exclusively(work);
+            refreshAfterDecision.run();
+            return result;
+        }
+    };
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
-            removal, report, properties, generalProperties, Optional.of(meterRegistry));
+            removal, report, properties, generalProperties, refreshLock, Optional.of(meterRegistry));
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(ParticipantReconciler.class);
     private final ListAppender<ILoggingEvent> logged = new ListAppender<>();
@@ -171,13 +185,45 @@ class ParticipantReconcilerTest {
         held(did, membership(P1));
 
         reconciler.run();
+        clock.advance(Duration.ofMinutes(1));
         reconciler.run();
 
         assertTrue(holdsMembership(did, P1));
+        assertEquals(List.of(clock.instant()), report.entries(P1).stream().map(RemovedParticipantsReport.Entry::lastSeen).toList(),
+                "a kept identifier seen again is touched, not counted again");
         verify(adapter, never()).heldEntry(did);
         verify(adapter, never()).deleteIssuer(anyString());
         assertEquals(1, count(P1, RemovalMode.KEEP_TAG_VALUE, RemovalAction.KEPT));
         assertEquals(did.equals(OWN_ID) ? 0 : 1, heldGauge(P1));
+    }
+
+    static Stream<Arguments> refreshedDecisions() {
+        DataSpaceEventsProperties.Publisher keeping = publisher(P1, RemovalMode.FULL);
+        keeping.getOnParticipantRemoved().setKeep(List.of(X));
+        keeping.getOnParticipantRemoved().setMaxRemovalsPerRun(0);
+        return Stream.of(
+                Arguments.of("taken off keep", keeping, RemovalMode.KEEP_TAG_VALUE, RemovalAction.KEPT, true),
+                Arguments.of("mode raised", publisher(P1, RemovalMode.DATASPACE), "dataspace",
+                        RemovalAction.REVOKED_MEMBERSHIP, false));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("refreshedDecisions")
+    void aRefreshDuringTheRunCannotOvertakeItsDecision(String description, DataSpaceEventsProperties.Publisher before,
+                                                       String expectedMode, RemovalAction expectedAction,
+                                                       boolean membershipKept) {
+        configure(before);
+        held(X, membership(P1), order());
+        DataSpaceEventsProperties.Publisher after = publisher(P1, RemovalMode.FULL);
+        after.getOnParticipantRemoved().setMaxRemovalsPerRun(0);
+        refreshAfterDecision = () -> configure(after);
+
+        reconciler.run();
+
+        verify(adapter, never()).deleteIssuer(anyString());
+        assertEquals(membershipKept, holdsMembership(X, P1));
+        assertEquals(1, count(P1, expectedMode, expectedAction));
+        assertEquals(0, count(P1, "full", RemovalAction.DELETED_ISSUER));
     }
 
     static Stream<Arguments> breakerCaps() {

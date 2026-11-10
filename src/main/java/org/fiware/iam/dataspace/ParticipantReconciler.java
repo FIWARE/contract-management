@@ -8,6 +8,7 @@ import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
+import org.fiware.iam.configuration.DataSpaceEventsProperties.EffectiveRemoval;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemoved;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 import org.fiware.iam.configuration.GeneralProperties;
@@ -16,7 +17,6 @@ import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -56,6 +56,7 @@ public class ParticipantReconciler {
     private final RemovedParticipantsReport report;
     private final DataSpaceEventsProperties properties;
     private final GeneralProperties generalProperties;
+    private final ConfigurationRefreshLock refreshLock;
     private final MeterRegistry meterRegistry;
 
     // publisher -> DID -> mode tag of the unapplied candidates already counted; only touched by run()
@@ -71,7 +72,7 @@ public class ParticipantReconciler {
     public ParticipantReconciler(TrustedIssuersListAdapter adapter, TilCapabilities capabilities,
                                  TrustedIssuersRegistryReader registryReader, ParticipantRemoval removal,
                                  RemovedParticipantsReport report, DataSpaceEventsProperties properties, GeneralProperties generalProperties,
-                                 Optional<MeterRegistry> meterRegistry) {
+                                 ConfigurationRefreshLock refreshLock, Optional<MeterRegistry> meterRegistry) {
         this.adapter = adapter;
         this.capabilities = capabilities;
         this.registryReader = registryReader;
@@ -79,6 +80,7 @@ public class ParticipantReconciler {
         this.report = report;
         this.properties = properties;
         this.generalProperties = generalProperties;
+        this.refreshLock = refreshLock;
         this.meterRegistry = meterRegistry.orElseGet(CompositeMeterRegistry::new);
     }
 
@@ -93,6 +95,11 @@ public class ParticipantReconciler {
      */
     public Map<String, Breaker> trippedBreakers() {
         return Map.copyOf(breakers);
+    }
+
+    // the run's decisions, taken from one configuration state; kept candidates have no removal
+    private record Split(@Nullable String ownId, int cap, RemovalMode publisherMode, Set<String> kept,
+                         Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write) {
     }
 
     /**
@@ -148,42 +155,33 @@ public class ParticipantReconciler {
             candidates.removeAll(registryReader.enumerate(registryUrl));
         }
 
-        String ownId = properties.ownId(generalProperties);
-        List<String> kept = new ArrayList<>();
-        Map<String, RemovalMode> reportCandidates = new HashMap<>();
-        Map<String, RemovalMode> writeCandidates = new HashMap<>();
-        for (String did : candidates) {
-            Optional<RemovalMode> mode = properties.removalMode(publisherId, did, ownId);
-            if (mode.isEmpty()) {
-                kept.add(did);
-            } else if (mode.get().writes()) {
-                writeCandidates.put(did, mode.get());
-            } else {
-                reportCandidates.put(did, mode.get());
-            }
-        }
+        // decided under the lock and passed on to every apply, so a refresh during the run cannot write past the breaker
+        Split split = refreshLock.exclusively(() -> split(publisherId, policy, candidates));
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
-        for (String did : kept) {
-            if (!RemovalMode.KEEP_TAG_VALUE.equals(seenOfPublisher.put(did, RemovalMode.KEEP_TAG_VALUE))) {
-                removal.apply(publisherId, did, RemovalTrigger.RECONCILIATION).block();
+        for (String did : split.kept()) {
+            if (RemovalMode.KEEP_TAG_VALUE.equals(seenOfPublisher.put(did, RemovalMode.KEEP_TAG_VALUE))) {
+                report.touch(publisherId, did);
+            } else {
+                removal.apply(publisherId, did, RemovalTrigger.RECONCILIATION, null).block();
             }
         }
 
-        Map<String, RemovalMode> unapplied = new HashMap<>(reportCandidates);
+        Map<String, EffectiveRemoval> unapplied = new HashMap<>(split.report());
         String withheldReason = null;
-        int cap = policy.effectiveMaxRemovalsPerRun();
+        int cap = split.cap();
+        Map<String, EffectiveRemoval> writeCandidates = split.write();
         Set<String> stillHeld = new HashSet<>(candidates);
-        stillHeld.remove(ownId);
+        stillHeld.remove(split.ownId());
         if (writeCandidates.size() > cap) {
-            trip(publisherId, policy.effectiveMode(), writeCandidates.keySet(), cap);
+            trip(publisherId, split.publisherMode(), writeCandidates.keySet(), cap);
             unapplied.putAll(writeCandidates);
             withheldReason = "held back by the breaker: %s write candidates exceed max-removals-per-run %s"
                     .formatted(writeCandidates.size(), cap);
         } else {
             clear(publisherId);
             for (String did : new TreeSet<>(writeCandidates.keySet())) {
-                if (releasedBy(publisherId, did, seenOfPublisher)) {
+                if (releasedBy(publisherId, did, writeCandidates.get(did), seenOfPublisher)) {
                     stillHeld.remove(did);
                 }
             }
@@ -192,12 +190,38 @@ public class ParticipantReconciler {
         withholdAll(publisherId, unapplied, writeCandidates.keySet(), withheldReason, seenOfPublisher);
     }
 
+    // no I/O: runs under the refresh lock; the policy is re-read so its cap matches the modes
+    private Split split(String publisherId, OnParticipantRemoved policy, Set<String> candidates) {
+        OnParticipantRemoved current = properties.removalPublishers().stream()
+                .filter(publisher -> publisher.getId().equals(publisherId))
+                .findFirst()
+                .map(Publisher::getOnParticipantRemoved)
+                .orElse(policy);
+        String ownId = properties.ownId(generalProperties);
+        Set<String> kept = new TreeSet<>();
+        Map<String, EffectiveRemoval> reportCandidates = new HashMap<>();
+        Map<String, EffectiveRemoval> writeCandidates = new HashMap<>();
+        for (String did : candidates) {
+            Optional<EffectiveRemoval> decided = properties.effectiveRemoval(publisherId, did, ownId);
+            if (decided.isEmpty()) {
+                kept.add(did);
+            } else if (decided.get().mode().writes()) {
+                writeCandidates.put(did, decided.get());
+            } else {
+                reportCandidates.put(did, decided.get());
+            }
+        }
+        return new Split(ownId, current.effectiveMaxRemovalsPerRun(), current.effectiveMode(), kept, reportCandidates,
+                writeCandidates);
+    }
+
     // applies the candidate; true if it no longer holds the publisher's membership afterwards
-    private boolean releasedBy(String publisherId, String did, Map<String, String> seenOfPublisher) {
+    private boolean releasedBy(String publisherId, String did, EffectiveRemoval decided,
+                               Map<String, String> seenOfPublisher) {
         // an applied candidate that stays (e.g. a failed write) is reported anew if the breaker later holds it back
         seenOfPublisher.remove(did);
         try {
-            RemovalOutcome outcome = removal.apply(publisherId, did, RemovalTrigger.RECONCILIATION).block();
+            RemovalOutcome outcome = removal.apply(publisherId, did, RemovalTrigger.RECONCILIATION, decided).block();
             return outcome != null && outcome.held() != null && outcome.held().membershipOf(publisherId).isEmpty();
         } catch (RuntimeException e) {
             log.warn("Participant {} removed by {}: reconciliation failed, retried in the next run: {}", did, publisherId,
@@ -206,11 +230,11 @@ public class ParticipantReconciler {
         }
     }
 
-    private void withholdAll(String publisherId, Map<String, RemovalMode> unapplied, Set<String> withheld,
+    private void withholdAll(String publisherId, Map<String, EffectiveRemoval> unapplied, Set<String> withheld,
                              @Nullable String withheldReason, Map<String, String> seenOfPublisher) {
         int reads = 0;
         for (String did : new TreeSet<>(unapplied.keySet())) {
-            RemovalMode mode = unapplied.get(did);
+            RemovalMode mode = unapplied.get(did).mode();
             if (mode.tagValue().equals(seenOfPublisher.get(did))) {
                 report.touch(publisherId, did);
                 continue;

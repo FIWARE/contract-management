@@ -61,22 +61,31 @@ public class ParticipantRemoval {
      * failure is counted but not logged, that is left to the caller.
      */
     public Mono<RemovalOutcome> apply(String publisherId, String did, RemovalTrigger trigger) {
+        // mode and registry-url from one read, so a refresh cannot leave a writing mode without its registry
+        return Mono.defer(() -> apply(publisherId, did, trigger,
+                properties.effectiveRemoval(publisherId, did, properties.ownId(generalProperties)).orElse(null)));
+    }
+
+    /**
+     * Like {@link #apply(String, String, RemovalTrigger)}, with the removal already decided ({@code null}: kept), so a
+     * refresh cannot overtake a caller that budgets its writes on that decision, as the sweep's breaker does.
+     */
+    public Mono<RemovalOutcome> apply(String publisherId, String did, RemovalTrigger trigger,
+                                      @Nullable DataSpaceEventsProperties.EffectiveRemoval removal) {
         return Mono.defer(() -> {
-            String ownId = properties.ownId(generalProperties);
-            // mode and registry-url from one read, so a refresh cannot leave a writing mode without its registry
-            Optional<DataSpaceEventsProperties.EffectiveRemoval> removal = properties.effectiveRemoval(publisherId, did, ownId);
-            if (removal.isEmpty()) {
-                String keptBy = did.equals(ownId) ? "it is this participant" : "it is on the keep list of " + properties.keptBy(did).orElse(publisherId);
+            if (removal == null) {
+                String keptBy = did.equals(properties.ownId(generalProperties)) ? "it is this participant"
+                        : "it is on the keep list of " + properties.keptBy(did).orElse(publisherId);
                 return Mono.just(finish(new RemovalOutcome(publisherId, did, trigger, RemovalMode.KEEP_TAG_VALUE,
                         RemovalAction.KEPT, false, null), keptBy));
             }
-            RemovalMode removalMode = removal.get().mode();
+            RemovalMode removalMode = removal.mode();
             return capabilities.requireSupported()
                     .thenReturn(true)
                     // report writes nothing, so an old list only costs it the read of what is held
                     .onErrorResume(e -> !removalMode.writes() && isTooOld(e), e -> Mono.just(false))
                     .flatMap(supported -> supported
-                            ? decide(publisherId, did, trigger, removal.get())
+                            ? decide(publisherId, did, trigger, removal)
                             : Mono.just(new RemovalOutcome(publisherId, did, trigger, removalMode.tagValue(),
                             RemovalAction.REPORTED, false, null)))
                     .map(outcome -> finish(outcome, null))
