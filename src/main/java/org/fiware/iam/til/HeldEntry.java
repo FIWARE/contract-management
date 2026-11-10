@@ -43,10 +43,11 @@ public record HeldEntry(String did, List<Grant> grants, int unattributedCount) {
     }
 
     /**
-     * True if grants explain everything held. A mixed entry is not: its unattributed credentials can never be cleaned up.
+     * True if grants explain everything held, so an empty entry is too. A mixed entry is not: its unattributed credentials
+     * can never be cleaned up.
      */
     public boolean isAttributable() {
-        return !grants.isEmpty() && unattributedCount == 0;
+        return unattributedCount == 0;
     }
 
     /**

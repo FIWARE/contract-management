@@ -78,7 +78,7 @@ public class RemovedParticipantsEndpoint {
 
     /**
      * Latest outcome for one participant. held, attributable and unattributedCount are null if the entry was not read;
-     * an empty held with unattributedCount 0 means nothing is held.
+     * an empty held with unattributedCount 0 means nothing is held, which counts as attributable (nothing left to explain).
      */
     @Introspected
     @JsonInclude(JsonInclude.Include.ALWAYS)

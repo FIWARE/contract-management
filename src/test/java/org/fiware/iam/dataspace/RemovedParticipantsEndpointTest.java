@@ -143,7 +143,7 @@ class RemovedParticipantsEndpointTest {
                         new ParticipantReport(X, "event", NOW, "keep", "kept", false, null, null, null)),
                 Arguments.of("nothing held", outcome(RemovalTrigger.EVENT, "dataspace", RemovalAction.NOT_HELD, false,
                                 new HeldEntry(X, List.of(), 0)),
-                        new ParticipantReport(X, "event", NOW, "dataspace", "not_held", false, false, List.of(), 0)),
+                        new ParticipantReport(X, "event", NOW, "dataspace", "not_held", false, true, List.of(), 0)),
                 Arguments.of("held in report mode", outcome(RemovalTrigger.RECONCILIATION, "report", RemovalAction.REPORTED,
                                 false, mixed),
                         new ParticipantReport(X, "reconciliation", NOW, "report", "reported", false, false,

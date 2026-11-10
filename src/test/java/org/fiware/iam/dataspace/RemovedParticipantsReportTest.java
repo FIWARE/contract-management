@@ -105,7 +105,7 @@ class RemovedParticipantsReportTest {
         HeldEntry.Grant membership = new HeldEntry.Grant(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP, 1);
         return Stream.of(
                 Arguments.of("not read", null, null),
-                Arguments.of("nothing held", new HeldEntry(X, List.of(), 0), false),
+                Arguments.of("nothing held", new HeldEntry(X, List.of(), 0), true),
                 Arguments.of("unattributed only", new HeldEntry(X, List.of(), 1), false),
                 Arguments.of("granted", new HeldEntry(X, List.of(membership), 0), true),
                 Arguments.of("mixed", new HeldEntry(X, List.of(membership), 1), false));

@@ -119,7 +119,7 @@ class RemovedParticipantsEndpointHttpTest implements TestPropertyProvider {
         List<Map<String, Object>> body = client.toBlocking().retrieve(HttpRequest.GET(PATH), Argument.listOf(Argument.mapOf(String.class, Object.class)));
 
         Map<String, Object> gone = new HashMap<>(Map.of("id", GONE, "trigger", "event", "lastSeen", NOW.toString(),
-                "mode", "report", "action", "not_held", "applied", false, "attributable", false, "held", List.of(),
+                "mode", "report", "action", "not_held", "applied", false, "attributable", true, "held", List.of(),
                 "unattributedCount", 0));
         Map<String, Object> held = new HashMap<>(Map.of("id", HELD, "trigger", "reconciliation", "lastSeen", NOW.toString(),
                 "mode", "report", "action", "reported", "applied", false, "attributable", false,
