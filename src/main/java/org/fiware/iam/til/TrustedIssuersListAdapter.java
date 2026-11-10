@@ -171,6 +171,20 @@ public class TrustedIssuersListAdapter {
     }
 
     /**
+     * Every credential the list holds for the issuer, whatever grants it. Empty if the issuer is unknown.
+     */
+    public Mono<Optional<List<CredentialsVO>>> credentials(String did) {
+        return call(() -> apiClient.getIssuer(did))
+                .map(response -> Optional.of(response.getBody()
+                        .map(TrustedIssuerVO::getCredentials)
+                        .<List<CredentialsVO>>map(List::copyOf)
+                        .orElse(List.of())))
+                .onErrorResume(TrustedIssuersListAdapter::isNotFound, e -> Mono.just(Optional.empty()))
+                .onErrorMap(e -> new TrustedIssuersException(FailureReason.TIL_READ_FAILED,
+                        "The trusted-issuers-list could not be read for issuer %s.".formatted(did), e));
+    }
+
+    /**
      * All issuers holding the grant. Fails rather than answer a partial list (more than max-pages, or inconsistent pages).
      */
     public Mono<Set<String>> issuersGrantedBy(String scope, ScopeTypeVO type) {

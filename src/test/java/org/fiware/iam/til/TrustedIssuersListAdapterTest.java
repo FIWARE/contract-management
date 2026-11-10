@@ -341,6 +341,33 @@ class TrustedIssuersListAdapterTest {
         verify(apiClient, never()).getIssuerScopes(any());
     }
 
+    @Test
+    void credentials_readsEveryCredentialOfTheIssuer() {
+        TrustedIssuerVO issuer = issuer(2);
+        doReturn(Mono.just(HttpResponse.ok(issuer))).when(apiClient).getIssuer(ISSUER_DID);
+
+        Assertions.assertEquals(Optional.of(issuer.getCredentials()), membershipAdapter().credentials(ISSUER_DID).block());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("credentialAnswers")
+    void credentials_mapsTheAnswer(String description, Mono<?> answer, @Nullable Optional<?> expected) {
+        doReturn(answer).when(apiClient).getIssuer(ISSUER_DID);
+
+        if (expected == null) {
+            Assertions.assertThrows(TrustedIssuersException.class, () -> membershipAdapter().credentials(ISSUER_DID).block());
+        } else {
+            Assertions.assertEquals(expected, membershipAdapter().credentials(ISSUER_DID).block());
+        }
+    }
+
+    private static Stream<Arguments> credentialAnswers() {
+        return Stream.of(
+                Arguments.of("unknown issuer", error(HttpStatus.NOT_FOUND), Optional.empty()),
+                Arguments.of("empty body", Mono.just(HttpResponse.ok()), Optional.of(List.of())),
+                Arguments.of("failure", error(HttpStatus.BAD_GATEWAY), null));
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("unreadableEntries")
     void heldEntry_failsOnAnUnreadableEntry(String description, Mono<?> issuer, Mono<?> scopes) {

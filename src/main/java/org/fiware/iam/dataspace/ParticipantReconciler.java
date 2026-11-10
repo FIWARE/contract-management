@@ -7,6 +7,7 @@ import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
+import org.fiware.iam.configuration.AdoptionPolicy;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.EffectiveRemoval;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemoved;
@@ -17,22 +18,28 @@ import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The reconciliation sweep of participant.removed: per publisher, the identifiers still holding its membership grant
- * although its registry no longer lists them are handled with its policy, unless they trip its breaker.
+ * although its registry no longer lists them are handled with its policy, unless they trip its breaker. While adoption is
+ * allowed, listed entries of nothing but unattributed credentials are adopted into the publisher's data space.
  * <p>
  * {@link #run()} is not reentrant (one scheduler thread); {@link #trippedBreakers()} may be read concurrently. Never
- * touches unattributed entries, and makes no stale-event lookup: the listing is fresh for the run.
+ * removes unattributed entries, and makes no stale-event lookup: the listing is fresh for the run.
  */
 @Slf4j
 @Singleton
@@ -46,6 +53,10 @@ public class ParticipantReconciler {
     static final String HELD_METRIC_NAME = ParticipantRemoval.METRIC_NAME + ".held";
     // a wrongly truncated registry trips the breaker with thousands of DIDs; the full set stays in trippedBreakers()
     static final int BREAKER_LOG_SAMPLE_SIZE = 20;
+    /**
+     * How long an entry found not adoptable (it holds grants) is not read again; it may lose its grants later.
+     */
+    static final Duration NOT_ADOPTABLE_RECHECK_INTERVAL = Duration.ofHours(24);
     private static final String NO_REGISTRY_URL_CONSEQUENCE =
             "without registry-url a failed or dropped removal event is never completed";
 
@@ -53,16 +64,23 @@ public class ParticipantReconciler {
     private final TilCapabilities capabilities;
     private final TrustedIssuersRegistryReader registryReader;
     private final ParticipantRemoval removal;
+    private final ParticipantAdoption adoption;
     private final RemovedParticipantsReport report;
     private final DataSpaceEventsProperties properties;
     private final GeneralProperties generalProperties;
     private final ConfigurationRefreshLock refreshLock;
     private final MeterRegistry meterRegistry;
+    private final Clock clock;
 
     // publisher -> DID -> mode tag of the unapplied candidates already counted; only touched by run()
     private final Map<String, Map<String, String>> seen = new HashMap<>();
     // publisher -> policy for which the missing registry-url was already logged; only touched by run()
     private final Map<String, String> loggedMissingRegistry = new HashMap<>();
+    // publisher -> DID -> when it was found not adoptable; only touched by run()
+    private final Map<String, Map<String, Instant>> notAdoptable = new HashMap<>();
+    // the refused adoption configuration last warned about, null while adoption is not refused; only touched by run()
+    @Nullable
+    private String loggedAdoptionRefusal;
     private final Map<String, AtomicInteger> heldGauges = new ConcurrentHashMap<>();
     private final Map<String, Breaker> breakers = new ConcurrentHashMap<>();
     // reason of the last skipped run, null while runs are not skipped; only touched by run()
@@ -71,17 +89,20 @@ public class ParticipantReconciler {
 
     public ParticipantReconciler(TrustedIssuersListAdapter adapter, TilCapabilities capabilities,
                                  TrustedIssuersRegistryReader registryReader, ParticipantRemoval removal,
-                                 RemovedParticipantsReport report, DataSpaceEventsProperties properties, GeneralProperties generalProperties,
-                                 ConfigurationRefreshLock refreshLock, Optional<MeterRegistry> meterRegistry) {
+                                 ParticipantAdoption adoption, RemovedParticipantsReport report,
+                                 DataSpaceEventsProperties properties, GeneralProperties generalProperties,
+                                 ConfigurationRefreshLock refreshLock, Optional<MeterRegistry> meterRegistry, Clock clock) {
         this.adapter = adapter;
         this.capabilities = capabilities;
         this.registryReader = registryReader;
         this.removal = removal;
+        this.adoption = adoption;
         this.report = report;
         this.properties = properties;
         this.generalProperties = generalProperties;
         this.refreshLock = refreshLock;
         this.meterRegistry = meterRegistry.orElseGet(CompositeMeterRegistry::new);
+        this.clock = clock;
     }
 
     /**
@@ -97,16 +118,18 @@ public class ParticipantReconciler {
         return Map.copyOf(breakers);
     }
 
-    // the run's decisions, taken from one configuration state; kept candidates have no removal
+    // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted
     private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
                          Set<String> kept,
-                         Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write) {
+                         Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write,
+                         Map<String, EffectiveRemoval> adopt, int adoptionCap) {
     }
 
     /**
      * One sweep over all removal publishers; blocks until done. Skipped while a required TIL capability is not supported.
      */
     public void run() {
+        warnIfAdoptionRefused();
         try {
             capabilities.requireSupported().block();
         } catch (RuntimeException e) {
@@ -150,14 +173,21 @@ public class ParticipantReconciler {
         Set<String> local = adapter.issuersGrantedBy(publisherId, TrustedIssuersListAdapter.DATASPACE_MEMBERSHIP_SCOPE_TYPE)
                 .blockOptional()
                 .orElse(Set.of());
+        boolean adopting = properties.adoption().isAllowed();
+        Set<String> listed = local.isEmpty() && !adopting ? Set.of() : registryReader.enumerate(registryUrl);
         // sorted, so the order of writes and log lines is stable across runs
         Set<String> candidates = new TreeSet<>(local);
-        if (!candidates.isEmpty()) {
-            candidates.removeAll(registryReader.enumerate(registryUrl));
+        candidates.removeAll(listed);
+        Set<String> unadopted = new TreeSet<>(listed);
+        unadopted.removeAll(local);
+        if (adopting && !unadopted.isEmpty()) {
+            unadopted.retainAll(adapter.allIssuers().blockOptional().orElse(Set.of()));
+        } else {
+            unadopted.clear();
         }
 
         // decided under the lock and passed on to every apply, so a refresh during the run cannot write past the breaker
-        Split split = refreshLock.exclusively(() -> split(publisherId, candidates));
+        Split split = refreshLock.exclusively(() -> split(publisherId, candidates, unadopted));
         if (!registryUrl.equals(split.registryUrl())) {
             // the candidates were listed from a registry the current configuration no longer names
             log.info("Participant reconciliation of publisher {} skipped: its registry-url changed or it stopped "
@@ -203,17 +233,18 @@ public class ParticipantReconciler {
         }
         heldGauge(publisherId).set(stillHeld.size());
         withholdAll(publisherId, unapplied, writeCandidates.keySet(), withheldReason, seenOfPublisher);
+        adoptAll(publisherId, split.adopt(), split.adoptionCap());
     }
 
     // no I/O: runs under the refresh lock; the policy is re-read so its cap matches the modes.
     // A publisher no longer announcing removals gets a split without registry-url, so the run skips it.
-    private Split split(String publisherId, Set<String> candidates) {
+    private Split split(String publisherId, Set<String> candidates, Set<String> adoptionCandidates) {
         Optional<OnParticipantRemoved> found = properties.removalPublishers().stream()
                 .filter(publisher -> publisher.getId().equals(publisherId))
                 .findFirst()
                 .map(Publisher::getOnParticipantRemoved);
         if (found.isEmpty()) {
-            return new Split(null, null, 0, RemovalMode.REPORT, Set.of(), Map.of(), Map.of());
+            return new Split(null, null, 0, RemovalMode.REPORT, Set.of(), Map.of(), Map.of(), Map.of(), 0);
         }
         OnParticipantRemoved current = found.get();
         String ownId = properties.ownId(generalProperties);
@@ -230,8 +261,13 @@ public class ParticipantReconciler {
                 reportCandidates.put(did, decided.get());
             }
         }
+        Map<String, EffectiveRemoval> adopt = new TreeMap<>();
+        if (properties.adoption().isAllowed() && current.isAdoptUnattributed()) {
+            adoptionCandidates.forEach(did -> properties.effectiveRemoval(publisherId, did, ownId)
+                    .ifPresent(decided -> adopt.put(did, decided)));
+        }
         return new Split(current.getRegistryUrl(), ownId, current.effectiveMaxRemovalsPerRun(), current.effectiveMode(),
-                kept, reportCandidates, writeCandidates);
+                kept, reportCandidates, writeCandidates, adopt, current.effectiveMaxAdoptionsPerRun());
     }
 
     // applies the candidate; true if it no longer holds the publisher's membership afterwards
@@ -272,6 +308,68 @@ public class ParticipantReconciler {
         }
     }
 
+    // not under the breaker: an adoption only adds a grant before it removes the duplicate, so truncating is safe
+    private void adoptAll(String publisherId, Map<String, EffectiveRemoval> candidates, int cap) {
+        Map<String, Instant> notAdoptableOfPublisher = notAdoptable.computeIfAbsent(publisherId, id -> new HashMap<>());
+        notAdoptableOfPublisher.keySet().retainAll(candidates.keySet());
+        Instant now = clock.instant();
+        int reads = 0;
+        int attempts = 0;
+        for (Map.Entry<String, EffectiveRemoval> candidate : candidates.entrySet()) {
+            if (attempts >= cap || reads >= MAX_NEW_CANDIDATES_PER_RUN) {
+                break;
+            }
+            String did = candidate.getKey();
+            Instant readAt = notAdoptableOfPublisher.get(did);
+            if (readAt != null && now.isBefore(readAt.plus(NOT_ADOPTABLE_RECHECK_INTERVAL))) {
+                continue;
+            }
+            reads++;
+            String modeTag = candidate.getValue().mode().tagValue();
+            try {
+                ParticipantAdoption.Result result = adoption.adopt(publisherId, did, modeTag).block();
+                if (result == ParticipantAdoption.Result.NOT_ADOPTABLE) {
+                    notAdoptableOfPublisher.put(did, now);
+                    continue;
+                }
+                notAdoptableOfPublisher.remove(did);
+                if (result != ParticipantAdoption.Result.SKIPPED) {
+                    attempts++;
+                }
+            } catch (RuntimeException e) {
+                attempts++;
+                log.warn("Participant {} listed by {}: adoption failed, retried in the next run: {}", did, publisherId,
+                        DownstreamError.reason(e), e);
+                removal.count(publisherId, modeTag, RemovalAction.FAILED);
+            }
+        }
+    }
+
+    // configuration only, so it is checked even while runs are skipped: it is the start-up and refresh warning
+    private void warnIfAdoptionRefused() {
+        AdoptionPolicy policy = properties.adoption();
+        List<Publisher> removalPublishers = properties.removalPublishers();
+        String refusal = policy.state() == AdoptionPolicy.State.REFUSED
+                ? policy.reason() + " " + properties.getDataspaceId() + " " + removalPublishers
+                : null;
+        if (Objects.equals(refusal, loggedAdoptionRefusal)) {
+            return;
+        }
+        loggedAdoptionRefusal = refusal;
+        if (refusal == null) {
+            return;
+        }
+        List<Publisher> asking = removalPublishers.stream()
+                .filter(publisher -> publisher.getOnParticipantRemoved().isAdoptUnattributed())
+                .toList();
+        log.warn("adopt-unattributed of {} is ignored, no unattributed entry is adopted: {}; {} publishers announce "
+                        + "participant removals ({}).",
+                asking.stream().map(Publisher::getId).toList(), policy.reason().logText(), removalPublishers.size(),
+                removalPublishers.stream().map(Publisher::getId).toList());
+        asking.forEach(publisher -> removal.count(publisher.getId(),
+                publisher.getOnParticipantRemoved().effectiveMode().tagValue(), RemovalAction.ADOPTION_REFUSED));
+    }
+
     private void trip(String publisherId, RemovalMode publisherMode, Set<String> writeCandidates, int cap) {
         Breaker breaker = new Breaker(Set.copyOf(writeCandidates), cap);
         Breaker previous = breakers.put(publisherId, breaker);
@@ -298,6 +396,7 @@ public class ParticipantReconciler {
     private void skipWithoutRegistry(String publisherId, OnParticipantRemoved policy) {
         clear(publisherId);
         seen.remove(publisherId);
+        notAdoptable.remove(publisherId);
         // not reconciled any more, so its last value would be exported for good
         Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
         report.retainStandingDrift(publisherId, Set.of());
@@ -320,6 +419,7 @@ public class ParticipantReconciler {
     // a publisher removed by a refresh neither keeps a breaker tripped nor counts or reports drift
     private void forgetAllBut(Set<String> publisherIds) {
         seen.keySet().retainAll(publisherIds);
+        notAdoptable.keySet().retainAll(publisherIds);
         loggedMissingRegistry.keySet().retainAll(publisherIds);
         breakers.keySet().retainAll(publisherIds);
         heldGauges.forEach((id, gauge) -> {
