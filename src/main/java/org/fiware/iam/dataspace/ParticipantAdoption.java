@@ -34,7 +34,7 @@ public class ParticipantAdoption {
     }
 
     /**
-     * What an adoption attempt did. Only ADOPTED and DUPLICATE_LEFT wrote to the list.
+     * What an adoption attempt did.
      */
     public enum Result {
         ADOPTED,
@@ -47,7 +47,8 @@ public class ParticipantAdoption {
          */
         NOT_ADOPTABLE,
         /**
-         * The entry is gone, or holds no membership of the publisher to complete; nothing written, worth another try.
+         * Nothing left to complete: the entry is gone, or holds no membership of the publisher (never written, or revoked
+         * by a removal since); a listed entry is adopted anew.
          */
         SKIPPED
     }

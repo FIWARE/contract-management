@@ -81,8 +81,10 @@ public class ParticipantReconciler {
     // publisher -> DID -> when it was found not adoptable; only touched by run()
     private final Map<String, Map<String, Instant>> notAdoptable = new HashMap<>();
     // publisher -> DID -> credentials copied by an adoption that failed from its grant on; only touched by run().
-    // Not persisted: after a restart such a duplicate is left for the operator (the failure WARN says so)
+    // Not persisted: after a restart the duplicate stays until a removal of the participant revokes it with its membership
     private final Map<String, Map<String, List<CredentialsVO>>> incompleteAdoptions = new HashMap<>();
+    // publisher -> reason its issuers could last not be listed for adoption; only touched by run()
+    private final Map<String, String> listingFailures = new HashMap<>();
     // the refused adoption configuration last warned about, null while adoption is not refused; only touched by run()
     @Nullable
     private String loggedAdoptionRefusal;
@@ -350,10 +352,16 @@ public class ParticipantReconciler {
             // only issuers the list holds are read; a failure here skips adoption, never the removals before it
             held = adapter.allIssuers().blockOptional().orElse(Set.of());
         } catch (RuntimeException e) {
-            log.warn("Adoption for publisher {} skipped in this run, its issuers could not be listed: {}", publisherId,
-                    DownstreamError.reason(e), e);
-            removal.count(publisherId, publisherMode.tagValue(), RemovalAction.FAILED);
+            // a standing cause (e.g. more issuers than max-pages) fails every run alike, so it is reported once
+            String reason = DownstreamError.reason(e);
+            if (!reason.equals(listingFailures.put(publisherId, reason))) {
+                log.warn("Adoption for publisher {} skipped until its issuers can be listed: {}", publisherId, reason, e);
+                removal.count(publisherId, publisherMode.tagValue(), RemovalAction.FAILED);
+            }
             return;
+        }
+        if (listingFailures.remove(publisherId) != null) {
+            log.info("Adoption for publisher {} resumed: its issuers are listed again.", publisherId);
         }
         Instant now = clock.instant();
         int reads = 0;
@@ -394,7 +402,7 @@ public class ParticipantReconciler {
 
     private void warnIncomplete(String publisherId, String did, String modeTag, RuntimeException e) {
         log.warn("Participant {} listed by {}: adoption incomplete, its membership grant may hold a duplicate of its "
-                        + "unattributed credentials; completed in the next run (after a restart, resolve the duplicate manually): {}",
+                        + "unattributed credentials; completed in the next run (after a restart, revoked when the participant is removed): {}",
                 did, publisherId, DownstreamError.reason(e), e);
         removal.count(publisherId, modeTag, RemovalAction.FAILED);
     }
@@ -451,6 +459,7 @@ public class ParticipantReconciler {
         clear(publisherId);
         seen.remove(publisherId);
         notAdoptable.remove(publisherId);
+        listingFailures.remove(publisherId);
         // not reconciled any more, so its last value would be exported for good
         Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
         report.retainStandingDrift(publisherId, Set.of());
@@ -474,6 +483,7 @@ public class ParticipantReconciler {
     private void forgetAllBut(Set<String> publisherIds) {
         seen.keySet().retainAll(publisherIds);
         notAdoptable.keySet().retainAll(publisherIds);
+        listingFailures.keySet().retainAll(publisherIds);
         incompleteAdoptions.forEach((id, incomplete) -> {
             if (!publisherIds.contains(id) && !incomplete.isEmpty()) {
                 log.warn("Publisher {} no longer announces removals, so the incomplete adoptions of {} are not completed; "

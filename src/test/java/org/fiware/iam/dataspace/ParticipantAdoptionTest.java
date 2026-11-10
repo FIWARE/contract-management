@@ -22,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -400,6 +401,69 @@ class ParticipantAdoptionTest {
         reconciler.run();
 
         assertEquals(Optional.empty(), heldEntry(X), "the originals are revoked first, so the removal leaves nothing trusted");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(RemovalTrigger.class)
+    void removalRevokesTheCopyOfAnAdoptionWhoseCompletionWasLost(RemovalTrigger trigger) {
+        configure(writing(adopting(P1)));
+        // what an adoption whose revoke failed leaves, with the in-memory completion lost over a restart
+        grants.put(X, new LinkedHashMap<>(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS)));
+        unattributed.put(X, CREDENTIALS);
+
+        if (trigger == RemovalTrigger.EVENT) {
+            removal.apply(P1, X, trigger).block();
+        } else {
+            reconciler.run();
+        }
+
+        assertEquals(Optional.empty(), heldEntry(X), "the copy does not keep the removed participant trusted");
+    }
+
+    @Test
+    void removalBetweenTheGrantAndTheRevokeOfAnAdoptionLeavesNothingTrusted() {
+        configure(writing(adopting(P1)));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        afterGrant = did -> removal.apply(P1, did, RemovalTrigger.EVENT).block();
+
+        reconciler.run();
+
+        assertEquals(Optional.empty(), heldEntry(X));
+        assertEquals(0, count(P1, "dataspace", RemovalAction.ADOPTED));
+    }
+
+    @Test
+    void removalKeepsUnattributedCredentialsThatAreNoCopyOfTheMembership() {
+        configure(writing(adopting(P1)));
+        grants.put(X, new LinkedHashMap<>(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS)));
+        List<CredentialsVO> operatorManaged = List.of(credential("OperatorCredential"), credential("OtherCredential"));
+        unattributed.put(X, operatorManaged);
+
+        removal.apply(P1, X, RemovalTrigger.EVENT).block();
+
+        assertEquals(Optional.of(new HeldEntry(X, List.of(), operatorManaged.size())), heldEntry(X));
+    }
+
+    @Test
+    void standingListingFailureIsReportedOnceAndItsRecoveryLogged() {
+        configure(adopting(P1));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        TrustedIssuersException tooManyPages = new TrustedIssuersException(FailureReason.TIL_READ_FAILED, "too many pages");
+        when(adapter.allIssuers()).thenReturn(Mono.error(tooManyPages), Mono.error(tooManyPages), Mono.just(Set.of(X)));
+
+        reconciler.run();
+        reconciler.run();
+
+        assertEquals(1, logs(Level.WARN).stream()
+                .filter(event -> event.getFormattedMessage().contains("Adoption for publisher")).count());
+        assertEquals(1, count(P1, "report", RemovalAction.FAILED));
+
+        reconciler.run();
+
+        assertTrue(logs(Level.INFO).stream().anyMatch(event -> event.getFormattedMessage().contains("resumed")));
+        assertFalse(unattributed.containsKey(X), "adopted once the issuers are listed again");
     }
 
     @Test

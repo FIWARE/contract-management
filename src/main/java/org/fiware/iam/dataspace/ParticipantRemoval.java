@@ -13,6 +13,7 @@ import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.ParticipantRemovalException;
 import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.til.HeldEntry;
+import org.fiware.iam.til.IssuerContent;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
 import reactor.core.publisher.Mono;
@@ -122,12 +123,31 @@ public class ParticipantRemoval {
                 : Mono.just(false);
         return listedAgain.flatMap(listed -> listed
                 ? Mono.just(new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), RemovalAction.STILL_LISTED, false, null))
-                : adapter.heldEntry(did).flatMap(held -> cleanup(publisherId, did, trigger, mode, held)));
+                : adapter.heldEntry(did)
+                .flatMap(held -> readAdoptionCopy(publisherId, did, mode, held))
+                .flatMap(read -> cleanup(publisherId, did, trigger, mode, read.held(), read.adoptionCopy())));
+    }
+
+    // an adoption interrupted between its grant and its revoke (its completion lost over a restart, or overtaken by this
+    // removal) leaves an unattributed copy next to the membership; only the credentials tell it, so only that shape reads them
+    private Mono<HeldRead> readAdoptionCopy(String publisherId, String did, RemovalMode mode, Optional<HeldEntry> held) {
+        boolean suspected = (mode == RemovalMode.DATASPACE || mode == RemovalMode.GRANTED)
+                && properties.adoption().isAllowed()
+                && held.filter(entry -> entry.mayHoldAdoptionCopyOf(publisherId)).isPresent();
+        if (!suspected) {
+            return Mono.just(new HeldRead(held, false));
+        }
+        return adapter.content(did).map(content -> new HeldRead(content.map(IssuerContent::held),
+                content.filter(found -> found.holdsAdoptionCopyOf(publisherId)).isPresent()));
+    }
+
+    private record HeldRead(Optional<HeldEntry> held, boolean adoptionCopy) {
     }
 
     private Mono<RemovalOutcome> cleanup(String publisherId, String did, RemovalTrigger trigger, RemovalMode mode,
-                                         Optional<HeldEntry> held) {
-        RemovalPlan plan = RemovalPlan.of(Optional.of(mode), held, publisherId, trigger, properties.adoption().isAllowed());
+                                         Optional<HeldEntry> held, boolean adoptionCopy) {
+        RemovalPlan plan = RemovalPlan.of(Optional.of(mode), held, publisherId, trigger, properties.adoption().isAllowed(),
+                adoptionCopy);
         HeldEntry before = held.orElseGet(() -> RemovalPlan.emptyEntry(did));
         if (plan.operations().isEmpty()) {
             return Mono.just(new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), plan.action(), false, before));
