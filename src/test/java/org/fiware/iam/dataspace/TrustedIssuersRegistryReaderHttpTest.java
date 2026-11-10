@@ -62,6 +62,8 @@ class TrustedIssuersRegistryReaderHttpTest implements TestPropertyProvider {
         properties.put("dataspace.events.tir-watcher.page-size", String.valueOf(PAGE_SIZE));
         // keeps the scheduled watcher from paging the fake registry during the test
         properties.put("dataspace.events.tir-watcher.initial-delay", "PT1H");
+        // a publisher's registry is read by url, paged as participant-removed configures
+        properties.put("dataspace.events.participant-removed.page-size", String.valueOf(PAGE_SIZE));
         properties.put("micronaut.http.services.trusted-issuers-registry.url", "http://localhost:" + port);
         properties.put("micronaut.http.services.trusted-issuers-registry.path", "/");
         return properties;
@@ -79,6 +81,20 @@ class TrustedIssuersRegistryReaderHttpTest implements TestPropertyProvider {
 
         assertEquals(Set.copyOf(registry.dids), reader.enumerate());
         assertEquals(expectedRequests, registry.requests);
+    }
+
+    @ParameterizedTest(name = "{0} participants at {2}")
+    @MethodSource("publisherRegistries")
+    void enumeratesAPublisherRegistryByUrl(int participants, List<Map<String, Integer>> expectedRequests, String path) {
+        registry.dids = dids(participants);
+
+        assertEquals(Set.copyOf(registry.dids), reader.enumerate("http://localhost:" + port + path));
+        assertEquals(expectedRequests, registry.requests);
+    }
+
+    static Stream<Arguments> publisherRegistries() {
+        return registrySizes().flatMap(arguments -> Stream.of("", "/")
+                .map(path -> Arguments.of(arguments.get()[0], arguments.get()[1], path)));
     }
 
     static Stream<Arguments> registrySizes() {

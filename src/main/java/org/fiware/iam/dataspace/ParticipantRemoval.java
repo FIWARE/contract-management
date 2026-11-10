@@ -61,32 +61,56 @@ public class ParticipantRemoval {
      * failure is counted but not logged, that is left to the caller.
      */
     public Mono<RemovalOutcome> apply(String publisherId, String did, RemovalTrigger trigger) {
+        // mode and registry-url from one read, so a refresh cannot leave a writing mode without its registry
+        return Mono.defer(() -> apply(publisherId, did, trigger,
+                properties.effectiveRemoval(publisherId, did, properties.ownId(generalProperties)).orElse(null)));
+    }
+
+    /**
+     * Like {@link #apply(String, String, RemovalTrigger)}, with the removal already decided ({@code null}: kept), so a
+     * refresh cannot overtake a caller that budgets its writes on that decision, as the sweep's breaker does.
+     */
+    public Mono<RemovalOutcome> apply(String publisherId, String did, RemovalTrigger trigger,
+                                      @Nullable DataSpaceEventsProperties.EffectiveRemoval removal) {
         return Mono.defer(() -> {
-            String ownId = properties.ownId(generalProperties);
-            // mode and registry-url from one read, so a refresh cannot leave a writing mode without its registry
-            Optional<DataSpaceEventsProperties.EffectiveRemoval> removal = properties.effectiveRemoval(publisherId, did, ownId);
-            if (removal.isEmpty()) {
-                String keptBy = did.equals(ownId) ? "it is this participant" : "it is on the keep list of " + properties.keptBy(did).orElse(publisherId);
+            if (removal == null) {
+                String keptBy = did.equals(properties.ownId(generalProperties)) ? "it is this participant"
+                        : "it is on the keep list of " + properties.keptBy(did).orElse(publisherId);
                 return Mono.just(finish(new RemovalOutcome(publisherId, did, trigger, RemovalMode.KEEP_TAG_VALUE,
                         RemovalAction.KEPT, false, null), keptBy));
             }
-            RemovalMode removalMode = removal.get().mode();
+            RemovalMode removalMode = removal.mode();
             return capabilities.requireSupported()
                     .thenReturn(true)
                     // report writes nothing, so an old list only costs it the read of what is held
                     .onErrorResume(e -> !removalMode.writes() && isTooOld(e), e -> Mono.just(false))
                     .flatMap(supported -> supported
-                            ? decide(publisherId, did, trigger, removal.get())
+                            ? decide(publisherId, did, trigger, removal)
                             : Mono.just(new RemovalOutcome(publisherId, did, trigger, removalMode.tagValue(),
                             RemovalAction.REPORTED, false, null)))
                     .map(outcome -> finish(outcome, null))
-                    .onErrorMap(e -> {
-                        count(publisherId, removalMode.tagValue(), RemovalAction.FAILED);
-                        report.record(new RemovalOutcome(publisherId, did, trigger, removalMode.tagValue(),
-                                RemovalAction.FAILED, false, null));
-                        return new ParticipantRemovalException(publisherId, did, e);
-                    });
+                    .onErrorMap(e -> failed(publisherId, did, trigger, removalMode, e));
         });
+    }
+
+    /**
+     * Record the removal as reported without writing anything, e.g. while the sweep's breaker holds it back. Reads what
+     * is held for the report; fails like {@link #apply}.
+     */
+    public Mono<RemovalOutcome> withhold(String publisherId, String did, RemovalMode mode, @Nullable String reason) {
+        return Mono.defer(() -> adapter.heldEntry(did))
+                .map(held -> new RemovalOutcome(publisherId, did, RemovalTrigger.RECONCILIATION, mode.tagValue(),
+                        held.isPresent() ? RemovalAction.REPORTED : RemovalAction.NOT_HELD, false,
+                        held.orElseGet(() -> RemovalPlan.emptyEntry(did))))
+                .map(outcome -> finish(outcome, reason))
+                .onErrorMap(e -> failed(publisherId, did, RemovalTrigger.RECONCILIATION, mode, e));
+    }
+
+    private ParticipantRemovalException failed(String publisherId, String did, RemovalTrigger trigger, RemovalMode mode,
+                                               Throwable cause) {
+        count(publisherId, mode.tagValue(), RemovalAction.FAILED);
+        report.record(new RemovalOutcome(publisherId, did, trigger, mode.tagValue(), RemovalAction.FAILED, false, null));
+        return new ParticipantRemovalException(publisherId, did, cause);
     }
 
     private Mono<RemovalOutcome> decide(String publisherId, String did, RemovalTrigger trigger,
@@ -155,7 +179,10 @@ public class ParticipantRemoval {
         return outcome;
     }
 
-    private void count(String publisherId, String modeTag, RemovalAction action) {
+    /**
+     * Count a decision in {@value #METRIC_NAME}; also used for the sweep's outcomes without an identifier.
+     */
+    void count(String publisherId, String modeTag, RemovalAction action) {
         meterRegistry.counter(METRIC_NAME, PUBLISHER_TAG, publisherId, MODE_TAG, modeTag, ACTION_TAG, action.tagValue())
                 .increment();
     }

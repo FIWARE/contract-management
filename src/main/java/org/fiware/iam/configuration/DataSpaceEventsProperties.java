@@ -719,16 +719,29 @@ public class DataSpaceEventsProperties {
             return keep != null && keep.contains(did);
         }
 
-        boolean configuresWrites() {
+        /**
+         * True if the mode or an override writes, before the registry-url clamp.
+         */
+        public boolean configuresWrites() {
             return configuredMode().writes() || overrides().anyMatch(override -> override.getMode().writes());
         }
 
+        /**
+         * The publisher's own mode, without overrides, clamped to REPORT without registry-url.
+         */
+        public RemovalMode effectiveMode() {
+            return clamped(configuredMode());
+        }
+
         RemovalMode effectiveMode(String did) {
-            RemovalMode configured = overrides()
+            return clamped(overrides()
                     .filter(override -> did.equals(override.getId()))
                     .map(ModeOverride::getMode)
                     .findFirst()
-                    .orElseGet(this::configuredMode);
+                    .orElseGet(this::configuredMode));
+        }
+
+        private RemovalMode clamped(RemovalMode configured) {
             return configured.writes() && isBlank(registryUrl) ? RemovalMode.REPORT : configured;
         }
 
@@ -832,6 +845,17 @@ public class DataSpaceEventsProperties {
         public boolean matches(ConditionContext context) {
             DataSpaceEventsProperties properties = context.getBean(DataSpaceEventsProperties.class);
             return properties.getPublisher().isEnabled() && properties.getTirWatcher().isEnabled();
+        }
+    }
+
+    /**
+     * Enables the reader of trusted issuers registries, used by the trust anchor watcher and the participant.removed sweep.
+     */
+    public static class RegistryReaderCondition implements Condition {
+
+        @Override
+        public boolean matches(ConditionContext context) {
+            return new TirWatcherCondition().matches(context) || new ParticipantRemovedCondition().matches(context);
         }
     }
 

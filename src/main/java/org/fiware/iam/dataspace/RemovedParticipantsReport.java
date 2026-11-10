@@ -11,10 +11,15 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * In-memory record of the latest outcome per (publisher, participant), bounded per publisher by evicting the entries seen
  * longest ago. Not persisted: after a restart the reconciliation refills the attributable entries.
+ * <p>
+ * One entry per pair, so a later outcome replaces the earlier one, whatever its trigger. Unapplied reconciliation entries
+ * are standing drift and are dropped once the sweep no longer finds them or stops reconciling their publisher; the other
+ * entries are history, kept until evicted or replaced.
  */
 @Singleton
 @Requires(condition = DataSpaceEventsProperties.ParticipantRemovedCondition.class)
@@ -40,6 +45,42 @@ public class RemovedParticipantsReport {
         if (entries.size() > MAX_ENTRIES_PER_PUBLISHER) {
             entries.remove(entries.keySet().iterator().next());
         }
+    }
+
+    /**
+     * Mark a recorded participant as seen now, keeping its outcome. Does nothing if the entry was evicted or never recorded.
+     */
+    public synchronized void touch(String publisherId, String did) {
+        LinkedHashMap<String, Entry> entries = byPublisher.get(publisherId);
+        Entry entry = entries == null ? null : entries.remove(did);
+        if (entry != null) {
+            entries.put(did, new Entry(entry.outcome(), clock.instant()));
+        }
+    }
+
+    /**
+     * Drop the publisher's unapplied reconciliation entries whose participant is no longer among the sweep's candidates.
+     */
+    public synchronized void retainStandingDrift(String publisherId, Set<String> candidates) {
+        LinkedHashMap<String, Entry> entries = byPublisher.get(publisherId);
+        if (entries != null) {
+            entries.values().removeIf(entry -> isStandingDrift(entry) && !candidates.contains(entry.outcome().did()));
+        }
+    }
+
+    /**
+     * Drop the unapplied reconciliation entries of every publisher not among the given ones: nobody re-checks them any more.
+     */
+    public synchronized void retainStandingDriftOf(Set<String> reconciledPublisherIds) {
+        byPublisher.forEach((publisherId, entries) -> {
+            if (!reconciledPublisherIds.contains(publisherId)) {
+                entries.values().removeIf(RemovedParticipantsReport::isStandingDrift);
+            }
+        });
+    }
+
+    private static boolean isStandingDrift(Entry entry) {
+        return entry.outcome().trigger() == RemovalTrigger.RECONCILIATION && !entry.outcome().applied();
     }
 
     /**
