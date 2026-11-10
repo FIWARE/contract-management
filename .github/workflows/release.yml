@@ -9,6 +9,11 @@ env:
   REGISTRY: quay.io
   REPOSITORY: fiware
 
+# releases one after the other, each reading the tags left by the previous one
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   # The version from the semver label of the pull request: X.Y.Z-PRE-<number> on a pull request,
   # X.Y.Z on the push of its merge. See https://github.com/FIWARE/github-workflows
@@ -55,19 +60,15 @@ jobs:
           mvn versions:set -DnewVersion=${{ needs.generate-version.outputs.version }}
           mvn clean install deploy -Poci -DskipTests -DskipITs -Dimage.tag=${{ needs.generate-version.outputs.version }} -Dimage.registry="${{ env.REGISTRY }}" -Dimage.repository="${{ env.REPOSITORY }}"
 
+  # Publishes the release, see
+  # https://github.com/FIWARE/github-workflows
   git-release:
     needs: ["generate-version", "build-and-push"]
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - uses: actions/checkout@v2
-
-      - uses: "marvinpinto/action-automatic-releases@latest"
-        with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: ${{ needs.generate-version.outputs.version }}
-          prerelease: false
-          title: ${{ needs.generate-version.outputs.version }}
-          files: |
-            LICENSE
+    uses: FIWARE/github-workflows/.github/workflows/github-release.yml@v1
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.generate-version.outputs.version }}
+      prerelease: false
+      files: |
+        LICENSE
