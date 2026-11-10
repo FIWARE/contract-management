@@ -29,7 +29,8 @@ public record RemovalPlan(RemovalAction action, List<Operation> operations) {
     /**
      * Plan the removal of the entry as read; an empty mode means keep. An entry of nothing but unattributed credentials is
      * revoked only for an event while adoption is allowed: the announcement then attributes it to the publisher. So is an
-     * unattributed copy of the publisher's membership ({@code adoptionCopy}, see {@code IssuerContent#holdsAdoptionCopyOf}).
+     * unattributed copy of the publisher's membership ({@code adoptionCopy}, see {@code IssuerContent#holdsAdoptionCopyOf}),
+     * for the sweep too: the TIL cannot tell an interrupted adoption from identical credentials granted by someone else.
      */
     public static RemovalPlan of(Optional<RemovalMode> mode, Optional<HeldEntry> held, String publisherId,
                                  RemovalTrigger trigger, boolean adoptionAllowed, boolean adoptionCopy) {

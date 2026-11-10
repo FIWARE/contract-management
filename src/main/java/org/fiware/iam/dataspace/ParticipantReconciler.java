@@ -212,7 +212,7 @@ public class ParticipantReconciler {
             return;
         }
         // before the removals: a delisted entry still holding both copies would otherwise keep its unattributed originals
-        completeAdoptions(publisherId, registryUrl, incomplete, split.completable());
+        completeAdoptions(publisherId, registryUrl, incomplete, split.completable(), candidates);
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
         // re-listed or released otherwise since: the report must not show it as current drift
@@ -327,7 +327,7 @@ public class ParticipantReconciler {
 
     // an adoption that failed from its grant on holds the copies twice, and in `local` it is no adoption candidate any more
     private void completeAdoptions(String publisherId, String registryUrl, Map<String, AdoptionIncompleteException> incomplete,
-                                   Map<String, EffectiveRemoval> completable) {
+                                   Map<String, EffectiveRemoval> completable, Set<String> delisted) {
         for (String did : List.copyOf(incomplete.keySet())) {
             AdoptionIncompleteException pending = incomplete.remove(did);
             EffectiveRemoval decided = completable.get(did);
@@ -338,7 +338,7 @@ public class ParticipantReconciler {
             }
             try {
                 adoption.complete(publisherId, registryUrl, did, decided.mode().tagValue(), pending.getCopied(),
-                        pending.isRevokeAttempted()).block();
+                        pending.isRevokeAttempted(), delisted.contains(did)).block();
             } catch (AdoptionIncompleteException e) {
                 incomplete.put(did, e);
                 warnIncomplete(publisherId, did, decided.mode().tagValue(), e);

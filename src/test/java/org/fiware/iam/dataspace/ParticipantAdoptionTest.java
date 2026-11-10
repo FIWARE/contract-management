@@ -420,6 +420,9 @@ class ParticipantAdoptionTest {
         reconciler.run();
 
         assertEquals(Optional.empty(), heldEntry(X), "the originals are revoked first, so the removal leaves nothing trusted");
+        assertEquals(0, count(P1, "dataspace", RemovalAction.ADOPTED), "no adoption into a data space the participant left");
+        assertEquals(1, count(P1, "dataspace", RemovalAction.REVOKED_MEMBERSHIP));
+        assertTrue(logs(Level.INFO).stream().anyMatch(event -> event.getFormattedMessage().contains("completed before its removal")));
     }
 
     @ParameterizedTest(name = "{0}")

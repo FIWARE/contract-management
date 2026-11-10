@@ -91,7 +91,7 @@ public class ParticipantAdoption {
             // a failed grant may still have been written, so it is completed like a failed revoke
             return adapter.grantMembership(did, publisherId, copied)
                     .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, false, e))
-                    .then(Mono.defer(() -> complete(publisherId, registryUrl, did, modeTag, copied, false)));
+                    .then(Mono.defer(() -> complete(publisherId, registryUrl, did, modeTag, copied, false, false)));
         });
     }
 
@@ -99,10 +99,11 @@ public class ParticipantAdoption {
      * Finish an adoption whose membership grant of the copied credentials may have been written: revoke the originals if
      * the issuer holds exactly both copies, after cutting the grant back to the originals still left. SKIPPED if it holds
      * no membership of the publisher, so a listed entry is adopted anew; {@code registryUrl} decides a withdrawal.
-     * Fails with {@link AdoptionIncompleteException}; {@code revokeAttempted} carries over from its last one.
+     * Fails with {@link AdoptionIncompleteException}; {@code revokeAttempted} carries over from its last one. For a
+     * {@code delisted} participant, about to be removed, a completed adoption is not counted as one.
      */
     public Mono<Result> complete(String publisherId, String registryUrl, String did, String modeTag,
-                                 List<CredentialsVO> copied, boolean revokeAttempted) {
+                                 List<CredentialsVO> copied, boolean revokeAttempted, boolean delisted) {
         return Mono.defer(() -> adapter.content(did)).flatMap(found -> {
             if (found.isEmpty() || found.get().held().membershipOf(publisherId).isEmpty()) {
                 return Mono.just(Result.SKIPPED);
@@ -110,12 +111,12 @@ public class ParticipantAdoption {
             if (holds(found.get(), publisherId, copied, 1)) {
                 return revokeAttempted
                         // the revoke went through although its answer got lost
-                        ? Mono.just(adopted(publisherId, did, modeTag, copied))
-                        : withdraw(publisherId, registryUrl, did, modeTag, copied);
+                        ? Mono.just(adopted(publisherId, did, modeTag, copied, delisted))
+                        : withdraw(publisherId, registryUrl, did);
             }
             Optional<List<CredentialsVO>> remaining = stillUnattributed(found.get(), publisherId, copied);
             if (!revokeAttempted && remaining.filter(left -> !left.isEmpty() && left.size() < copied.size()).isPresent()) {
-                return narrow(publisherId, registryUrl, did, modeTag, copied, remaining.get());
+                return narrow(publisherId, registryUrl, did, modeTag, copied, remaining.get(), delisted);
             }
             if (!holds(found.get(), publisherId, copied, 2)) {
                 log.warn("Participant {} listed by {}: its entry changed while it was adopted, so its unattributed "
@@ -126,7 +127,7 @@ public class ParticipantAdoption {
             }
             return adapter.revokeUnattributed(did)
                     .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, true, e))
-                    .then(Mono.fromSupplier(() -> adopted(publisherId, did, modeTag, copied)));
+                    .then(Mono.fromSupplier(() -> adopted(publisherId, did, modeTag, copied, delisted)));
         }).onErrorMap(e -> !(e instanceof AdoptionIncompleteException),
                 e -> new AdoptionIncompleteException(publisherId, did, copied, revokeAttempted, e));
     }
@@ -134,8 +135,7 @@ public class ParticipantAdoption {
     // the originals vanished before their revoke was sent: a removal deleted the issuer between the read and the grant,
     // which then re-created it, or another component moved them into the membership itself. Only the registry tells them
     // apart; a lookup failure leaves the entry to the next completion
-    private Mono<Result> withdraw(String publisherId, String registryUrl, String did, String modeTag,
-                                  List<CredentialsVO> copied) {
+    private Mono<Result> withdraw(String publisherId, String registryUrl, String did) {
         return registryLookup.isListed(registryUrl, did).flatMap(listed -> listed
                 ? Mono.just(grantKept(publisherId, did))
                 : adapter.deleteIssuer(did).then(Mono.fromSupplier(() -> {
@@ -149,12 +149,12 @@ public class ParticipantAdoption {
     // still unattributed. A failed re-grant keeps `copied`, so its next completion narrows again; one written with its
     // answer lost no longer matches `copied` and is left as a duplicate
     private Mono<Result> narrow(String publisherId, String registryUrl, String did, String modeTag,
-                                List<CredentialsVO> copied, List<CredentialsVO> remaining) {
+                                List<CredentialsVO> copied, List<CredentialsVO> remaining, boolean delisted) {
         log.info("Participant {} listed by {}: {} of its unattributed credentials were removed while it was adopted, so they "
                 + "are dropped from the new membership grant.", did, publisherId, copied.size() - remaining.size());
         return adapter.grantMembership(did, publisherId, remaining)
                 .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, false, e))
-                .then(Mono.defer(() -> complete(publisherId, registryUrl, did, modeTag, remaining, false)));
+                .then(Mono.defer(() -> complete(publisherId, registryUrl, did, modeTag, remaining, false, delisted)));
     }
 
     // indistinguishable at the TIL from a migration, so it is only flagged for the operator, not counted as an adoption
@@ -165,7 +165,13 @@ public class ParticipantAdoption {
         return Result.GRANT_KEPT;
     }
 
-    private Result adopted(String publisherId, String did, String modeTag, List<CredentialsVO> copied) {
+    private Result adopted(String publisherId, String did, String modeTag, List<CredentialsVO> copied, boolean delisted) {
+        if (delisted) {
+            // only rid of the originals so that the removal following in the same run leaves nothing trusted
+            log.info("Participant {}: its interrupted adoption into the data space of {} is completed before its removal.",
+                    did, publisherId);
+            return Result.ADOPTED;
+        }
         log.info("Participant {} adopted into the data space of {}: its {} unattributed credentials are now its membership grant.",
                 did, publisherId, copied.size());
         removal.count(publisherId, modeTag, RemovalAction.ADOPTED);
