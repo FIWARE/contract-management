@@ -98,7 +98,8 @@ public class ParticipantReconciler {
     }
 
     // the run's decisions, taken from one configuration state; kept candidates have no removal
-    private record Split(@Nullable String ownId, int cap, RemovalMode publisherMode, Set<String> kept,
+    private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
+                         Set<String> kept,
                          Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write) {
     }
 
@@ -157,6 +158,12 @@ public class ParticipantReconciler {
 
         // decided under the lock and passed on to every apply, so a refresh during the run cannot write past the breaker
         Split split = refreshLock.exclusively(() -> split(publisherId, policy, candidates));
+        if (!registryUrl.equals(split.registryUrl())) {
+            // the candidates were listed from a registry the current configuration no longer names
+            log.info("Participant reconciliation of publisher {} skipped: its registry-url changed while it was listed; "
+                    + "reconciled in the next run.", publisherId);
+            return;
+        }
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
         for (String did : split.kept()) {
@@ -211,8 +218,8 @@ public class ParticipantReconciler {
                 reportCandidates.put(did, decided.get());
             }
         }
-        return new Split(ownId, current.effectiveMaxRemovalsPerRun(), current.effectiveMode(), kept, reportCandidates,
-                writeCandidates);
+        return new Split(current.getRegistryUrl(), ownId, current.effectiveMaxRemovalsPerRun(), current.effectiveMode(),
+                kept, reportCandidates, writeCandidates);
     }
 
     // applies the candidate; true if it no longer holds the publisher's membership afterwards

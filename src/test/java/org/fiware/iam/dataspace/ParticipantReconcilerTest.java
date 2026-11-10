@@ -226,6 +226,32 @@ class ParticipantReconcilerTest {
         assertEquals(0, count(P1, "full", RemovalAction.DELETED_ISSUER));
     }
 
+    static Stream<Arguments> registryChangesDuringTheListing() {
+        DataSpaceEventsProperties.Publisher moved = publisher(P1, RemovalMode.FULL);
+        moved.getOnParticipantRemoved().setRegistryUrl(REGISTRY_URLS.get(P2));
+        DataSpaceEventsProperties.Publisher dropped = publisher(P1, RemovalMode.FULL);
+        dropped.getOnParticipantRemoved().setRegistryUrl(null);
+        return Stream.of(Arguments.of("registry-url corrected", moved), Arguments.of("registry-url removed", dropped));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("registryChangesDuringTheListing")
+    void aRunListedFromAReplacedRegistryWritesNothing(String description, DataSpaceEventsProperties.Publisher after) {
+        configure(publisher(P1, RemovalMode.FULL));
+        held(X, membership(P1));
+        when(registryReader.enumerate(REGISTRY_URLS.get(P1))).thenAnswer(invocation -> {
+            configure(after);
+            return Set.of();
+        });
+
+        reconciler.run();
+
+        assertTrue(holdsMembership(X, P1));
+        verify(adapter, never()).deleteIssuer(anyString());
+        verify(adapter, never()).heldEntry(anyString());
+        assertTrue(meterRegistry.find(ParticipantRemoval.METRIC_NAME).counters().isEmpty());
+    }
+
     static Stream<Arguments> breakerCaps() {
         return Stream.of(
                 Arguments.of(2, 2, false),
