@@ -65,6 +65,7 @@ class ParticipantReconcilerTest {
     private static final String Z = "did:web:z.org";
     private static final String OWN_ID = "did:web:own.org";
     private static final String ORDER = "order-1";
+    private static final String PEER_TYPE = "org.fiware.dataspace.other";
     private static final Map<String, String> REGISTRY_URLS = Map.of(P1, "http://registry.p1.org", P2, "http://registry.p2.org");
 
     private final TrustedIssuersListAdapter adapter = mock(TrustedIssuersListAdapter.class);
@@ -231,7 +232,12 @@ class ParticipantReconcilerTest {
         moved.getOnParticipantRemoved().setRegistryUrl(REGISTRY_URLS.get(P2));
         DataSpaceEventsProperties.Publisher dropped = publisher(P1, RemovalMode.FULL);
         dropped.getOnParticipantRemoved().setRegistryUrl(null);
-        return Stream.of(Arguments.of("registry-url corrected", moved), Arguments.of("registry-url removed", dropped));
+        DataSpaceEventsProperties.Publisher peer = publisher(P1, RemovalMode.FULL);
+        peer.setTypes(List.of(PEER_TYPE));
+        return Stream.of(
+                Arguments.of("registry-url corrected", moved),
+                Arguments.of("registry-url removed", dropped),
+                Arguments.of("publisher no longer announces removals", peer));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -250,6 +256,25 @@ class ParticipantReconcilerTest {
         verify(adapter, never()).deleteIssuer(anyString());
         verify(adapter, never()).heldEntry(anyString());
         assertTrue(meterRegistry.find(ParticipantRemoval.METRIC_NAME).counters().isEmpty());
+    }
+
+    @Test
+    void aPublisherRemovedDuringTheListingStopsExportingItsDrift() {
+        configure(publisher(P1, RemovalMode.REPORT));
+        held(X, membership(P1));
+        reconciler.run();
+        assertEquals(1, heldGauge(P1));
+
+        DataSpaceEventsProperties.Publisher peer = publisher(P1, RemovalMode.REPORT);
+        peer.setTypes(List.of(PEER_TYPE));
+        when(registryReader.enumerate(REGISTRY_URLS.get(P1))).thenAnswer(invocation -> {
+            configure(peer);
+            return Set.of();
+        });
+        reconciler.run();
+
+        assertEquals(0, heldGauge(P1));
+        assertEquals(1, count(P1, "report", RemovalAction.REPORTED));
     }
 
     static Stream<Arguments> breakerCaps() {

@@ -157,11 +157,15 @@ public class ParticipantReconciler {
         }
 
         // decided under the lock and passed on to every apply, so a refresh during the run cannot write past the breaker
-        Split split = refreshLock.exclusively(() -> split(publisherId, policy, candidates));
+        Split split = refreshLock.exclusively(() -> split(publisherId, candidates));
         if (!registryUrl.equals(split.registryUrl())) {
             // the candidates were listed from a registry the current configuration no longer names
-            log.info("Participant reconciliation of publisher {} skipped: its registry-url changed while it was listed; "
-                    + "reconciled in the next run.", publisherId);
+            log.info("Participant reconciliation of publisher {} skipped: its registry-url changed or it stopped "
+                    + "announcing removals while it was listed; reconciled in the next run.", publisherId);
+            if (split.registryUrl() == null) {
+                // not reconciled any more; the run's forgetAllBut still counts it as configured
+                Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
+            }
             return;
         }
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
@@ -197,13 +201,17 @@ public class ParticipantReconciler {
         withholdAll(publisherId, unapplied, writeCandidates.keySet(), withheldReason, seenOfPublisher);
     }
 
-    // no I/O: runs under the refresh lock; the policy is re-read so its cap matches the modes
-    private Split split(String publisherId, OnParticipantRemoved policy, Set<String> candidates) {
-        OnParticipantRemoved current = properties.removalPublishers().stream()
+    // no I/O: runs under the refresh lock; the policy is re-read so its cap matches the modes.
+    // A publisher no longer announcing removals gets a split without registry-url, so the run skips it.
+    private Split split(String publisherId, Set<String> candidates) {
+        Optional<OnParticipantRemoved> found = properties.removalPublishers().stream()
                 .filter(publisher -> publisher.getId().equals(publisherId))
                 .findFirst()
-                .map(Publisher::getOnParticipantRemoved)
-                .orElse(policy);
+                .map(Publisher::getOnParticipantRemoved);
+        if (found.isEmpty()) {
+            return new Split(null, null, 0, RemovalMode.REPORT, Set.of(), Map.of(), Map.of());
+        }
+        OnParticipantRemoved current = found.get();
         String ownId = properties.ownId(generalProperties);
         Set<String> kept = new TreeSet<>();
         Map<String, EffectiveRemoval> reportCandidates = new HashMap<>();
