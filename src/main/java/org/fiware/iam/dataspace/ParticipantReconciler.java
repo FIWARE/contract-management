@@ -18,7 +18,6 @@ import org.fiware.iam.exception.AdoptionIncompleteException;
 import org.fiware.iam.logging.DownstreamError;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
-import org.fiware.iam.til.model.CredentialsVO;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -83,7 +82,7 @@ public class ParticipantReconciler {
     private final Map<String, Map<String, Instant>> notAdoptable = new HashMap<>();
     // publisher -> DID -> credentials copied by an adoption that failed from its grant on; only touched by run().
     // Not persisted: after a restart the duplicate stays until a removal of the participant revokes it with its membership
-    private final Map<String, Map<String, List<CredentialsVO>>> incompleteAdoptions = new HashMap<>();
+    private final Map<String, Map<String, AdoptionIncompleteException>> incompleteAdoptions = new HashMap<>();
     // publisher -> reason its issuers could last not be listed for adoption; only touched by run()
     private final Map<String, String> listingFailures = new HashMap<>();
     // the refused adoption configuration last warned about, null while adoption is not refused; only touched by run()
@@ -126,11 +125,12 @@ public class ParticipantReconciler {
         return Map.copyOf(breakers);
     }
 
-    // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted
     // what decides a refusal and its WARN, so unrelated policy edits (keep, overrides, caps) do not warn again
     private record AdoptionRefusal(AdoptionPolicy.RefusalReason reason, @Nullable String dataspaceId,
                                    List<String> removalPublishers, Map<String, Boolean> askingWithoutRegistryUrl) {
     }
+
+    // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted
 
     private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
                          Set<String> kept,
@@ -194,7 +194,7 @@ public class ParticipantReconciler {
         candidates.removeAll(listed);
         Set<String> unadopted = new TreeSet<>(listed);
         unadopted.removeAll(local);
-        Map<String, List<CredentialsVO>> incomplete = incompleteAdoptions.computeIfAbsent(publisherId, id -> new TreeMap<>());
+        Map<String, AdoptionIncompleteException> incomplete = incompleteAdoptions.computeIfAbsent(publisherId, id -> new TreeMap<>());
 
         // decided under the lock and passed on to every apply, so a refresh during the run cannot write past the breaker
         Split split = refreshLock.exclusively(() -> split(publisherId, candidates, adopting ? unadopted : Set.of(),
@@ -326,10 +326,10 @@ public class ParticipantReconciler {
     }
 
     // an adoption that failed from its grant on holds the copies twice, and in `local` it is no adoption candidate any more
-    private void completeAdoptions(String publisherId, Map<String, List<CredentialsVO>> incomplete,
+    private void completeAdoptions(String publisherId, Map<String, AdoptionIncompleteException> incomplete,
                                    Map<String, EffectiveRemoval> completable) {
         for (String did : List.copyOf(incomplete.keySet())) {
-            List<CredentialsVO> copied = incomplete.remove(did);
+            AdoptionIncompleteException pending = incomplete.remove(did);
             EffectiveRemoval decided = completable.get(did);
             if (decided == null) {
                 log.warn("Participant {} listed by {}: its adoption is not completed, adoption is no longer allowed for it; "
@@ -337,9 +337,13 @@ public class ParticipantReconciler {
                 continue;
             }
             try {
-                adoption.complete(publisherId, did, decided.mode().tagValue(), copied).block();
+                adoption.complete(publisherId, did, decided.mode().tagValue(), pending.getCopied(), pending.isRevokeAttempted())
+                        .block();
+            } catch (AdoptionIncompleteException e) {
+                incomplete.put(did, e);
+                warnIncomplete(publisherId, did, decided.mode().tagValue(), e);
             } catch (RuntimeException e) {
-                incomplete.put(did, copied);
+                incomplete.put(did, pending);
                 warnIncomplete(publisherId, did, decided.mode().tagValue(), e);
             }
         }
@@ -347,7 +351,7 @@ public class ParticipantReconciler {
 
     // not under the breaker: an adoption only adds a grant before it removes the duplicate, so truncating is safe
     private void adoptAll(String publisherId, RemovalMode publisherMode, Map<String, EffectiveRemoval> candidates, int cap,
-                          Map<String, List<CredentialsVO>> incomplete) {
+                          Map<String, AdoptionIncompleteException> incomplete) {
         Map<String, Instant> notAdoptableOfPublisher = notAdoptable.computeIfAbsent(publisherId, id -> new HashMap<>());
         notAdoptableOfPublisher.keySet().retainAll(candidates.keySet());
         if (candidates.isEmpty() || cap == 0) {
@@ -395,7 +399,7 @@ public class ParticipantReconciler {
                 }
             } catch (AdoptionIncompleteException e) {
                 attempts++;
-                incomplete.put(did, e.getCopied());
+                incomplete.put(did, e);
                 warnIncomplete(publisherId, did, modeTag, e);
             } catch (RuntimeException e) {
                 attempts++;

@@ -93,7 +93,9 @@ class ParticipantAdoptionTest {
     private final Map<String, Map<GrantKey, List<CredentialsVO>>> grants = new HashMap<>();
     private final Map<String, List<CredentialsVO>> unattributed = new HashMap<>();
     private final Map<String, Set<String>> listed = new HashMap<>();
-    // run right after a membership grant was written, to change the entry behind the adoption's back
+    // run right before and right after a membership grant is written, to change the entry behind the adoption's back
+    private Consumer<String> beforeGrant = did -> {
+    };
     private Consumer<String> afterGrant = did -> {
     };
 
@@ -137,6 +139,7 @@ class ParticipantAdoptionTest {
             String did = (String) invocation.getArguments()[0];
             @SuppressWarnings("unchecked")
             List<CredentialsVO> credentials = (List<CredentialsVO>) invocation.getArguments()[2];
+            beforeGrant.accept(did);
             grants.computeIfAbsent(did, id -> new LinkedHashMap<>()).put(
                     new GrantKey((String) invocation.getArguments()[1], ScopeTypeVO.DATASPACE_MEMBERSHIP), List.copyOf(credentials));
             afterGrant.accept(did);
@@ -441,6 +444,20 @@ class ParticipantAdoptionTest {
         unattributed.put(X, CREDENTIALS);
         listed.put(P1, Set.of(X));
         afterGrant = did -> removal.apply(P1, did, RemovalTrigger.EVENT).block();
+
+        reconciler.run();
+
+        assertEquals(Optional.empty(), heldEntry(X));
+        assertEquals(0, count(P1, "dataspace", RemovalAction.ADOPTED));
+    }
+
+    @Test
+    void removalBetweenTheReadAndTheGrantOfAnAdoptionDoesNotTrustTheParticipantAgain() {
+        configure(writing(adopting(P1)));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        // the grant re-creates the issuer the removal deleted
+        beforeGrant = did -> removal.apply(P1, did, RemovalTrigger.EVENT).block();
 
         reconciler.run();
 

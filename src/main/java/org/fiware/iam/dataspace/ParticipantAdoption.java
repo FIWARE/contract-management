@@ -5,6 +5,7 @@ import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.exception.AdoptionIncompleteException;
+import org.fiware.iam.til.CredentialKey;
 import org.fiware.iam.til.HeldEntry;
 import org.fiware.iam.til.IssuerContent;
 import org.fiware.iam.til.TrustedIssuersListAdapter;
@@ -12,7 +13,6 @@ import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.til.model.ScopeTypeVO;
 import reactor.core.publisher.Mono;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -47,6 +47,10 @@ public class ParticipantAdoption {
          */
         NOT_ADOPTABLE,
         /**
+         * The originals were removed while the entry was adopted, so the grant that re-created the issuer was deleted again.
+         */
+        WITHDRAWN,
+        /**
          * Nothing left to complete: the entry is gone, or holds no membership of the publisher (never written, or revoked
          * by a removal since); a listed entry is adopted anew.
          */
@@ -74,24 +78,27 @@ public class ParticipantAdoption {
             // the membership is written before the originals are revoked, so an interruption leaves a duplicate, never a loss;
             // a failed grant may still have been written, so it is completed like a failed revoke
             return adapter.grantMembership(did, publisherId, copied)
-                    .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, e))
-                    .then(Mono.defer(() -> complete(publisherId, did, modeTag, copied)));
+                    .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, false, e))
+                    .then(Mono.defer(() -> complete(publisherId, did, modeTag, copied, false)));
         });
     }
 
     /**
      * Finish an adoption whose membership grant of the copied credentials may have been written: revoke the originals if
      * the issuer holds exactly both copies. SKIPPED if it holds no membership of the publisher, so a listed entry is
-     * adopted anew. Fails with {@link AdoptionIncompleteException}.
+     * adopted anew. Fails with {@link AdoptionIncompleteException}; {@code revokeAttempted} carries over from its last one.
      */
-    public Mono<Result> complete(String publisherId, String did, String modeTag, List<CredentialsVO> copied) {
+    public Mono<Result> complete(String publisherId, String did, String modeTag, List<CredentialsVO> copied,
+                                 boolean revokeAttempted) {
         return Mono.defer(() -> adapter.content(did)).flatMap(found -> {
             if (found.isEmpty() || found.get().held().membershipOf(publisherId).isEmpty()) {
                 return Mono.just(Result.SKIPPED);
             }
             if (holds(found.get(), publisherId, copied, 1)) {
-                // the revoke went through although its answer got lost
-                return Mono.just(adopted(publisherId, did, modeTag, copied));
+                return revokeAttempted
+                        // the revoke went through although its answer got lost
+                        ? Mono.just(adopted(publisherId, did, modeTag, copied))
+                        : withdraw(publisherId, did);
             }
             if (!holds(found.get(), publisherId, copied, 2)) {
                 log.warn("Participant {} listed by {}: its entry changed while it was adopted, so its unattributed "
@@ -99,9 +106,21 @@ public class ParticipantAdoption {
                         did, publisherId);
                 return Mono.just(Result.DUPLICATE_LEFT);
             }
-            return adapter.revokeUnattributed(did).then(Mono.fromSupplier(() -> adopted(publisherId, did, modeTag, copied)));
+            return adapter.revokeUnattributed(did)
+                    .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, true, e))
+                    .then(Mono.fromSupplier(() -> adopted(publisherId, did, modeTag, copied)));
         }).onErrorMap(e -> !(e instanceof AdoptionIncompleteException),
-                e -> new AdoptionIncompleteException(publisherId, did, copied, e));
+                e -> new AdoptionIncompleteException(publisherId, did, copied, revokeAttempted, e));
+    }
+
+    // the originals vanished before their revoke was sent, e.g. a removal deleted the issuer between the read and the
+    // grant, which then re-created it: the grant alone is left, so the issuer is deleted rather than trusted again
+    private Mono<Result> withdraw(String publisherId, String did) {
+        return adapter.deleteIssuer(did).then(Mono.fromSupplier(() -> {
+            log.info("Participant {} listed by {} is not adopted: its unattributed credentials were removed while it was "
+                    + "adopted, so the new membership grant is withdrawn.", did, publisherId);
+            return Result.WITHDRAWN;
+        }));
     }
 
     private Result adopted(String publisherId, String did, String modeTag, List<CredentialsVO> copied) {
@@ -115,14 +134,8 @@ public class ParticipantAdoption {
     private static boolean holds(IssuerContent content, String publisherId, List<CredentialsVO> copied, int copies) {
         List<HeldEntry.Grant> expectedGrants = List.of(new HeldEntry.Grant(publisherId, ScopeTypeVO.DATASPACE_MEMBERSHIP,
                 copied.size()));
-        Map<CredentialsVO, Integer> expected = multiset(copied);
+        Map<CredentialKey, Long> expected = CredentialKey.multiset(copied);
         expected.replaceAll((credential, count) -> count * copies);
-        return content.held().grants().equals(expectedGrants) && multiset(content.credentials()).equals(expected);
-    }
-
-    private static Map<CredentialsVO, Integer> multiset(List<CredentialsVO> credentials) {
-        Map<CredentialsVO, Integer> counts = new HashMap<>();
-        credentials.forEach(credential -> counts.merge(credential, 1, Integer::sum));
-        return counts;
+        return content.held().grants().equals(expectedGrants) && CredentialKey.multiset(content.credentials()).equals(expected);
     }
 }

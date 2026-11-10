@@ -1,5 +1,6 @@
 package org.fiware.iam.til;
 
+import org.fiware.iam.til.model.ClaimVO;
 import org.fiware.iam.til.model.CredentialsVO;
 import org.fiware.iam.til.model.ScopeTypeVO;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -19,6 +20,8 @@ class IssuerContentTest {
     private static final CredentialsVO MEMBERSHIP = new CredentialsVO().credentialsType("MembershipCredential");
     private static final CredentialsVO OPERATOR = new CredentialsVO().credentialsType("OperatorCredential");
     private static final List<CredentialsVO> COPIED = List.of(MEMBERSHIP, OPERATOR);
+    private static final ClaimVO ROLES = new ClaimVO().name("roles").allowedValues(List.of("READER"));
+    private static final ClaimVO REGIONS = new ClaimVO().name("regions").allowedValues(List.of("EU"));
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("contents")
@@ -30,6 +33,8 @@ class IssuerContentTest {
         return Stream.of(
                 Arguments.of("membership and its unattributed copy",
                         content(List.of(grant(P1, COPIED.size())), COPIED.size(), twice(COPIED)), true),
+                Arguments.of("membership and its unattributed copy with the claims in another order",
+                        content(List.of(grant(P1, 1)), 1, List.of(withClaims(ROLES, REGIONS), withClaims(REGIONS, ROLES))), true),
                 Arguments.of("unattributed credentials of the same number but other types",
                         content(List.of(grant(P1, COPIED.size())), COPIED.size(),
                                 List.of(MEMBERSHIP, OPERATOR, MEMBERSHIP, new CredentialsVO().credentialsType("Other"))), false),
@@ -45,6 +50,10 @@ class IssuerContentTest {
 
     private static IssuerContent content(List<HeldEntry.Grant> grants, int unattributed, List<CredentialsVO> credentials) {
         return new IssuerContent(new HeldEntry(X, grants, unattributed), credentials);
+    }
+
+    private static CredentialsVO withClaims(ClaimVO... claims) {
+        return new CredentialsVO().credentialsType("MembershipCredential").claims(List.of(claims));
     }
 
     private static HeldEntry.Grant grant(String publisher, int count) {
