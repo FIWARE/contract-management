@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -54,6 +55,28 @@ class RemovedParticipantsReportTest {
         assertEquals(did(2), dids.get(0));
         assertEquals(List.of(did(0), X), dids.subList(dids.size() - 2, dids.size()));
         assertEquals(1, report.entries(P2).size());
+    }
+
+    static Stream<Arguments> standingDrift() {
+        return Stream.of(
+                Arguments.of("unapplied reconciliation, no longer a candidate", RemovalTrigger.RECONCILIATION, false, Set.of(), false),
+                Arguments.of("unapplied reconciliation, still a candidate", RemovalTrigger.RECONCILIATION, false, Set.of(X), true),
+                Arguments.of("applied reconciliation", RemovalTrigger.RECONCILIATION, true, Set.of(), true),
+                Arguments.of("unapplied event", RemovalTrigger.EVENT, false, Set.of(), true),
+                Arguments.of("applied event", RemovalTrigger.EVENT, true, Set.of(), true));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("standingDrift")
+    void dropsOnlyDriftTheSweepNoLongerFinds(String description, RemovalTrigger trigger, boolean applied,
+                                            Set<String> candidates, boolean retained) {
+        report.record(new RemovalOutcome(P1, X, trigger, "report", RemovalAction.REPORTED, applied, null));
+        report.record(new RemovalOutcome(P2, X, RemovalTrigger.RECONCILIATION, "report", RemovalAction.REPORTED, false, null));
+
+        report.retainStandingDrift(P1, candidates);
+
+        assertEquals(retained ? 1 : 0, report.entries(P1).size());
+        assertEquals(1, report.entries(P2).size(), "other publishers are not affected");
     }
 
     @ParameterizedTest(name = "{0}")

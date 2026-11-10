@@ -461,6 +461,23 @@ class ParticipantReconcilerTest {
     }
 
     @Test
+    void reportDropsDriftThatIsListedAgainButKeepsAppliedAndEventEntries() {
+        configure(publisher(P1, RemovalMode.REPORT), publisher(P2, RemovalMode.DATASPACE));
+        held(X, membership(P1));
+        held(Y, membership(P2));
+        report.record(new RemovalOutcome(P1, Z, RemovalTrigger.EVENT, "report", RemovalAction.REPORTED, false, null));
+        reconciler.run();
+        assertEquals(List.of(Z, X), dids(P1));
+        assertEquals(List.of(Y), dids(P2));
+
+        listed.put(P1, Set.of(X));
+        reconciler.run();
+
+        assertEquals(List.of(Z), dids(P1), "re-admitted X is no longer shown as drift, the event entry stays");
+        assertEquals(List.of(Y), dids(P2), "the applied removal stays as history");
+    }
+
+    @Test
     void unattributedOnlyEntryIsNotTouched() {
         configure(publisher(P1, RemovalMode.FULL));
         til.put(X, new HeldEntry(X, List.of(), 2));
@@ -613,6 +630,10 @@ class ParticipantReconcilerTest {
 
     private static List<String> dids(int count) {
         return new ArrayList<>(IntStream.range(0, count).mapToObj(i -> "did:web:participant-%04d.org".formatted(i)).toList());
+    }
+
+    private List<String> dids(String publisher) {
+        return report.entries(publisher).stream().map(entry -> entry.outcome().did()).toList();
     }
 
     private List<ILoggingEvent> logs(Level level) {

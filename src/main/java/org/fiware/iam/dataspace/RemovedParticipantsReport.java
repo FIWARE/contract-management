@@ -11,10 +11,14 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * In-memory record of the latest outcome per (publisher, participant), bounded per publisher by evicting the entries seen
  * longest ago. Not persisted: after a restart the reconciliation refills the attributable entries.
+ * <p>
+ * Unapplied reconciliation entries are standing drift and are dropped once the sweep no longer finds them; applied ones
+ * and event entries are history, kept until evicted.
  */
 @Singleton
 @Requires(condition = DataSpaceEventsProperties.ParticipantRemovedCondition.class)
@@ -50,6 +54,18 @@ public class RemovedParticipantsReport {
         Entry entry = entries == null ? null : entries.remove(did);
         if (entry != null) {
             entries.put(did, new Entry(entry.outcome(), clock.instant()));
+        }
+    }
+
+    /**
+     * Drop the publisher's unapplied reconciliation entries whose participant is no longer among the sweep's candidates.
+     */
+    public synchronized void retainStandingDrift(String publisherId, Set<String> candidates) {
+        LinkedHashMap<String, Entry> entries = byPublisher.get(publisherId);
+        if (entries != null) {
+            entries.values().removeIf(entry -> entry.outcome().trigger() == RemovalTrigger.RECONCILIATION
+                    && !entry.outcome().applied()
+                    && !candidates.contains(entry.outcome().did()));
         }
     }
 

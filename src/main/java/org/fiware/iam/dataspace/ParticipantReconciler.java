@@ -165,11 +165,14 @@ public class ParticipantReconciler {
             if (split.registryUrl() == null) {
                 // not reconciled any more; the run's forgetAllBut still counts it as configured
                 Optional.ofNullable(heldGauges.get(publisherId)).ifPresent(gauge -> gauge.set(0));
+                breakers.remove(publisherId);
             }
             return;
         }
         Map<String, String> seenOfPublisher = seen.computeIfAbsent(publisherId, id -> new HashMap<>());
         seenOfPublisher.keySet().retainAll(candidates);
+        // re-listed or released otherwise since: the report must not show it as current drift
+        report.retainStandingDrift(publisherId, candidates);
         for (String did : split.kept()) {
             if (RemovalMode.KEEP_TAG_VALUE.equals(seenOfPublisher.put(did, RemovalMode.KEEP_TAG_VALUE))) {
                 report.touch(publisherId, did);
