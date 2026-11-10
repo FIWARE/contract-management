@@ -100,7 +100,8 @@ public class ParticipantAdoption {
      * the issuer holds exactly both copies, after cutting the grant back to the originals still left. SKIPPED if it holds
      * no membership of the publisher, so a listed entry is adopted anew; {@code registryUrl} decides a withdrawal.
      * Fails with {@link AdoptionIncompleteException}; {@code revokeAttempted} carries over from its last one. For a
-     * {@code delisted} participant, about to be removed, a completed adoption is not counted as one.
+     * {@code delisted} participant, about to be removed, a completed adoption is not counted as one, and a grant that
+     * re-created its issuer is withdrawn without a registry lookup.
      */
     public Mono<Result> complete(String publisherId, String registryUrl, String did, String modeTag,
                                  List<CredentialsVO> copied, boolean revokeAttempted, boolean delisted) {
@@ -112,7 +113,7 @@ public class ParticipantAdoption {
                 return revokeAttempted
                         // the revoke went through although its answer got lost
                         ? Mono.just(adopted(publisherId, did, modeTag, copied, delisted))
-                        : withdraw(publisherId, registryUrl, did);
+                        : withdraw(publisherId, registryUrl, did, delisted);
             }
             Optional<List<CredentialsVO>> remaining = stillUnattributed(found.get(), publisherId, copied);
             if (!revokeAttempted && remaining.filter(left -> !left.isEmpty() && left.size() < copied.size()).isPresent()) {
@@ -134,9 +135,11 @@ public class ParticipantAdoption {
 
     // the originals vanished before their revoke was sent: a removal deleted the issuer between the read and the grant,
     // which then re-created it, or another component moved them into the membership itself. Only the registry tells them
-    // apart; a lookup failure leaves the entry to the next completion
-    private Mono<Result> withdraw(String publisherId, String registryUrl, String did) {
-        return registryLookup.isListed(registryUrl, did).flatMap(listed -> listed
+    // apart; a lookup failure leaves the entry to the next completion. A `delisted` participant needs no lookup: the
+    // sweep has just listed the registry
+    private Mono<Result> withdraw(String publisherId, String registryUrl, String did, boolean delisted) {
+        Mono<Boolean> isListed = delisted ? Mono.just(false) : registryLookup.isListed(registryUrl, did);
+        return isListed.flatMap(listed -> listed
                 ? Mono.just(grantKept(publisherId, did))
                 : adapter.deleteIssuer(did).then(Mono.fromSupplier(() -> {
                     log.info("Participant {} is not adopted: its unattributed credentials were removed while it was adopted "

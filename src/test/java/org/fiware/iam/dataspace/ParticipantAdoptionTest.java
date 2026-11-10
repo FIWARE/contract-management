@@ -522,6 +522,30 @@ class ParticipantAdoptionTest {
     }
 
     @Test
+    void completionOfADelistedParticipantWithdrawsWithoutARegistryLookup() {
+        configure(adopting(P1));
+        unattributed.put(X, CREDENTIALS);
+        listed.put(P1, Set.of(X));
+        when(registryLookup.isListed(REGISTRY_URLS.get(P1), X))
+                .thenReturn(Mono.error(new IllegalStateException("registry unavailable")));
+        beforeGrant = did -> {
+            beforeGrant = ignored -> {
+            };
+            unattributed.remove(did);
+        };
+        reconciler.run();
+        double failedWhileListed = count(P1, "report", RemovalAction.FAILED);
+
+        listed.put(P1, Set.of());
+        reconciler.run();
+
+        assertEquals(Optional.empty(), heldEntry(X), "the re-created issuer is withdrawn");
+        verify(registryLookup, times(1)).isListed(anyString(), anyString());
+        assertEquals(failedWhileListed, count(P1, "report", RemovalAction.FAILED),
+                "the sweep's own listing decides, so a failing lookup cannot fail the completion");
+    }
+
+    @Test
     void originalsPartlyRemovedBetweenTheReadAndTheGrantAreDroppedFromTheMembership() {
         configure(adopting(P1));
         unattributed.put(X, CREDENTIALS);
