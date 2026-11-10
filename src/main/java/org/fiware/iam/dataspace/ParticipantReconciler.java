@@ -41,7 +41,8 @@ import java.util.stream.Collectors;
  * allowed, listed entries of nothing but unattributed credentials are adopted into the publisher's data space.
  * <p>
  * {@link #run()} is not reentrant (one scheduler thread); {@link #trippedBreakers()} may be read concurrently. Never
- * removes unattributed entries, and makes no stale-event lookup: the listing is fresh for the run.
+ * removes unattributed entries, except, while adoption is allowed, an exact copy of a candidate's only grant, P's
+ * membership (see {@link RemovalPlan}); makes no stale-event lookup: the listing is fresh for the run.
  */
 @Slf4j
 @Singleton

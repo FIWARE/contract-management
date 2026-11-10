@@ -58,6 +58,11 @@ public class ParticipantAdoption {
          */
         WITHDRAWN,
         /**
+         * The originals were removed while the entry was adopted, but the publisher still lists the participant, so the
+         * grant is kept (a migration by another component, or an operator's deletion that it undoes); not counted.
+         */
+        GRANT_KEPT,
+        /**
          * Nothing left to complete: the entry is gone, or holds no membership of the publisher (never written, or revoked
          * by a removal since); a listed entry is adopted anew.
          */
@@ -132,7 +137,7 @@ public class ParticipantAdoption {
     private Mono<Result> withdraw(String publisherId, String registryUrl, String did, String modeTag,
                                   List<CredentialsVO> copied) {
         return registryLookup.isListed(registryUrl, did).flatMap(listed -> listed
-                ? Mono.just(adopted(publisherId, did, modeTag, copied))
+                ? Mono.just(grantKept(publisherId, did))
                 : adapter.deleteIssuer(did).then(Mono.fromSupplier(() -> {
                     log.info("Participant {} is not adopted: its unattributed credentials were removed while it was adopted "
                             + "and {} no longer lists it, so the new membership grant is withdrawn.", did, publisherId);
@@ -150,6 +155,14 @@ public class ParticipantAdoption {
         return adapter.grantMembership(did, publisherId, remaining)
                 .onErrorMap(e -> new AdoptionIncompleteException(publisherId, did, copied, false, e))
                 .then(Mono.defer(() -> complete(publisherId, registryUrl, did, modeTag, remaining, false)));
+    }
+
+    // indistinguishable at the TIL from a migration, so it is only flagged for the operator, not counted as an adoption
+    private static Result grantKept(String publisherId, String did) {
+        log.warn("Participant {}: its unattributed credentials disappeared while it was adopted; the membership grant written "
+                + "by contract-management is kept because {} still lists the participant. Check whether that is intended: "
+                + "if the issuer was deleted on purpose, delete it again.", did, publisherId);
+        return Result.GRANT_KEPT;
     }
 
     private Result adopted(String publisherId, String did, String modeTag, List<CredentialsVO> copied) {

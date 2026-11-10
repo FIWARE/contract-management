@@ -484,7 +484,10 @@ class ParticipantAdoptionTest {
         assertEquals(Map.of(new GrantKey(P1, ScopeTypeVO.DATASPACE_MEMBERSHIP), CREDENTIALS), grants.get(X),
                 "a participant P1 still lists keeps its membership");
         verify(adapter, never()).deleteIssuer(anyString());
-        assertEquals(1, count(P1, "report", RemovalAction.ADOPTED));
+        assertEquals(0, count(P1, "report", RemovalAction.ADOPTED), "a kept grant is no clean adoption");
+        assertEquals(1, logs(Level.WARN).stream()
+                .filter(event -> event.getFormattedMessage().contains("disappeared while it was adopted"))
+                .count(), "the operator is asked to check the kept grant");
     }
 
     @Test
