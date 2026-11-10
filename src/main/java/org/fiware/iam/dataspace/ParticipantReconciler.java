@@ -34,6 +34,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * The reconciliation sweep of participant.removed: per publisher, the identifiers still holding its membership grant
@@ -87,7 +88,7 @@ public class ParticipantReconciler {
     private final Map<String, String> listingFailures = new HashMap<>();
     // the refused adoption configuration last warned about, null while adoption is not refused; only touched by run()
     @Nullable
-    private String loggedAdoptionRefusal;
+    private AdoptionRefusal loggedAdoptionRefusal;
     private final Map<String, AtomicInteger> heldGauges = new ConcurrentHashMap<>();
     private final Map<String, Breaker> breakers = new ConcurrentHashMap<>();
     // reason of the last skipped run, null while runs are not skipped; only touched by run()
@@ -126,6 +127,11 @@ public class ParticipantReconciler {
     }
 
     // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted
+    // what decides a refusal and its WARN, so unrelated policy edits (keep, overrides, caps) do not warn again
+    private record AdoptionRefusal(AdoptionPolicy.RefusalReason reason, @Nullable String dataspaceId,
+                                   List<String> removalPublishers, Map<String, Boolean> askingWithoutRegistryUrl) {
+    }
+
     private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
                          Set<String> kept,
                          Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write,
@@ -411,8 +417,18 @@ public class ParticipantReconciler {
     private void warnIfAdoptionRefused() {
         AdoptionPolicy policy = properties.adoption();
         List<Publisher> removalPublishers = properties.removalPublishers();
-        String refusal = policy.state() == AdoptionPolicy.State.REFUSED
-                ? policy.reason() + " " + properties.getDataspaceId() + " " + removalPublishers
+        List<Publisher> asking = removalPublishers.stream()
+                .filter(publisher -> publisher.getOnParticipantRemoved().isAdoptUnattributed())
+                .toList();
+        AdoptionRefusal refusal = policy.state() == AdoptionPolicy.State.REFUSED
+                ? new AdoptionRefusal(policy.reason(), properties.getDataspaceId(),
+                removalPublishers.stream().map(Publisher::getId).toList(),
+                asking.stream().collect(Collectors.toMap(Publisher::getId,
+                        publisher -> {
+                            String registryUrl = publisher.getOnParticipantRemoved().getRegistryUrl();
+                            return registryUrl == null || registryUrl.isBlank();
+                        },
+                        (first, second) -> first, TreeMap::new)))
                 : null;
         if (Objects.equals(refusal, loggedAdoptionRefusal)) {
             return;
@@ -421,9 +437,6 @@ public class ParticipantReconciler {
         if (refusal == null) {
             return;
         }
-        List<Publisher> asking = removalPublishers.stream()
-                .filter(publisher -> publisher.getOnParticipantRemoved().isAdoptUnattributed())
-                .toList();
         log.warn("adopt-unattributed of {} is ignored, no unattributed entry is adopted: {}; {} publishers announce "
                         + "participant removals ({}).",
                 asking.stream().map(Publisher::getId).toList(), policy.reason().logText(), removalPublishers.size(),

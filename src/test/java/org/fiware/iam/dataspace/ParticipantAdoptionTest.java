@@ -236,6 +236,21 @@ class ParticipantAdoptionTest {
     }
 
     @Test
+    void unrelatedPolicyChangeDoesNotWarnAgain() {
+        DataSpaceEventsProperties.Publisher p1 = writing(adopting(P1));
+        configure(p1, publisher(P2, RemovalMode.REPORT));
+        reconciler.run();
+        p1.getOnParticipantRemoved().setKeep(List.of(Y));
+        p1.getOnParticipantRemoved().setMaxRemovalsPerRun(1);
+        reconciler.run();
+
+        assertEquals(1, logs(Level.WARN).stream()
+                .filter(event -> event.getFormattedMessage().contains("adopt-unattributed"))
+                .count());
+        assertEquals(1, count(P1, "dataspace", RemovalAction.ADOPTION_REFUSED));
+    }
+
+    @Test
     void peerPublishingOtherTypesDoesNotRefuseAdoption() {
         DataSpaceEventsProperties.Publisher peer = publisher(P2, RemovalMode.REPORT);
         peer.setTypes(List.of(PEER_TYPE));

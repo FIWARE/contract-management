@@ -16,9 +16,9 @@ public record IssuerContent(HeldEntry held, List<CredentialsVO> credentials) {
     }
 
     /**
-     * True if the publisher's membership is the only grant and the unattributed credentials are its copy, as an adoption
-     * interrupted between its grant and its revoke leaves them. The list does not say which half the scope holds, so two
-     * identical halves suffice.
+     * True if the publisher's membership is the only grant, of as many credentials as are unattributed, and all credentials
+     * split into two identical halves, as an adoption interrupted between its grant and its revoke leaves them. The list
+     * does not say which credential the scope holds, so a membership {A, A} next to unattributed {B, B} matches as well.
      */
     public boolean holdsAdoptionCopyOf(String publisherId) {
         return held.mayHoldAdoptionCopyOf(publisherId)
