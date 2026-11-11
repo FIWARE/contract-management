@@ -288,26 +288,27 @@ public final class PublisherEntryCheck {
             String prefix = "%s[%s]".formatted(PUBLISHERS_KEY, index);
             String id = idOf(entry);
             boolean removal = typesOf(entry).contains(PARTICIPANT_REMOVED_TYPE);
+            // flattened keys of one unknown setting are reported once, under the name they share
+            Map<String, Boolean> unknown = new LinkedHashMap<>();
             entry.forEach((key, value) -> {
-                if (PUBLISHER_FIELDS.contains(fieldOf(String.valueOf(key)))) {
-                    return;
-                }
-                if (removal && holdsPolicy(String.valueOf(key), value)) {
-                    findings.add(new Finding(Severity.FATAL, ("%s.%s (id %s) is not a publisher setting and is ignored, "
-                            + "but holds %s settings: the whole policy, keep list included, would fall back to its defaults.")
-                            .formatted(prefix, key, id, POLICY_KEY)));
-                } else {
-                    findings.add(new Finding(Severity.WARN, "%s.%s (id %s) is not a publisher setting and is ignored."
-                            .formatted(prefix, key, id)));
+                String name = String.valueOf(key);
+                if (!PUBLISHER_FIELDS.contains(fieldOf(name))) {
+                    unknown.merge(stemOf(name), removal && holdsPolicy(name, value), Boolean::logicalOr);
                 }
             });
+            unknown.forEach((name, policy) -> findings.add(policy
+                    ? new Finding(Severity.FATAL, ("%s.%s (id %s) is not a publisher setting and is ignored, but holds "
+                    + "%s settings: the whole policy, keep list included, would fall back to its defaults.")
+                    .formatted(prefix, name, id, POLICY_KEY))
+                    : new Finding(Severity.WARN, "%s.%s (id %s) is not a publisher setting and is ignored."
+                    .formatted(prefix, name, id))));
             Severity severity = removal ? Severity.FATAL : Severity.WARN;
-            for (String key : policyEntries(entry).keySet()) {
-                if (!POLICY_FIELDS.contains(fieldOf(key))) {
-                    findings.add(new Finding(severity, ("%s.%s.%s (id %s) is not an %s setting and is ignored, so its "
-                            + "default applies.").formatted(prefix, POLICY_KEY, key, id, POLICY_KEY)));
-                }
-            }
+            policyEntries(entry).keySet().stream()
+                    .filter(key -> !POLICY_FIELDS.contains(fieldOf(key)))
+                    .map(PublisherEntryCheck::stemOf)
+                    .distinct()
+                    .forEach(key -> findings.add(new Finding(severity, ("%s.%s.%s (id %s) is not an %s setting and is "
+                            + "ignored, so its default applies.").formatted(prefix, POLICY_KEY, key, id, POLICY_KEY))));
         }
     }
 
@@ -373,8 +374,13 @@ public final class PublisherEntryCheck {
     }
 
     // the field a possibly flattened key (overrides[0].mode) sets
+    // the key as configured, up to its first path separator
+    private static String stemOf(String key) {
+        return key.split(KEY_PATH_SEPARATORS, 2)[0];
+    }
+
     private static String fieldOf(String key) {
-        return boundName(key.split(KEY_PATH_SEPARATORS, 2)[0]);
+        return boundName(stemOf(key));
     }
 
     private static Set<String> fieldNames(Class<?> type) {

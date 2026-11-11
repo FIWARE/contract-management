@@ -24,6 +24,7 @@ class PublisherEntryCheckTest {
     private static final String PEER = "did:web:peer.org";
     private static final String PEER_TYPE = "org.fiware.dataspace.example";
     private static final String KEPT = "did:web:kept.org";
+    private static final String OTHER_KEPT = "did:web:other-kept.org";
     private static final int MAX_REMOVALS = 3;
     private static final String REGISTRY_URL = "http://registry.anchor.org";
     private static final String COMMA_TYPES = PEER_TYPE + ", " + PARTICIPANT_REMOVED_TYPE;
@@ -150,8 +151,17 @@ class PublisherEntryCheckTest {
                         List.of(new Finding(Severity.FATAL, misspeltPolicy("on-participant-remove", ANCHOR)))),
                 Arguments.of("flattened misspelt policy of a removal entry",
                         Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
-                                "on-participant-remove.keep[0]", KEPT),
-                        List.of(new Finding(Severity.FATAL, misspeltPolicy("on-participant-remove.keep[0]", ANCHOR)))),
+                                "on-participant-remove.keep[0]", KEPT, "on-participant-remove.keep[1]", OTHER_KEPT,
+                                "on-participant-remove.mode", "full"),
+                        List.of(new Finding(Severity.FATAL, misspeltPolicy("on-participant-remove", ANCHOR)))),
+                Arguments.of("flattened misspelt policy of a peer entry",
+                        Map.of("id", PEER, "types", List.of(PEER_TYPE),
+                                "on-participant-remove.keep[0]", KEPT, "on-participant-remove.keep[1]", OTHER_KEPT),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("on-participant-remove", PEER)))),
+                Arguments.of("flattened misspelt list key inside the policy",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-removed.kep[0]", KEPT, "on-participant-removed.kep[1]", OTHER_KEPT),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("kep", ANCHOR)))),
                 Arguments.of("misspelt policy of a peer entry",
                         Map.of("id", PEER, "types", List.of(PEER_TYPE), "on-participant-remove", Map.of("mode", "full")),
                         List.of(new Finding(Severity.WARN, unknownPublisherKey("on-participant-remove", PEER)))),
@@ -164,7 +174,7 @@ class PublisherEntryCheckTest {
                         List.of(new Finding(Severity.WARN, unknownPublisherKey("labels", ANCHOR)))),
                 Arguments.of("unrelated flattened key with a generic mode key",
                         Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "labels.mode", "prod"),
-                        List.of(new Finding(Severity.WARN, unknownPublisherKey("labels.mode", ANCHOR)))),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("labels", ANCHOR)))),
                 Arguments.of("unknown publisher key without policy settings",
                         Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "extra", Map.of("key", "value")),
                         List.of(new Finding(Severity.WARN, unknownPublisherKey("extra", ANCHOR)))),

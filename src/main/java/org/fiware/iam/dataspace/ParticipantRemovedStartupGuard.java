@@ -147,8 +147,8 @@ public class ParticipantRemovedStartupGuard {
         states.forEach((capability, state) -> {
             switch (state) {
                 case TOO_OLD -> tooOld.add("%s (%s)".formatted(capability.getId(), ticketOf(capability)));
-                case UNVERIFIED -> log.warn("The trusted-issuers-list could not be checked for {}; participant removals "
-                        + "write nothing until a later probe succeeds.", capability.getId());
+                case UNVERIFIED -> log.warn("The trusted-issuers-list could not be checked for {}; participant.removed "
+                        + "events are answered 502 and no sweep runs until a later probe succeeds.", capability.getId());
                 case PENDING -> log.info("The trusted-issuers-list is empty, so {} is checked once it holds an issuer.",
                         capability.getId());
                 case SUPPORTED -> {

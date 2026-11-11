@@ -578,7 +578,7 @@ gets a WARN at startup: `keep` wins.
 drops the **whole** publisher entry, which then is not authorized for any event type. For an entry that carries
 `on-participant-removed` or lists participant.removed in `types`, startup fails with a message naming
 `dataspace.events.publishers[<index>]` (when entries repeating an id differ only in a value outside the policy, it names
-each of them it cannot tell apart); for other entries it is a WARN, as before. After a refresh the sweep logs the same
+each of them it cannot tell apart); for other entries it is only a WARN, so existing deployments keep starting. After a refresh the sweep logs the same
 findings, once per configuration change (ERROR for a dropped removal publisher). `on-participant-removed` takes effect only
 when the entry's `types` include participant.removed; otherwise it gets a WARN and is ignored. A publisher split over several
 entries needs a single policy: repeated removal entries of one id with different policies fail startup (after a refresh, the
