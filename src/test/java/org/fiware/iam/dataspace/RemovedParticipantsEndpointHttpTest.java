@@ -16,6 +16,7 @@ import org.fiware.iam.til.model.ScopeTypeVO;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -85,7 +86,10 @@ class RemovedParticipantsEndpointHttpTest implements TestPropertyProvider {
 
     @MockBean(TilCapabilities.class)
     TilCapabilities capabilities() {
-        return mock(TilCapabilities.class);
+        TilCapabilities capabilities = mock(TilCapabilities.class);
+        // probed by the start-up guard
+        when(capabilities.probeRequired()).thenReturn(Mono.just(Map.of()));
+        return capabilities;
     }
 
     @MockBean(ParticipantReconciler.class)

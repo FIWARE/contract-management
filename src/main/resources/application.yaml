@@ -143,6 +143,7 @@ oid4vp:
 #      - id: "did:web:trust-anchor.org"
 #        origin: "cm.trust-anchor.org"
 #        types: [ "org.fiware.dataspace.participant.removed" ]
+#        # only read with participant.removed in types; an invalid value drops the whole entry and fails start-up
 #        on-participant-removed:
 #          # report (default, writes nothing), dataspace, granted or full; writing modes require registry-url
 #          mode: dataspace

@@ -1,5 +1,6 @@
 package org.fiware.iam.dataspace;
 
+import io.micronaut.context.env.Environment;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -8,6 +9,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.configuration.PublisherEntryCheck;
 import org.fiware.iam.configuration.RemovalMode;
 import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TrustedIssuersException;
@@ -74,6 +76,7 @@ class ParticipantAdoptionTest {
     private final TilCapabilities capabilities = mock(TilCapabilities.class);
     private final PublisherRegistryLookup registryLookup = mock(PublisherRegistryLookup.class);
     private final TrustedIssuersRegistryReader registryReader = mock(TrustedIssuersRegistryReader.class);
+    private final Environment environment = mock(Environment.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock(Instant.EPOCH);
     private final RemovedParticipantsReport report = new RemovedParticipantsReport(clock);
@@ -83,7 +86,7 @@ class ParticipantAdoptionTest {
             properties, generalProperties, Optional.of(meterRegistry));
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
             removal, new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties,
-            new ConfigurationRefreshLock(), Optional.of(meterRegistry), clock);
+            new ConfigurationRefreshLock(), environment, Optional.empty(), Optional.of(meterRegistry), clock);
 
     private final List<Logger> loggers = List.of((Logger) LoggerFactory.getLogger(ParticipantReconciler.class),
             (Logger) LoggerFactory.getLogger(ParticipantAdoption.class));
@@ -106,6 +109,8 @@ class ParticipantAdoptionTest {
     void fakes() {
         logged.start();
         loggers.forEach(logger -> logger.addAppender(logged));
+        // an old Mockito answers Optional with null; no raw publisher entries unless a test sets them
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class)).thenReturn(Optional.empty());
         properties.setOwnParticipantId(OWN_ID);
         properties.setDataspaceId(DATASPACE_ID);
         when(capabilities.requireSupported()).thenReturn(Mono.empty());
@@ -257,6 +262,8 @@ class ParticipantAdoptionTest {
     void peerPublishingOtherTypesDoesNotRefuseAdoption() {
         DataSpaceEventsProperties.Publisher peer = publisher(P2, RemovalMode.REPORT);
         peer.setTypes(List.of(PEER_TYPE));
+        // a policy on a peer would be warned about as ignored
+        peer.setOnParticipantRemoved(new DataSpaceEventsProperties.OnParticipantRemoved());
         configure(adopting(P1), peer);
         unattributed.put(X, CREDENTIALS);
         listed.put(P1, Set.of(X));

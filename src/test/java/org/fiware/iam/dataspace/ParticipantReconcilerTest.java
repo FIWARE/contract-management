@@ -1,5 +1,6 @@
 package org.fiware.iam.dataspace;
 
+import io.micronaut.context.env.Environment;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -9,6 +10,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.configuration.PublisherEntryCheck;
 import org.fiware.iam.configuration.RemovalMode;
 import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TirEnumerationException;
@@ -73,6 +75,7 @@ class ParticipantReconcilerTest {
     private final TilCapabilities capabilities = mock(TilCapabilities.class);
     private final PublisherRegistryLookup registryLookup = mock(PublisherRegistryLookup.class);
     private final TrustedIssuersRegistryReader registryReader = mock(TrustedIssuersRegistryReader.class);
+    private final Environment environment = mock(Environment.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock(Instant.EPOCH);
     private final RemovedParticipantsReport report = new RemovedParticipantsReport(clock);
@@ -83,17 +86,28 @@ class ParticipantReconcilerTest {
     // lets a test land a refresh right after the sweep decided, before any write
     private Runnable refreshAfterDecision = () -> {
     };
+    private int refreshesInjected;
+    private boolean inRefreshLock;
     private final ConfigurationRefreshLock refreshLock = new ConfigurationRefreshLock() {
         @Override
         public <T> T exclusively(Supplier<T> work) {
-            T result = super.exclusively(work);
-            refreshAfterDecision.run();
+            T result = super.exclusively(() -> {
+                inRefreshLock = true;
+                try {
+                    return work.get();
+                } finally {
+                    inRefreshLock = false;
+                }
+            });
+            // only the sweep's decision section, whatever else runs under the lock
+            if (result instanceof ParticipantReconciler.Split) {
+                refreshesInjected++;
+                refreshAfterDecision.run();
+            }
             return result;
         }
     };
-    private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
-            removal, new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties, refreshLock,
-            Optional.of(meterRegistry), clock);
+    private final ParticipantReconciler reconciler = reconciler(Optional.empty());
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(ParticipantReconciler.class);
     private final ListAppender<ILoggingEvent> logged = new ListAppender<>();
@@ -107,6 +121,8 @@ class ParticipantReconcilerTest {
     void fakes() {
         logged.start();
         logger.addAppender(logged);
+        // an old Mockito answers Optional with null; no raw publisher entries unless a test sets them
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class)).thenReturn(Optional.empty());
         properties.setOwnParticipantId(OWN_ID);
         when(capabilities.requireSupported()).thenReturn(Mono.empty());
         when(registryReader.enumerate(anyString())).thenAnswer(invocation -> REGISTRY_URLS.entrySet().stream()
@@ -223,6 +239,7 @@ class ParticipantReconcilerTest {
 
         reconciler.run();
 
+        assertEquals(1, refreshesInjected, "the refresh was not injected after the decision");
         verify(adapter, never()).deleteIssuer(anyString());
         assertEquals(membershipKept, holdsMembership(X, P1));
         assertEquals(1, count(P1, expectedMode, expectedAction));
@@ -630,6 +647,64 @@ class ParticipantReconcilerTest {
         assertEquals(Optional.of(RemovalMode.REPORT), properties.removalMode(P1, X, OWN_ID));
         assertTrue(holdsMembership(X, P1));
         verify(adapter, never()).issuersGrantedBy(anyString(), any());
+    }
+
+    @Test
+    void logsAPublisherEntryDroppedByARefreshOncePerConfigurationChange() {
+        configure(publisher(P1, RemovalMode.REPORT));
+        Map<String, Object> bound = Map.of("id", P1, "types", List.of(DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE));
+        Map<String, Object> dropped = Map.of("id", P2, "types", List.of(DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE),
+                "on-participant-removed", Map.of("mode", "dataspce"));
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class))
+                .thenReturn(Optional.of(List.of(bound, dropped)));
+
+        reconciler.run();
+        reconciler.run();
+
+        assertEquals(1, logs(Level.ERROR).size());
+        assertTrue(logs(Level.ERROR).get(0).getFormattedMessage().contains("publishers[1] (id " + P2 + ")"));
+
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class))
+                .thenReturn(Optional.of(List.of(dropped, bound)));
+        reconciler.run();
+
+        assertEquals(2, logs(Level.ERROR).size());
+        assertTrue(logs(Level.ERROR).get(1).getFormattedMessage().contains("publishers[0] (id " + P2 + ")"));
+    }
+
+    @Test
+    void readsThePublisherEntriesUnderTheRefreshLock() {
+        configure(publisher(P1, RemovalMode.REPORT));
+        List<Boolean> readsInLock = new ArrayList<>();
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class)).thenAnswer(invocation -> {
+            readsInLock.add(inRefreshLock);
+            return Optional.empty();
+        });
+
+        reconciler.run();
+
+        assertEquals(List.of(true), readsInLock);
+    }
+
+    @Test
+    void doesNotRepeatTheFindingsLoggedAtStartup() {
+        configure(publisher(P1, RemovalMode.REPORT));
+        Map<String, Object> bound = Map.of("id", P1, "types", List.of(DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE));
+        Map<String, Object> droppedPeer = Map.of("id", P2, "types", List.of("org.fiware.dataspace.example"),
+                "max-age", "forever");
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class))
+                .thenReturn(Optional.of(List.of(bound, droppedPeer)));
+        ParticipantReconciler seeded = reconciler(Optional.of(new PublisherEntriesGuard(properties, environment)));
+
+        seeded.run();
+
+        assertTrue(logs(Level.WARN).stream().noneMatch(event -> event.getFormattedMessage().contains("(id " + P2 + ")")));
+    }
+
+    private ParticipantReconciler reconciler(Optional<PublisherEntriesGuard> entriesGuard) {
+        return new ParticipantReconciler(adapter, capabilities, registryReader, removal,
+                new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties, refreshLock,
+                environment, entriesGuard, Optional.of(meterRegistry), clock);
     }
 
     private void configure(DataSpaceEventsProperties.Publisher... publishers) {
