@@ -2,8 +2,10 @@ package org.fiware.iam.dataspace;
 
 import io.micronaut.context.annotation.Context;
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.context.env.Environment;
 import io.micronaut.context.exceptions.ConfigurationException;
 import io.micronaut.core.annotation.Nullable;
+import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.AdoptionPolicy;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
@@ -12,6 +14,7 @@ import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemov
 import org.fiware.iam.configuration.DataSpaceEventsProperties.ParticipantRemovedSettings;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.TirWatcherSettings;
+import org.fiware.iam.configuration.PublisherEntryCheck;
 import org.fiware.iam.til.TilCapabilities;
 import org.fiware.iam.til.TilCapability;
 
@@ -34,8 +37,6 @@ import java.util.Set;
 public class ParticipantRemovedStartupGuard {
 
     static final String PREFIX = "dataspace.events.";
-    static final String PUBLISHERS_PREFIX = PREFIX + "publishers";
-    static final String POLICY_KEY = "on-participant-removed";
     static final String SETTINGS_PREFIX = PREFIX + "participant-removed.";
     static final String PAGE_SIZE_KEY = SETTINGS_PREFIX + "page-size";
     static final String MAX_PAGES_KEY = SETTINGS_PREFIX + "max-pages";
@@ -45,11 +46,21 @@ public class ParticipantRemovedStartupGuard {
             "without it there is no sweep, so a failed or dropped removal event is never completed";
     private static final Set<String> REGISTRY_URL_SCHEMES = Set.of("http", "https");
 
-    public ParticipantRemovedStartupGuard(DataSpaceEventsProperties properties, TilCapabilities capabilities) {
+    @Inject
+    public ParticipantRemovedStartupGuard(DataSpaceEventsProperties properties, TilCapabilities capabilities,
+                                          Environment environment) {
+        this(properties, capabilities,
+                environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class).orElse(null));
+    }
+
+    // rawEntries are the unconverted publisher entries, so that messages name the configured index
+    ParticipantRemovedStartupGuard(DataSpaceEventsProperties properties, TilCapabilities capabilities,
+                                   @Nullable List<?> rawEntries) {
         checkSettings(properties.getParticipantRemoved());
         List<Publisher> publishers = properties.getPublishers();
+        int[] rawIndexOf = PublisherEntryCheck.rawIndices(rawEntries, publishers);
         for (Publisher publisher : properties.removalPublishers()) {
-            checkPolicy(policyKey(publishers.indexOf(publisher)), publisher);
+            checkPolicy(policyKey(rawIndexOf[indexOf(publishers, publisher)]), publisher);
         }
         checkAdoption(properties);
         warnKeptAndOverridden(properties.removalPublishers());
@@ -152,8 +163,9 @@ public class ParticipantRemovedStartupGuard {
                     + "every on-participant-removed mode and override to report and disable adopt-unattributed.")
                     .formatted(writesConfigured(properties), String.join(", ", tooOld)));
         }
-        log.error("The trusted-issuers-list is too old: it lacks {}. Participant removals are only reported, without what "
-                + "the removed participants hold, and no reconciliation runs until it is upgraded.", String.join(", ", tooOld));
+        // TilCapabilities already logged the ERROR for the missing capability; this names the consequence only
+        log.warn("Participant removals are only reported, without what the removed participants hold, and no "
+                + "reconciliation runs until the trusted-issuers-list supports {}.", String.join(", ", tooOld));
     }
 
     // what makes the configuration write, named for the start-up failure
@@ -184,7 +196,17 @@ public class ParticipantRemovedStartupGuard {
     }
 
     private static String policyKey(int index) {
-        return "%s[%s].%s".formatted(PUBLISHERS_PREFIX, index, POLICY_KEY);
+        return "%s[%s].%s".formatted(PublisherEntryCheck.PUBLISHERS_KEY, index, PublisherEntryCheck.POLICY_KEY);
+    }
+
+    // by identity: equal entries (Lombok equals) repeating an id would otherwise share the first one's index
+    private static int indexOf(List<Publisher> publishers, Publisher publisher) {
+        for (int index = 0; index < publishers.size(); index++) {
+            if (publishers.get(index) == publisher) {
+                return index;
+            }
+        }
+        throw new IllegalStateException("A removal publisher is not among the publishers: " + publisher.getId());
     }
 
     private static boolean isAbsoluteHttpUrl(String value) {

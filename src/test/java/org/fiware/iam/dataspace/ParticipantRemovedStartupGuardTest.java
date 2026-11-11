@@ -62,6 +62,8 @@ class ParticipantRemovedStartupGuardTest {
     private static final String REGISTRY_URL = "http://registry.p1.org";
     private static final String DATASPACE_ID = "my-dataspace";
     private static final int NOT_FOUND = 404;
+    // without unconverted entries, messages fall back to the bound index
+    private static final List<?> NO_RAW_ENTRIES = List.of();
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(ParticipantRemovedStartupGuard.class);
     private final ListAppender<ILoggingEvent> logged = new ListAppender<>();
@@ -115,7 +117,7 @@ class ParticipantRemovedStartupGuardTest {
     @MethodSource("invalidConfigurations")
     void failsForAnInvalidPolicy(String description, DataSpaceEventsProperties properties, String expected) {
         ConfigurationException exception = assertThrows(ConfigurationException.class,
-                () -> new ParticipantRemovedStartupGuard(properties, capabilities(State.SUPPORTED)));
+                () -> new ParticipantRemovedStartupGuard(properties, capabilities(State.SUPPORTED), NO_RAW_ENTRIES));
         assertTrue(exception.getMessage().contains(expected), exception.getMessage());
     }
 
@@ -134,10 +136,25 @@ class ParticipantRemovedStartupGuardTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("validConfigurations")
     void startsForAValidPolicy(String description, DataSpaceEventsProperties properties, boolean refusalWarned) {
-        new ParticipantRemovedStartupGuard(properties, capabilities(State.SUPPORTED));
+        new ParticipantRemovedStartupGuard(properties, capabilities(State.SUPPORTED), NO_RAW_ENTRIES);
 
         assertEquals(refusalWarned, logs(Level.WARN).stream()
                 .anyMatch(event -> event.getFormattedMessage().contains("adopt-unattributed")));
+    }
+
+    @Test
+    void namesTheConfiguredIndexWhenAnEarlierEntryWasDropped() {
+        DataSpaceEventsProperties properties = configured(publisher -> publisher.getOnParticipantRemoved()
+                .setOverrides(List.of(override(X, null))));
+        // the peer entry failed conversion, so the anchor is bound at 0 but configured at 1
+        List<?> raw = List.of(Map.of("id", P2, "types", List.of("org.fiware.dataspace.example")),
+                Map.of("id", P1, "types", List.of(PARTICIPANT_REMOVED_TYPE)));
+
+        ConfigurationException exception = assertThrows(ConfigurationException.class,
+                () -> new ParticipantRemovedStartupGuard(properties, capabilities(State.SUPPORTED), raw));
+
+        assertTrue(exception.getMessage().contains("publishers[1].on-participant-removed.overrides[0].mode"),
+                exception.getMessage());
     }
 
     @Test
@@ -147,7 +164,8 @@ class ParticipantRemovedStartupGuardTest {
         Publisher overriding = publisher(P2, RemovalMode.REPORT, REGISTRY_URL);
         overriding.getOnParticipantRemoved().setOverrides(List.of(override(X, RemovalMode.FULL)));
 
-        new ParticipantRemovedStartupGuard(properties(keeping, overriding), capabilities(State.SUPPORTED));
+        new ParticipantRemovedStartupGuard(properties(keeping, overriding), capabilities(State.SUPPORTED),
+                NO_RAW_ENTRIES);
 
         assertEquals(1, logs(Level.WARN).size());
         assertTrue(logs(Level.WARN).get(0).getFormattedMessage().contains(X + " is on a keep list and has an override at " + P2));
@@ -178,25 +196,25 @@ class ParticipantRemovedStartupGuardTest {
         TilCapabilities capabilities = capabilities(state);
         if (fails) {
             ConfigurationException exception = assertThrows(ConfigurationException.class,
-                    () -> new ParticipantRemovedStartupGuard(properties, capabilities));
+                    () -> new ParticipantRemovedStartupGuard(properties, capabilities, NO_RAW_ENTRIES));
             assertTrue(exception.getMessage().contains("scopes-endpoint (TIL-2)"), exception.getMessage());
             assertTrue(exception.getMessage().contains(configuration.equals("allowed adoption") ? "adopt-unattributed"
                     : P1), exception.getMessage());
             return;
         }
-        new ParticipantRemovedStartupGuard(properties, capabilities);
+        new ParticipantRemovedStartupGuard(properties, capabilities, NO_RAW_ENTRIES);
 
         Level expected = switch (state) {
             case SUPPORTED -> null;
-            case TOO_OLD -> Level.ERROR;
-            case UNVERIFIED -> Level.WARN;
+            case TOO_OLD, UNVERIFIED -> Level.WARN;
             case PENDING -> Level.INFO;
         };
         if (expected != null) {
             assertTrue(logs(expected).stream().anyMatch(event -> event.getFormattedMessage().contains("scopes-endpoint")),
                     "expected a " + expected + " naming the capability");
         }
-        assertTrue(logs(Level.ERROR).isEmpty() || state == State.TOO_OLD);
+        // TilCapabilities logs the ERROR for a too-old list, the guard only its consequence
+        assertTrue(logs(Level.ERROR).isEmpty());
     }
 
     @Test
@@ -209,7 +227,7 @@ class ParticipantRemovedStartupGuardTest {
         when(capabilities.probeRequired()).thenReturn(Mono.just(states));
 
         ConfigurationException exception = assertThrows(ConfigurationException.class,
-                () -> new ParticipantRemovedStartupGuard(adoption(REGISTRY_URL, DATASPACE_ID), capabilities));
+                () -> new ParticipantRemovedStartupGuard(adoption(REGISTRY_URL, DATASPACE_ID), capabilities, NO_RAW_ENTRIES));
 
         assertTrue(exception.getMessage().contains("typed-scopes (TIL-1)"), exception.getMessage());
         assertTrue(exception.getMessage().contains("unscoped (TIL-3)"), exception.getMessage());
@@ -225,7 +243,7 @@ class ParticipantRemovedStartupGuardTest {
         TilCapabilities capabilities = new TilCapabilities(adapter, properties, new MutableClock(Instant.EPOCH));
 
         long started = System.nanoTime();
-        new ParticipantRemovedStartupGuard(properties, capabilities);
+        new ParticipantRemovedStartupGuard(properties, capabilities, NO_RAW_ENTRIES);
         Duration took = Duration.ofNanos(System.nanoTime() - started);
 
         assertTrue(took.compareTo(TilCapabilities.PROBE_TIMEOUT.multipliedBy(2)) < 0, "took " + took);
@@ -244,7 +262,7 @@ class ParticipantRemovedStartupGuardTest {
         ParticipantReconciler reconciler = mock(ParticipantReconciler.class);
         ParticipantRemovedHealthIndicator health = new ParticipantRemovedHealthIndicator(capabilities, reconciler);
 
-        new ParticipantRemovedStartupGuard(properties, capabilities);
+        new ParticipantRemovedStartupGuard(properties, capabilities, NO_RAW_ENTRIES);
 
         assertEquals(DataSpaceHealth.DEGRADED, health.result().getStatus());
         assertFalse(health.result().getStatus().equals(HealthStatus.DOWN));
@@ -262,18 +280,20 @@ class ParticipantRemovedStartupGuardTest {
 
     static Stream<Arguments> contextConfigurations() {
         return Stream.of(
-                Arguments.of("dataspace mode", Map.of("mode", "dataspace", "registry-url", REGISTRY_URL), true),
-                Arguments.of("allowed adoption", Map.of("adopt-unattributed", "true", "registry-url", REGISTRY_URL), true),
-                Arguments.of("report only", Map.of("mode", "report"), false),
-                Arguments.of("adoption refused without dataspace-id", Map.of("adopt-unattributed", "true"), false));
+                Arguments.of("dataspace mode", Map.of("mode", "dataspace", "registry-url", REGISTRY_URL), true, true),
+                Arguments.of("allowed adoption", Map.of("adopt-unattributed", "true", "registry-url", REGISTRY_URL), true,
+                        true),
+                Arguments.of("report only", Map.of("mode", "report"), true, false),
+                Arguments.of("adoption refused without dataspace-id", Map.of("adopt-unattributed", "true"), false, false));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("contextConfigurations")
-    void startupWithATooOldList(String description, Map<String, String> policy, boolean fails) throws IOException {
+    void startupWithATooOldList(String description, Map<String, String> policy, boolean withDataspaceId, boolean fails)
+            throws IOException {
         HttpServer til = tooOldList();
         try {
-            Map<String, Object> config = contextConfig(til, policy, !description.contains("without dataspace-id"));
+            Map<String, Object> config = contextConfig(til, policy, withDataspaceId);
             if (fails) {
                 BeanInstantiationException exception = assertThrows(BeanInstantiationException.class,
                         () -> ApplicationContext.builder().enableDefaultPropertySources(false).properties(config).start().close());

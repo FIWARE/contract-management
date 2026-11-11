@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -22,6 +23,8 @@ class PublisherEntryCheckTest {
     private static final String ANCHOR = "did:web:anchor.org";
     private static final String PEER = "did:web:peer.org";
     private static final String PEER_TYPE = "org.fiware.dataspace.example";
+    private static final String KEPT = "did:web:kept.org";
+    private static final int MAX_REMOVALS = 3;
 
     static Stream<Arguments> entries() {
         return Stream.of(
@@ -42,7 +45,43 @@ class PublisherEntryCheckTest {
                                         Map.of("mode", "dataspce")),
                                 Map.of("id", ANCHOR, "types", List.of(PEER_TYPE))),
                         List.of(publisher(ANCHOR, PEER_TYPE)),
+                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                Arguments.of("first of a repeated id with equal types dropped, matched by its policy",
+                        List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                        Map.of("mode", "dataspce")),
+                                Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                        Map.of("keep", List.of(KEPT)))),
+                        List.of(keeping(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE))),
+                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                Arguments.of("first of a repeated id with equal types dropped, matched by a flattened policy value",
+                        List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                        "on-participant-removed.max-removals-per-run", "many"),
+                                Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                        "on-participant-removed.max-removals-per-run", MAX_REMOVALS)),
+                        List.of(capped(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE))),
+                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                Arguments.of("first of a repeated id with comma-separated types dropped",
+                        List.of(Map.of("id", ANCHOR, "types", PARTICIPANT_REMOVED_TYPE, "on-participant-removed",
+                                        Map.of("mode", "dataspce")),
+                                Map.of("id", ANCHOR, "types", PEER_TYPE + ", " + PARTICIPANT_REMOVED_TYPE)),
+                        List.of(publisher(ANCHOR, PEER_TYPE, PARTICIPANT_REMOVED_TYPE)),
                         List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))));
+    }
+
+    static Stream<Arguments> rawIndices() {
+        return Stream.of(
+                Arguments.of("earlier entry dropped",
+                        List.of(Map.of("id", PEER, "types", List.of(PEER_TYPE)),
+                                Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE))),
+                        List.of(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE)), new int[]{1}),
+                Arguments.of("no unconverted entries", null,
+                        List.of(publisher(PEER, PEER_TYPE), publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE)), new int[]{0, 1}));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("rawIndices")
+    void mapsBoundEntriesToTheirConfiguredIndex(String description, List<?> raw, List<Publisher> bound, int[] expected) {
+        assertArrayEquals(expected, PublisherEntryCheck.rawIndices(raw, bound));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -59,10 +98,20 @@ class PublisherEntryCheckTest {
                 : start + "it is not authorized for any event type.";
     }
 
-    private static Publisher publisher(String id, String type) {
+    private static Publisher publisher(String id, String... types) {
         Publisher publisher = new Publisher();
         publisher.setId(id);
-        publisher.setTypes(List.of(type));
+        publisher.setTypes(List.of(types));
+        return publisher;
+    }
+
+    private static Publisher keeping(Publisher publisher) {
+        publisher.getOnParticipantRemoved().setKeep(List.of(KEPT));
+        return publisher;
+    }
+
+    private static Publisher capped(Publisher publisher) {
+        publisher.getOnParticipantRemoved().setMaxRemovalsPerRun(MAX_REMOVALS);
         return publisher;
     }
 }

@@ -6,10 +6,13 @@ import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiPredicate;
 
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE;
 
@@ -21,10 +24,16 @@ import static org.fiware.iam.configuration.DataSpaceEventsProperties.PARTICIPANT
 public final class PublisherEntryCheck {
 
     public static final String PUBLISHERS_KEY = "dataspace.events.publishers";
-    static final String POLICY_KEY = "on-participant-removed";
+    public static final String POLICY_KEY = "on-participant-removed";
     static final String POLICY_KEY_CAMEL_CASE = "onParticipantRemoved";
     static final String ID_KEY = "id";
     static final String TYPES_KEY = "types";
+    private static final String LIST_SEPARATOR = ",";
+    private static final String MODE_FIELD = "mode";
+    private static final String MAX_REMOVALS_FIELD = "maxremovalsperrun";
+    private static final String MAX_ADOPTIONS_FIELD = "maxadoptionsperrun";
+    private static final String ADOPT_FIELD = "adoptunattributed";
+    private static final String REGISTRY_URL_FIELD = "registryurl";
 
     private PublisherEntryCheck() {
     }
@@ -49,23 +58,34 @@ public final class PublisherEntryCheck {
     public static List<Finding> check(@Nullable List<?> rawEntries, List<Publisher> publishers) {
         List<Finding> findings = new ArrayList<>();
         List<?> raw = rawEntries == null ? List.of() : rawEntries;
-        int[] rawIndexOf = align(raw, publishers);
+        int[] rawIndexOf = rawIndices(raw, publishers);
         checkDropped(raw, rawIndexOf, findings);
         checkInertPolicies(publishers, rawIndexOf, findings);
         checkRepeatedIds(publishers, rawIndexOf, findings);
         return findings;
     }
 
-    // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
-    // equal types decide between entries repeating an id
-    private static int[] align(List<?> raw, List<Publisher> publishers) {
+    /**
+     * Index of each bound publisher in the unconverted entries, i.e. its configuration key; the bound index where none matches.
+     */
+    public static int[] rawIndices(@Nullable List<?> rawEntries, List<Publisher> publishers) {
+        List<?> raw = rawEntries == null ? List.of() : rawEntries;
+        // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
+        // between entries repeating an id, the one whose types and policy values agree with the bound entry wins
+        List<BiPredicate<Object, Publisher>> preferences = List.of(
+                (entry, publisher) -> sameTypes(entry, publisher) && policyAgrees(entry, publisher.getOnParticipantRemoved()),
+                PublisherEntryCheck::sameTypes,
+                (entry, publisher) -> true);
         int[] rawIndexOf = new int[publishers.size()];
         int next = 0;
         for (int bound = 0; bound < publishers.size(); bound++) {
             Publisher publisher = publishers.get(bound);
-            int match = firstMatch(raw, next, publisher, true);
-            if (match == raw.size()) {
-                match = firstMatch(raw, next, publisher, false);
+            int match = raw.size();
+            for (BiPredicate<Object, Publisher> preference : preferences) {
+                match = firstMatch(raw, next, publisher, preference);
+                if (match < raw.size()) {
+                    break;
+                }
             }
             if (match == raw.size()) {
                 // not from the list, e.g. bound from another source; keep the bound index
@@ -78,10 +98,10 @@ public final class PublisherEntryCheck {
         return rawIndexOf;
     }
 
-    private static int firstMatch(List<?> raw, int from, Publisher publisher, boolean sameTypes) {
+    private static int firstMatch(List<?> raw, int from, Publisher publisher, BiPredicate<Object, Publisher> preference) {
         int match = from;
         while (match < raw.size() && !(Objects.equals(idOf(raw.get(match)), publisher.getId())
-                && (!sameTypes || sameTypes(raw.get(match), publisher)))) {
+                && preference.test(raw.get(match), publisher))) {
             match++;
         }
         return match;
@@ -89,11 +109,47 @@ public final class PublisherEntryCheck {
 
     private static boolean sameTypes(Object entry, Publisher publisher) {
         List<String> bound = publisher.getTypes() == null ? List.of() : publisher.getTypes();
-        Object types = entry instanceof Map<?, ?> map ? map.get(TYPES_KEY) : null;
-        List<String> configured = types instanceof Collection<?> collection
-                ? collection.stream().map(String::valueOf).toList()
-                : List.of();
-        return configured.equals(bound);
+        return typesOf(entry).equals(bound);
+    }
+
+    // a converted value must equal the bound one; a value the conversion rejected never does
+    private static boolean policyAgrees(Object entry, @Nullable OnParticipantRemoved policy) {
+        OnParticipantRemoved bound = policy == null ? new OnParticipantRemoved() : policy;
+        if (!hasPolicyKey(entry)) {
+            return isDefault(bound);
+        }
+        Map<String, Object> configured = policyScalars(entry);
+        RemovalMode mode = bound.getMode() == null ? RemovalMode.REPORT : bound.getMode();
+        return agrees(configured.get(MODE_FIELD), mode.name())
+                && agrees(configured.get(MAX_REMOVALS_FIELD), String.valueOf(bound.getMaxRemovalsPerRun()))
+                && agrees(configured.get(MAX_ADOPTIONS_FIELD), String.valueOf(bound.getMaxAdoptionsPerRun()))
+                && agrees(configured.get(ADOPT_FIELD), String.valueOf(bound.isAdoptUnattributed()))
+                && agrees(configured.get(REGISTRY_URL_FIELD), bound.getRegistryUrl());
+    }
+
+    private static boolean agrees(@Nullable Object configured, @Nullable String bound) {
+        return configured == null || configured.toString().trim().equalsIgnoreCase(String.valueOf(bound));
+    }
+
+    // scalar policy values keyed by their normalised name, from a nested policy map or flattened dotted keys
+    private static Map<String, Object> policyScalars(Object entry) {
+        Map<String, Object> scalars = new HashMap<>();
+        if (!(entry instanceof Map<?, ?> map)) {
+            return scalars;
+        }
+        map.forEach((key, value) -> {
+            String name = String.valueOf(key);
+            if (isPolicyKey(name) && value instanceof Map<?, ?> nested) {
+                nested.forEach((field, fieldValue) -> scalars.put(normalised(String.valueOf(field)), fieldValue));
+            } else if (name.startsWith(POLICY_KEY + ".") || name.startsWith(POLICY_KEY_CAMEL_CASE + ".")) {
+                scalars.put(normalised(name.substring(name.indexOf('.') + 1)), value);
+            }
+        });
+        return scalars;
+    }
+
+    private static String normalised(String key) {
+        return key.replace("-", "").toLowerCase(Locale.ROOT);
     }
 
     private static void checkDropped(List<?> raw, int[] rawIndexOf, List<Finding> findings) {
@@ -156,22 +212,31 @@ public final class PublisherEntryCheck {
     }
 
     private static boolean concernsRemovals(@Nullable Object entry) {
-        if (!(entry instanceof Map<?, ?> map)) {
-            return false;
-        }
+        return hasPolicyKey(entry) || typesOf(entry).contains(PARTICIPANT_REMOVED_TYPE);
+    }
+
+    private static boolean hasPolicyKey(@Nullable Object entry) {
         // flattened properties (publishers[0].on-participant-removed.mode) keep the dotted key
-        boolean policy = map.keySet().stream()
+        return entry instanceof Map<?, ?> map && map.keySet().stream()
                 .map(String::valueOf)
-                .anyMatch(key -> key.equals(POLICY_KEY) || key.equals(POLICY_KEY_CAMEL_CASE)
-                        || key.startsWith(POLICY_KEY + ".") || key.startsWith(POLICY_KEY_CAMEL_CASE + "."));
-        if (policy) {
-            return true;
-        }
-        Object types = map.get(TYPES_KEY);
+                .anyMatch(key -> isPolicyKey(key) || key.startsWith(POLICY_KEY + ".")
+                        || key.startsWith(POLICY_KEY_CAMEL_CASE + "."));
+    }
+
+    private static boolean isPolicyKey(String key) {
+        return key.equals(POLICY_KEY) || key.equals(POLICY_KEY_CAMEL_CASE);
+    }
+
+    // a list, or a comma-separated string as the binding splits it
+    private static List<String> typesOf(@Nullable Object entry) {
+        Object types = entry instanceof Map<?, ?> map ? map.get(TYPES_KEY) : null;
         if (types instanceof Collection<?> collection) {
-            return collection.stream().anyMatch(type -> type != null && PARTICIPANT_REMOVED_TYPE.equals(type.toString().trim()));
+            return collection.stream().filter(Objects::nonNull).map(type -> type.toString().trim()).toList();
         }
-        return types != null && types.toString().contains(PARTICIPANT_REMOVED_TYPE);
+        if (types == null || types.toString().isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(types.toString().split(LIST_SEPARATOR)).map(String::trim).toList();
     }
 
     @Nullable

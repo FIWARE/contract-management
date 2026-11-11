@@ -706,10 +706,17 @@ same holds after a refresh that switches to a writing mode while the TIL is too 
 **Upgrade impact.** Deployments whose publishers already list participant.removed in `types` activate the handling with this
 release, in `report` mode: it only reads, degrades instead of failing on a too-old TIL, and turns the health `DEGRADED`, never
 `DOWN`. Startup fails only for new configuration (a writing mode, an override or adoption that the TIL is too old for, or that
-lacks `registry-url`), with one exception: such a deployment that runs the management endpoints on the server port, or leaves
-`endpoints.all.port` unset, now fails startup in the management-port check, also in `report` mode, because
-`GET /participants-removed` would be public. Set a separate cluster-internal `endpoints.all.port`, or disable the report with
-`endpoints.participants-removed.enabled: false` (or all management endpoints with `endpoints.all.enabled: false`).
+lacks `registry-url`), with two exceptions:
+
+- Such a deployment that runs the management endpoints on the server port, or leaves `endpoints.all.port` unset, now fails
+  startup in the management-port check, also in `report` mode, because `GET /participants-removed` would be public. Set a
+  separate cluster-internal `endpoints.all.port`, or disable the report with `endpoints.participants-removed.enabled: false`
+  (or all management endpoints with `endpoints.all.enabled: false`).
+- Any deployment with the listener enabled now fails startup for an existing publisher entry that lists participant.removed in
+  `types` (or carries `on-participant-removed`) but has a value that does not convert, e.g. a misspelt field value. Such an
+  entry was already dropped before, so the publisher was silently unauthorized for all its event types; the error names
+  `dataspace.events.publishers[<index>]`. Fix the value. An entry without participant.removed that fails the same way only
+  logs a WARN.
 
 #### Changing the configuration without a restart
 
