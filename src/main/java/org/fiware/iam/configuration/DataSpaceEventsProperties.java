@@ -153,6 +153,13 @@ public class DataSpaceEventsProperties {
     }
 
     /**
+     * True if participant.removed is handled: the listener is enabled and some publisher may publish it.
+     */
+    public boolean participantRemovedEnabled() {
+        return listener.isEnabled() && !removalPublishers().isEmpty();
+    }
+
+    /**
      * The mode the publisher's removal of the DID gets. Empty if the DID is on any removal publisher's keep list or is the
      * own id. A writing mode of a publisher without registry-url is clamped to REPORT.
      */
@@ -866,8 +873,7 @@ public class DataSpaceEventsProperties {
 
         @Override
         public boolean matches(ConditionContext context) {
-            DataSpaceEventsProperties properties = context.getBean(DataSpaceEventsProperties.class);
-            return properties.getListener().isEnabled() && !properties.removalPublishers().isEmpty();
+            return context.getBean(DataSpaceEventsProperties.class).participantRemovedEnabled();
         }
     }
 }

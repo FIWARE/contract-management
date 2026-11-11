@@ -330,7 +330,7 @@ class TrustedIssuersListAdapterTest {
                 Arguments.of("unattributed only", 2, List.of(), false, 0, 0, 2, true, false),
                 Arguments.of("unattributed next to grants", 4, List.of(membership(PUBLISHER, 1), orderGrant(ORDER_ID, 1)),
                         true, 0, 1, 2, false, false),
-                Arguments.of("empty issuer", 0, List.of(), false, 0, 0, 0, false, false));
+                Arguments.of("empty issuer", 0, List.of(), false, 0, 0, 0, false, true));
     }
 
     @Test

@@ -216,8 +216,12 @@ endpoints:
     sensitive: false
   # POST :9090/events publishes an event to the subscribers (publisher only). Not authenticated either; startup fails
   # unless endpoints.all.port is set and differs from micronaut.server.port.
+  # No `enabled: true` here or below: an own flag would beat endpoints.all.enabled=false.
   events:
-    enabled: true
+    sensitive: false
+  # GET :9090/participants-removed reports the handling of participant.removed: what each removed participant still
+  # holds at the trusted-issuers-list. Not authenticated either, so the same port check applies.
+  participants-removed:
     sensitive: false
 notification:
   host: contract-management
