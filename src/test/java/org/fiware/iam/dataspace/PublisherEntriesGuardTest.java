@@ -80,6 +80,13 @@ class PublisherEntriesGuardTest {
                 Arguments.of("repeated removal publisher with different policies",
                         List.of(anchor(ANCHOR, Map.of()), anchor(ANCHOR, Map.of("keep", List.of(PEER)))),
                         "publishers[0] and dataspace.events.publishers[1] both publish participant removals as " + ANCHOR),
+                Arguments.of("types as one comma-separated string",
+                        List.of(Map.of("id", ANCHOR, "origin", "cm.anchor.org",
+                                "types", PEER_TYPE + "," + PARTICIPANT_REMOVED_TYPE)),
+                        "publishers[0].types (id " + ANCHOR + ") is the single value"),
+                Arguments.of("keep as one comma-separated string",
+                        List.of(peer(Map.of()), anchor(ANCHOR, Map.of("keep", PEER + "," + OTHER_ANCHOR))),
+                        "publishers[1].on-participant-removed.keep (id " + ANCHOR + ") is the single value"),
                 Arguments.of("misspelt policy key of a removal publisher",
                         List.of(peer(Map.of()), anchor(ANCHOR, Map.of("mod", "dataspace"))),
                         "publishers[1].on-participant-removed.mod (id " + ANCHOR + ") is not an on-participant-removed setting"));

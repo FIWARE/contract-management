@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -25,8 +26,8 @@ import static org.fiware.iam.configuration.DataSpaceEventsProperties.PARTICIPANT
 
 /**
  * Finds publisher entries whose participant.removed handling differs from what the configuration reads like: entries
- * dropped by a failed conversion, unknown keys the binding ignores, policies ignored for lack of the type, and
- * conflicting policies of one repeated id.
+ * dropped by a failed conversion, unknown keys the binding ignores, comma-separated strings the binding does not split,
+ * policies ignored for lack of the type, and conflicting policies of one repeated id.
  * Shared by the start-up guard and the sweep, which re-checks after a refresh.
  */
 public final class PublisherEntryCheck {
@@ -36,7 +37,11 @@ public final class PublisherEntryCheck {
     private static final String POLICY_FIELD = "onParticipantRemoved";
     static final String ID_KEY = "id";
     static final String TYPES_KEY = "types";
+    // the binding keeps a string as one list element; neither an event type nor a DID contains one
     private static final String LIST_SEPARATOR = ",";
+    // a misspelt policy key still names the participant, e.g. on-participant-remove or participant-removed
+    private static final String POLICY_KEY_STEM = "participant";
+    private static final String NON_LETTERS = "[^a-z]";
     private static final String MODE_FIELD = "mode";
     private static final String MAX_REMOVALS_FIELD = "maxRemovalsPerRun";
     private static final String MAX_ADOPTIONS_FIELD = "maxAdoptionsPerRun";
@@ -53,6 +58,8 @@ public final class PublisherEntryCheck {
     // the binding accepts a key whose camel-case form is the field name and silently ignores any other key
     private static final Set<String> PUBLISHER_FIELDS = fieldNames(Publisher.class);
     private static final Set<String> POLICY_FIELDS = fieldNames(OnParticipantRemoved.class);
+    // policy fields too generic to mark an unknown map as a misspelt policy on their own
+    private static final Set<String> GENERIC_POLICY_FIELDS = Set.of(MODE_FIELD);
     // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
     // between entries repeating an id, the one whose types and policy values agree with the bound entry wins
     private static final List<BiPredicate<Object, Publisher>> PREFERENCES = List.of(
@@ -86,6 +93,7 @@ public final class PublisherEntryCheck {
         int[] matched = align(raw, publishers);
         checkDropped(raw, publishers, matched, findings);
         checkUnknownKeys(raw, findings);
+        checkCommaSeparated(raw, findings);
         int[] rawIndexOf = keyIndices(matched);
         checkInertPolicies(publishers, rawIndexOf, findings);
         checkRepeatedIds(publishers, rawIndexOf, findings);
@@ -303,13 +311,65 @@ public final class PublisherEntryCheck {
         }
     }
 
-    // a misspelt policy key: a map, or a flattened key, setting policy fields
+    // a misspelt policy key: a map, or a flattened key, setting policy fields, named like the policy or setting a
+    // field specific to it
     private static boolean holdsPolicy(String key, @Nullable Object value) {
-        if (value instanceof Map<?, ?> nested) {
-            return nested.keySet().stream().anyMatch(field -> POLICY_FIELDS.contains(fieldOf(String.valueOf(field))));
-        }
         int separator = key.indexOf(KEY_PATH_SEPARATOR);
-        return separator >= 0 && POLICY_FIELDS.contains(fieldOf(key.substring(separator + 1)));
+        List<String> fields;
+        if (value instanceof Map<?, ?> nested) {
+            fields = nested.keySet().stream().map(field -> fieldOf(String.valueOf(field))).toList();
+        } else if (separator >= 0) {
+            fields = List.of(fieldOf(key.substring(separator + 1)));
+        } else {
+            return false;
+        }
+        String name = separator >= 0 ? key.substring(0, separator) : key;
+        boolean namedLikePolicy = name.toLowerCase(Locale.ROOT).replaceAll(NON_LETTERS, "").contains(POLICY_KEY_STEM);
+        return fields.stream().anyMatch(field -> POLICY_FIELDS.contains(field)
+                && (namedLikePolicy || !GENERIC_POLICY_FIELDS.contains(field)));
+    }
+
+    // types, keep and override ids given as one comma-separated string bind as a single value, so the entry is silently
+    // no removal publisher, or the keep list or override matches no identifier
+    private static void checkCommaSeparated(List<?> raw, List<Finding> findings) {
+        for (int index = 0; index < raw.size(); index++) {
+            if (!(raw.get(index) instanceof Map<?, ?> entry)) {
+                continue;
+            }
+            String prefix = "%s[%s]".formatted(PUBLISHERS_KEY, index);
+            List<String> types = commaSeparated(entry.get(TYPES_KEY));
+            boolean removal = typesOf(entry).contains(PARTICIPANT_REMOVED_TYPE) || types.stream()
+                    .anyMatch(value -> Arrays.stream(value.split(LIST_SEPARATOR)).map(String::trim)
+                            .anyMatch(PARTICIPANT_REMOVED_TYPE::equals));
+            Severity severity = removal ? Severity.FATAL : Severity.WARN;
+            Map<String, Object> values = new LinkedHashMap<>();
+            values.put(prefix + KEY_PATH_SEPARATOR + TYPES_KEY, entry.get(TYPES_KEY));
+            policyEntries(entry).forEach((key, value) -> {
+                String field = fieldOf(key);
+                String policyKey = prefix + KEY_PATH_SEPARATOR + POLICY_KEY + KEY_PATH_SEPARATOR + key;
+                if (field.equals(KEEP_FIELD) || (field.equals(OVERRIDES_FIELD) && key.endsWith(KEY_PATH_SEPARATOR + OVERRIDE_ID_FIELD))) {
+                    values.put(policyKey, value);
+                } else if (field.equals(OVERRIDES_FIELD) && value instanceof List<?> overrides) {
+                    for (int override = 0; override < overrides.size(); override++) {
+                        if (overrides.get(override) instanceof Map<?, ?> modeOverride) {
+                            values.put("%s[%s].%s".formatted(policyKey, override, OVERRIDE_ID_FIELD),
+                                    modeOverride.get(OVERRIDE_ID_FIELD));
+                        }
+                    }
+                }
+            });
+            values.forEach((key, value) -> commaSeparated(value).forEach(string -> findings.add(new Finding(severity,
+                    ("%s (id %s) is the single value \"%s\": a comma-separated string is not split into a list, so it "
+                            + "matches nothing. Give one list item per value.").formatted(key, idOf(entry), string)))));
+        }
+    }
+
+    // the strings of a value, or of its elements, that contain a list separator
+    private static List<String> commaSeparated(@Nullable Object value) {
+        Collection<?> values = value instanceof Collection<?> collection ? collection
+                : value == null ? List.of() : List.of(value);
+        return values.stream().filter(element -> element instanceof CharSequence)
+                .map(Object::toString).filter(string -> string.contains(LIST_SEPARATOR)).toList();
     }
 
     // the field a possibly flattened key (overrides[0].mode) sets
@@ -384,7 +444,7 @@ public final class PublisherEntryCheck {
         return asStrings(entry instanceof Map<?, ?> map ? map.get(TYPES_KEY) : null);
     }
 
-    // a list, or a comma-separated string as the binding splits it
+    // a list, or a single string as the binding reads it: one element, not split at commas
     private static List<String> asStrings(@Nullable Object values) {
         if (values instanceof Collection<?> collection) {
             return collection.stream().filter(Objects::nonNull).map(value -> value.toString().trim()).toList();
@@ -392,7 +452,7 @@ public final class PublisherEntryCheck {
         if (values == null || values.toString().isBlank()) {
             return List.of();
         }
-        return Arrays.stream(values.toString().split(LIST_SEPARATOR)).map(String::trim).toList();
+        return List.of(values.toString().trim());
     }
 
     @Nullable

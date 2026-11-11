@@ -592,7 +592,14 @@ participant.removed in `types`, naming `dataspace.events.publishers[<index>].on-
 entries it is a WARN. An unknown key directly on a publisher entry is a WARN only, so existing deployments keep starting,
 except on an entry listing participant.removed when the key holds policy fields (e.g. `on-participant-remove: {keep: [...]}`):
 the whole policy would be lost, a `keep` list included, so another publisher in `full` could delete an identifier the
-operator meant to protect. That fails startup too.
+operator meant to protect. That fails startup too. Such a key counts as a misspelt policy when it names the participant
+(e.g. `participant-removed`) or sets a policy-specific field (`keep`, `overrides`, `registry-url`, ...); an unrelated map
+that only has a `mode` key stays a WARN.
+
+**Lists.** `types`, `keep` and override `id`s are YAML lists. A comma-separated string is not split: `types: "a,
+org.fiware.dataspace.participant.removed"` binds as one type, so the entry is no removal publisher, and
+`keep: "did:a,did:b"` protects neither identifier. Such a string fails startup for an entry listing participant.removed
+(also inside the string), naming the key; on other entries it is a WARN.
 After a refresh the sweep logs these findings like the ones above.
 
 Startup also fails, naming the key, for an override without `id` or `mode`, a `registry-url` that is not an absolute

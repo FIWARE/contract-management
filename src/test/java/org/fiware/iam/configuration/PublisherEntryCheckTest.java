@@ -26,6 +26,8 @@ class PublisherEntryCheckTest {
     private static final String KEPT = "did:web:kept.org";
     private static final int MAX_REMOVALS = 3;
     private static final String REGISTRY_URL = "http://registry.anchor.org";
+    private static final String COMMA_TYPES = PEER_TYPE + ", " + PARTICIPANT_REMOVED_TYPE;
+    private static final String COMMA_DIDS = KEPT + "," + PEER;
 
     static Stream<Arguments> entries() {
         return Stream.of(
@@ -61,12 +63,13 @@ class PublisherEntryCheckTest {
                                         "on-participant-removed.max-removals-per-run", MAX_REMOVALS)),
                         List.of(capped(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE))),
                         List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
-                Arguments.of("first of a repeated id with comma-separated types dropped",
+                Arguments.of("first of a repeated id with string types dropped, a comma string binds as one type",
                         List.of(Map.of("id", ANCHOR, "types", PARTICIPANT_REMOVED_TYPE, "on-participant-removed",
                                         Map.of("mode", "dataspce")),
-                                Map.of("id", ANCHOR, "types", PEER_TYPE + ", " + PARTICIPANT_REMOVED_TYPE)),
-                        List.of(publisher(ANCHOR, PEER_TYPE, PARTICIPANT_REMOVED_TYPE)),
-                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                                Map.of("id", ANCHOR, "types", COMMA_TYPES)),
+                        List.of(publisher(ANCHOR, COMMA_TYPES)),
+                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)),
+                                new Finding(Severity.FATAL, commaSeparated("[1].types", ANCHOR, COMMA_TYPES)))),
                 Arguments.of("first of a repeated id dropped, told apart by an override mode",
                         List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
                                         Map.of("overrides", List.of(Map.of("id", KEPT, "mode", "ful")))),
@@ -152,6 +155,16 @@ class PublisherEntryCheckTest {
                 Arguments.of("misspelt policy of a peer entry",
                         Map.of("id", PEER, "types", List.of(PEER_TYPE), "on-participant-remove", Map.of("mode", "full")),
                         List.of(new Finding(Severity.WARN, unknownPublisherKey("on-participant-remove", PEER)))),
+                Arguments.of("misspelt policy key named like the policy setting only the mode",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "participant-removed", Map.of("mode", "full")),
+                        List.of(new Finding(Severity.FATAL, misspeltPolicy("participant-removed", ANCHOR)))),
+                Arguments.of("unrelated map with a generic mode key",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "labels", Map.of("mode", "prod")),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("labels", ANCHOR)))),
+                Arguments.of("unrelated flattened key with a generic mode key",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "labels.mode", "prod"),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("labels.mode", ANCHOR)))),
                 Arguments.of("unknown publisher key without policy settings",
                         Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "extra", Map.of("key", "value")),
                         List.of(new Finding(Severity.WARN, unknownPublisherKey("extra", ANCHOR)))),
@@ -162,6 +175,52 @@ class PublisherEntryCheckTest {
                                 Map.of("registryUrl", REGISTRY_URL, "max-adoptions-per-run", MAX_REMOVALS,
                                         "AdoptUnattributed", true, "max-removalsPerRun", MAX_REMOVALS)),
                         List.of()));
+    }
+
+    static Stream<Arguments> commaSeparatedValues() {
+        return Stream.of(
+                Arguments.of("types of a removal publisher as one string",
+                        Map.of("id", ANCHOR, "types", COMMA_TYPES),
+                        List.of(new Finding(Severity.FATAL, commaSeparated("[0].types", ANCHOR, COMMA_TYPES)))),
+                Arguments.of("types of a peer as one string",
+                        Map.of("id", PEER, "types", PEER_TYPE + "," + PEER_TYPE),
+                        List.of(new Finding(Severity.WARN, commaSeparated("[0].types", PEER, PEER_TYPE + "," + PEER_TYPE)))),
+                Arguments.of("keep as one string",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-removed", Map.of("keep", COMMA_DIDS)),
+                        List.of(new Finding(Severity.FATAL, commaSeparated("[0].on-participant-removed.keep", ANCHOR, COMMA_DIDS)))),
+                Arguments.of("flattened keep element as one string",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-removed.keep[0]", COMMA_DIDS),
+                        List.of(new Finding(Severity.FATAL, commaSeparated("[0].on-participant-removed.keep[0]", ANCHOR, COMMA_DIDS)))),
+                Arguments.of("override id as one string",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("overrides", List.of(Map.of("id", COMMA_DIDS, "mode", "full")))),
+                        List.of(new Finding(Severity.FATAL,
+                                commaSeparated("[0].on-participant-removed.overrides[0].id", ANCHOR, COMMA_DIDS)))),
+                Arguments.of("flattened override id as one string",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-removed.overrides[0].id", COMMA_DIDS),
+                        List.of(new Finding(Severity.FATAL,
+                                commaSeparated("[0].on-participant-removed.overrides[0].id", ANCHOR, COMMA_DIDS)))),
+                Arguments.of("keep of a policy without the type as one string",
+                        Map.of("id", PEER, "types", List.of(PEER_TYPE), "on-participant-removed", Map.of("keep", COMMA_DIDS)),
+                        List.of(new Finding(Severity.WARN, commaSeparated("[0].on-participant-removed.keep", PEER, COMMA_DIDS)))),
+                Arguments.of("lists without commas",
+                        Map.of("id", ANCHOR, "types", List.of(PEER_TYPE, PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("keep", List.of(KEPT, PEER), "overrides", List.of(Map.of("id", KEPT, "mode", "full")))),
+                        List.of()));
+    }
+
+    // the bound publisher mirrors the binding, which keeps a string as one element
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("commaSeparatedValues")
+    void findsCommaSeparatedValues(String description, Map<String, Object> entry, List<Finding> expected) {
+        Object types = entry.get("types");
+        Publisher publisher = types instanceof List<?> list
+                ? publisher(idOf(entry), list.stream().map(Object::toString).toArray(String[]::new))
+                : publisher(idOf(entry), types.toString());
+        assertEquals(expected, PublisherEntryCheck.check(List.of(entry), List.of(publisher)));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -187,6 +246,11 @@ class PublisherEntryCheckTest {
         return ("%s[0].%s (id %s) is not a publisher setting and is ignored, but holds %s settings: the whole policy, keep "
                 + "list included, would fall back to its defaults.").formatted(PublisherEntryCheck.PUBLISHERS_KEY, key, id,
                 PublisherEntryCheck.POLICY_KEY);
+    }
+
+    private static String commaSeparated(String key, String id, String value) {
+        return ("%s%s (id %s) is the single value \"%s\": a comma-separated string is not split into a list, so it "
+                + "matches nothing. Give one list item per value.").formatted(PublisherEntryCheck.PUBLISHERS_KEY, key, id, value);
     }
 
     private static String unknownPublisherKey(String key, String id) {
