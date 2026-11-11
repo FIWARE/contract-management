@@ -24,6 +24,10 @@ public enum FailureReason {
 	POLICY_INVALID_ASSIGNEE("policy_invalid_assignee"),
 	PAP_REJECTED_POLICY("pap_rejected_policy"),
 	TIL_REJECTED_ISSUER("til_rejected_issuer"),
+	TIL_READ_FAILED("til_read_failed"),
+	TIL_REVOKE_FAILED("til_revoke_failed"),
+	TIL_CAPABILITY_UNVERIFIED("til_capability_unverified"),
+	TIL_TOO_OLD("til_too_old"),
 	AGREEMENT_FAILED("agreement_failed"),
 	RAINBOW_ERROR("rainbow_error"),
 	TMFORUM_ERROR("tmforum_error"),
@@ -33,7 +37,11 @@ public enum FailureReason {
 	EVENT_SUBSCRIPTION_FAILED("event_subscription_failed"),
 	TIR_ENUMERATION_FAILED("tir_enumeration_failed"),
 	TIR_EMPTY("tir_empty"),
-	TIR_MASS_REMOVAL("tir_mass_removal");
+	TIR_MASS_REMOVAL("tir_mass_removal"),
+	TIR_LOOKUP_FAILED("tir_lookup_failed"),
+	INVALID_EVENT("invalid_event"),
+	PARTICIPANT_REMOVAL_FAILED("participant_removal_failed"),
+	ADOPTION_INCOMPLETE("adoption_incomplete");
 
 	private final String code;
 

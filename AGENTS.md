@@ -40,7 +40,7 @@ src/main/java/org/fiware/iam/
     AuthHandler.java                # General auth filter
   management/                       # Contract management adapter/controller
   pap/                              # Policy administration point
-  til/                              # Trusted issuers list adapter
+  til/                              # TrustedIssuersListAdapter: scope-attributed grants at the trusted-issuers-list (TIL)
   tmforum/                          # TM Forum API integration (orders, catalog, agreements, quotes)
   exception/                        # Custom exception types (ContractManagementException base, FailureReason codes)
   logging/DownstreamError.java      # One-line description of a failure incl. downstream status/body
@@ -107,6 +107,8 @@ mvn test -Dtest=TMForumAdapterTest
   tests drive it with `dataspace/RecordingTaskScheduler`
 - Time in tests: inject `java.time.Clock` (`bean/ClockFactory`), drive it with `dataspace/MutableClock` in tests
 - Metrics: inject `Optional<MeterRegistry>`, fall back to `CompositeMeterRegistry` (see `EventListener`); bounded tag values
+- TIL attribution: order grants = untyped `scope=<order id>`; data-space membership = `scope=<publisher id>`,
+  `scopeType=dataspace-membership`; credentials without scope are unattributed (operator-managed). Spec: `til.api.url` in pom
 - Doc-comment density is low: one-line Javadoc on classes/interfaces and interface methods, Javadoc on configuration
   fields; most implementation methods have none. Match that — do not add `@param`/`@return` blocks
 - Logging: failures are raised as `ContractManagementException` subclasses with a `FailureReason` code and the ids involved,

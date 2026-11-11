@@ -9,7 +9,7 @@ import reactor.core.publisher.Mono;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -41,7 +41,7 @@ final class TestEventFixtures {
 
         private final AtomicInteger started = new AtomicInteger();
         private final AtomicInteger handled = new AtomicInteger();
-        private final AtomicBoolean failNext = new AtomicBoolean();
+        private final AtomicReference<Throwable> failNext = new AtomicReference<>();
         private volatile CompletableFuture<Void> gate = CompletableFuture.completedFuture(null);
 
         @Override
@@ -53,8 +53,9 @@ final class TestEventFixtures {
         public Mono<Void> handleEvent(DataSpaceEventVO event) {
             return Mono.defer(() -> {
                 started.incrementAndGet();
-                if (failNext.getAndSet(false)) {
-                    return Mono.error(new IllegalStateException("Test handler failure."));
+                Throwable failure = failNext.getAndSet(null);
+                if (failure != null) {
+                    return Mono.error(failure);
                 }
                 return Mono.fromFuture(gate, true).doOnSuccess(ignored -> handled.incrementAndGet());
             });
@@ -63,7 +64,7 @@ final class TestEventFixtures {
         void reset() {
             started.set(0);
             handled.set(0);
-            failNext.set(false);
+            failNext.set(null);
             gate = CompletableFuture.completedFuture(null);
         }
 
@@ -73,7 +74,11 @@ final class TestEventFixtures {
         }
 
         void failNext() {
-            failNext.set(true);
+            failNext(new IllegalStateException("Test handler failure."));
+        }
+
+        void failNext(Throwable failure) {
+            failNext.set(failure);
         }
 
         int started() {

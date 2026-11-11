@@ -294,6 +294,12 @@
             <version>${version.org.awaitility}</version>
             <scope>test</scope>
         </dependency>
+        <!-- virtual time for the timeouts of the trusted-issuers-list capability probes -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- InContainerDataSpaceEventsIT patches the CM ConfigMap; the JDK http client avoids a second netty on the classpath -->
         <dependency>
             <groupId>io.fabric8</groupId>

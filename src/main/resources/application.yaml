@@ -31,6 +31,9 @@ micronaut:
     tir-watcher:
       type: scheduled
       core-pool-size: 1
+    participant-reconciler:
+      type: scheduled
+      core-pool-size: 1
 
   http:
     services:
@@ -136,6 +139,33 @@ oid4vp:
 #        # optional overrides of subscriber.client-id / subscriber.scopes
 #        client-id: "contract-management"
 #        scopes: [ "default" ]
+#      # a trust anchor announcing removals; its on-participant-removed policy applies to its events and to the sweep
+#      - id: "did:web:trust-anchor.org"
+#        origin: "cm.trust-anchor.org"
+#        types: [ "org.fiware.dataspace.participant.removed" ]
+#        # only read with participant.removed in types; an invalid value drops the whole entry and fails start-up
+#        on-participant-removed:
+#          # report (default, writes nothing), dataspace, granted or full; writing modes require registry-url
+#          mode: dataspace
+#          # never touched, whichever publisher removes them
+#          keep: [ "did:web:partner.org" ]
+#          # a list, since DIDs cannot be map keys
+#          overrides:
+#            - id: "did:web:special.org"
+#              mode: report
+#          # breaker: a sweep finding more write candidates applies none of them
+#          max-removals-per-run: 5
+#          # requires dataspace-id and this publisher as the only one of participant.removed
+#          adopt-unattributed: false
+#          max-adoptions-per-run: 50
+#          registry-url: "https://tir.trust-anchor.org"
+#    # receiving side of participant.removed: reconciliation sweep per publisher with a registry-url
+#    participant-removed:
+#      page-size: 100
+#      max-pages: 1000
+#      reconcile:
+#        initial-delay: PT1M
+#        interval: PT15M
 #    # sending side: POST /subscriptions, webhook delivery and the internal POST :9090/events
 #    publisher:
 #      enabled: true
@@ -187,8 +217,12 @@ endpoints:
     sensitive: false
   # POST :9090/events publishes an event to the subscribers (publisher only). Not authenticated either; startup fails
   # unless endpoints.all.port is set and differs from micronaut.server.port.
+  # No `enabled: true` here or below: an own flag would beat endpoints.all.enabled=false.
   events:
-    enabled: true
+    sensitive: false
+  # GET :9090/participants-removed reports the handling of participant.removed: what each removed participant still
+  # holds at the trusted-issuers-list. Not authenticated either, so the same port check applies.
+  participants-removed:
     sensitive: false
 notification:
   host: contract-management

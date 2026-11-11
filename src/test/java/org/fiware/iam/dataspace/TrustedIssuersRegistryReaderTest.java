@@ -3,6 +3,7 @@ package org.fiware.iam.dataspace;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
+import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.exceptions.HttpClientException;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
@@ -221,7 +222,7 @@ class TrustedIssuersRegistryReaderTest {
         DataSpaceEventsProperties properties = new DataSpaceEventsProperties();
         properties.getTirWatcher().setPageSize(pageSize);
         properties.getTirWatcher().setMaxPages(maxPages);
-        return new TrustedIssuersRegistryReader(registry.client(), properties);
+        return new TrustedIssuersRegistryReader(registry.client(), mock(HttpClient.class), properties);
     }
 
     private static IssuersResponseVO page(@Nullable Integer total, @Nullable URI next, String... dids) {

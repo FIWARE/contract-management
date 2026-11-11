@@ -34,8 +34,8 @@ import java.util.UUID;
 @Requires(condition = DataSpaceEventsProperties.TirWatcherCondition.class)
 public class TirWatcher {
 
-    // type and data as in §8 of the data space eventing architecture; the CM-3 (#103) handler matches both
-    public static final String PARTICIPANT_REMOVED_TYPE = "org.fiware.dataspace.participant.removed";
+    // data as in §8 of the data space eventing architecture; the CM-3 (#103) handler matches type and data
+    public static final String PARTICIPANT_REMOVED_TYPE = DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE;
     static final String PARTICIPANT_ID_KEY = "participantId";
 
     static final String CYCLES_METRIC = "dataspace.tir.cycles";
