@@ -51,6 +51,7 @@ import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyZeroInteractions;
@@ -90,6 +91,7 @@ class ParticipantReconcilerTest {
     private final ConfigurationRefreshLock refreshLock = new ConfigurationRefreshLock() {
         @Override
         public <T> T exclusively(Supplier<T> work) {
+            int environmentReads = mockingDetails(environment).getInvocations().size();
             T result = super.exclusively(() -> {
                 inRefreshLock = true;
                 try {
@@ -98,8 +100,9 @@ class ParticipantReconcilerTest {
                     inRefreshLock = false;
                 }
             });
-            // the entry findings are read under the lock too; the refresh belongs after the decision
-            if (!(result instanceof List<?>)) {
+            // the entry findings, read under the lock too, are the only work reading the environment; the refresh
+            // belongs after the decision
+            if (mockingDetails(environment).getInvocations().size() == environmentReads) {
                 refreshAfterDecision.run();
             }
             return result;

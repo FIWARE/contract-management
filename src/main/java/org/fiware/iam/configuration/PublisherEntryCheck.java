@@ -1,6 +1,7 @@
 package org.fiware.iam.configuration;
 
 import io.micronaut.core.annotation.Nullable;
+import org.fiware.iam.configuration.DataSpaceEventsProperties.ModeOverride;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemoved;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 
@@ -12,7 +13,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeSet;
 import java.util.function.BiPredicate;
+import java.util.stream.Collectors;
 
 import static org.fiware.iam.configuration.DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE;
 
@@ -34,7 +37,17 @@ public final class PublisherEntryCheck {
     private static final String MAX_ADOPTIONS_FIELD = "maxadoptionsperrun";
     private static final String ADOPT_FIELD = "adoptunattributed";
     private static final String REGISTRY_URL_FIELD = "registryurl";
+    private static final String KEEP_FIELD = "keep";
+    private static final String OVERRIDES_FIELD = "overrides";
+    private static final String OVERRIDE_ID_FIELD = "id";
+    private static final String OVERRIDE_MODE_FIELD = "mode";
     private static final int UNMATCHED = -1;
+    // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
+    // between entries repeating an id, the one whose types and policy values agree with the bound entry wins
+    private static final List<BiPredicate<Object, Publisher>> PREFERENCES = List.of(
+            (entry, publisher) -> sameTypes(entry, publisher) && policyAgrees(entry, publisher.getOnParticipantRemoved()),
+            PublisherEntryCheck::sameTypes,
+            (entry, publisher) -> true);
 
     private PublisherEntryCheck() {
     }
@@ -60,7 +73,7 @@ public final class PublisherEntryCheck {
         List<Finding> findings = new ArrayList<>();
         List<?> raw = rawEntries == null ? List.of() : rawEntries;
         int[] matched = align(raw, publishers);
-        checkDropped(raw, matched, findings);
+        checkDropped(raw, publishers, matched, findings);
         int[] rawIndexOf = keyIndices(matched);
         checkInertPolicies(publishers, rawIndexOf, findings);
         checkRepeatedIds(publishers, rawIndexOf, findings);
@@ -87,18 +100,12 @@ public final class PublisherEntryCheck {
 
     // the raw index of each bound publisher, UNMATCHED where none matches
     private static int[] align(List<?> raw, List<Publisher> publishers) {
-        // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
-        // between entries repeating an id, the one whose types and policy values agree with the bound entry wins
-        List<BiPredicate<Object, Publisher>> preferences = List.of(
-                (entry, publisher) -> sameTypes(entry, publisher) && policyAgrees(entry, publisher.getOnParticipantRemoved()),
-                PublisherEntryCheck::sameTypes,
-                (entry, publisher) -> true);
         int[] rawIndexOf = new int[publishers.size()];
         int next = 0;
         for (int bound = 0; bound < publishers.size(); bound++) {
             Publisher publisher = publishers.get(bound);
             int match = raw.size();
-            for (BiPredicate<Object, Publisher> preference : preferences) {
+            for (BiPredicate<Object, Publisher> preference : PREFERENCES) {
                 match = firstMatch(raw, next, publisher, preference);
                 if (match < raw.size()) {
                     break;
@@ -123,6 +130,18 @@ public final class PublisherEntryCheck {
         return match;
     }
 
+    // the strongest preference an entry meets for a publisher, PREFERENCES.size() for another id
+    private static int preferenceLevel(Object entry, Publisher publisher) {
+        if (!Objects.equals(idOf(entry), publisher.getId())) {
+            return PREFERENCES.size();
+        }
+        int level = 0;
+        while (level < PREFERENCES.size() && !PREFERENCES.get(level).test(entry, publisher)) {
+            level++;
+        }
+        return level;
+    }
+
     private static boolean sameTypes(Object entry, Publisher publisher) {
         List<String> bound = publisher.getTypes() == null ? List.of() : publisher.getTypes();
         return typesOf(entry).equals(bound);
@@ -134,21 +153,43 @@ public final class PublisherEntryCheck {
         if (!hasPolicyKey(entry)) {
             return isDefault(bound);
         }
-        Map<String, Object> configured = policyScalars(entry);
+        Map<String, Object> configured = policyValues(entry);
         RemovalMode mode = bound.getMode() == null ? RemovalMode.REPORT : bound.getMode();
         return agrees(configured.get(MODE_FIELD), mode.name())
                 && agrees(configured.get(MAX_REMOVALS_FIELD), String.valueOf(bound.getMaxRemovalsPerRun()))
                 && agrees(configured.get(MAX_ADOPTIONS_FIELD), String.valueOf(bound.getMaxAdoptionsPerRun()))
                 && agrees(configured.get(ADOPT_FIELD), String.valueOf(bound.isAdoptUnattributed()))
-                && agrees(configured.get(REGISTRY_URL_FIELD), bound.getRegistryUrl());
+                && agrees(configured.get(REGISTRY_URL_FIELD), bound.getRegistryUrl())
+                && (configured.get(KEEP_FIELD) == null || asStrings(configured.get(KEEP_FIELD)).equals(
+                        bound.getKeep() == null ? List.of() : bound.getKeep()))
+                && overridesAgree(configured.get(OVERRIDES_FIELD), bound.getOverrides());
+    }
+
+    private static boolean overridesAgree(@Nullable Object configured, @Nullable List<ModeOverride> bound) {
+        if (configured == null) {
+            return true;
+        }
+        List<ModeOverride> overrides = bound == null ? List.of() : bound;
+        if (!(configured instanceof List<?> list) || list.size() != overrides.size()) {
+            return false;
+        }
+        for (int index = 0; index < list.size(); index++) {
+            ModeOverride override = overrides.get(index);
+            if (!(list.get(index) instanceof Map<?, ?> entry)
+                    || !agrees(entry.get(OVERRIDE_ID_FIELD), override.getId())
+                    || !agrees(entry.get(OVERRIDE_MODE_FIELD), override.getMode() == null ? null : override.getMode().name())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean agrees(@Nullable Object configured, @Nullable String bound) {
         return configured == null || configured.toString().trim().equalsIgnoreCase(String.valueOf(bound));
     }
 
-    // scalar policy values keyed by their normalised name, from a nested policy map or flattened dotted keys
-    private static Map<String, Object> policyScalars(Object entry) {
+    // policy values keyed by their normalised name, from a nested policy map or flattened dotted keys
+    private static Map<String, Object> policyValues(Object entry) {
         Map<String, Object> scalars = new HashMap<>();
         if (!(entry instanceof Map<?, ?> map)) {
             return scalars;
@@ -168,7 +209,7 @@ public final class PublisherEntryCheck {
         return key.replace("-", "").toLowerCase(Locale.ROOT);
     }
 
-    private static void checkDropped(List<?> raw, int[] rawIndexOf, List<Finding> findings) {
+    private static void checkDropped(List<?> raw, List<Publisher> publishers, int[] rawIndexOf, List<Finding> findings) {
         boolean[] matched = new boolean[raw.size()];
         for (int index : rawIndexOf) {
             if (index != UNMATCHED) {
@@ -180,15 +221,33 @@ public final class PublisherEntryCheck {
                 continue;
             }
             Object entry = raw.get(index);
+            String dropped = droppedKeys(raw, publishers, rawIndexOf, index);
             if (concernsRemovals(entry)) {
-                findings.add(new Finding(Severity.FATAL, ("%s[%s] (id %s) has an invalid value and is dropped; an invalid "
+                findings.add(new Finding(Severity.FATAL, ("%s (id %s) has an invalid value and is dropped; an invalid "
                         + "value drops the whole publisher entry, so it would neither be authorized for its event types nor "
-                        + "handle participant removals.").formatted(PUBLISHERS_KEY, index, idOf(entry))));
+                        + "handle participant removals.").formatted(dropped, idOf(entry))));
             } else {
-                findings.add(new Finding(Severity.WARN, ("%s[%s] (id %s) has an invalid value and is dropped; it is not "
-                        + "authorized for any event type.").formatted(PUBLISHERS_KEY, index, idOf(entry))));
+                findings.add(new Finding(Severity.WARN, ("%s (id %s) has an invalid value and is dropped; it is not "
+                        + "authorized for any event type.").formatted(dropped, idOf(entry))));
             }
         }
+    }
+
+    // the key of a dropped entry; when a converted entry of the same id fits its bound publisher no better, the invalid
+    // value cannot be told apart from the valid one, so all of them are named
+    private static String droppedKeys(List<?> raw, List<Publisher> publishers, int[] rawIndexOf, int dropped) {
+        TreeSet<Integer> indices = new TreeSet<>(List.of(dropped));
+        for (int bound = 0; bound < publishers.size(); bound++) {
+            int converted = rawIndexOf[bound];
+            Publisher publisher = publishers.get(bound);
+            if (converted != UNMATCHED && Objects.equals(idOf(raw.get(dropped)), publisher.getId())
+                    && preferenceLevel(raw.get(dropped), publisher) <= preferenceLevel(raw.get(converted), publisher)) {
+                indices.add(converted);
+            }
+        }
+        String keys = indices.stream().map(index -> "%s[%s]".formatted(PUBLISHERS_KEY, index))
+                .collect(Collectors.joining(" or "));
+        return indices.size() == 1 ? keys : "one of " + keys;
     }
 
     private static void checkInertPolicies(List<Publisher> publishers, int[] rawIndexOf, List<Finding> findings) {
@@ -243,16 +302,19 @@ public final class PublisherEntryCheck {
         return key.equals(POLICY_KEY) || key.equals(POLICY_KEY_CAMEL_CASE);
     }
 
-    // a list, or a comma-separated string as the binding splits it
     private static List<String> typesOf(@Nullable Object entry) {
-        Object types = entry instanceof Map<?, ?> map ? map.get(TYPES_KEY) : null;
-        if (types instanceof Collection<?> collection) {
-            return collection.stream().filter(Objects::nonNull).map(type -> type.toString().trim()).toList();
+        return asStrings(entry instanceof Map<?, ?> map ? map.get(TYPES_KEY) : null);
+    }
+
+    // a list, or a comma-separated string as the binding splits it
+    private static List<String> asStrings(@Nullable Object values) {
+        if (values instanceof Collection<?> collection) {
+            return collection.stream().filter(Objects::nonNull).map(value -> value.toString().trim()).toList();
         }
-        if (types == null || types.toString().isBlank()) {
+        if (values == null || values.toString().isBlank()) {
             return List.of();
         }
-        return Arrays.stream(types.toString().split(LIST_SEPARATOR)).map(String::trim).toList();
+        return Arrays.stream(values.toString().split(LIST_SEPARATOR)).map(String::trim).toList();
     }
 
     @Nullable

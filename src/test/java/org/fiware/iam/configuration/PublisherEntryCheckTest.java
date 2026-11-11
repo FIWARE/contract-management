@@ -66,6 +66,19 @@ class PublisherEntryCheckTest {
                                 Map.of("id", ANCHOR, "types", PEER_TYPE + ", " + PARTICIPANT_REMOVED_TYPE)),
                         List.of(publisher(ANCHOR, PEER_TYPE, PARTICIPANT_REMOVED_TYPE)),
                         List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                Arguments.of("first of a repeated id dropped, told apart by an override mode",
+                        List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                        Map.of("overrides", List.of(Map.of("id", KEPT, "mode", "ful")))),
+                                Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                        Map.of("overrides", List.of(Map.of("id", KEPT, "mode", "full"))))),
+                        List.of(overriding(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE))),
+                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                Arguments.of("repeated id differing outside the policy names every plausible entry",
+                        List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "scopes", Map.of("bad", 1)),
+                                Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE))),
+                        List.of(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE)),
+                        List.of(new Finding(Severity.FATAL, dropped("one of %s[0] or %s[1]".formatted(
+                                PublisherEntryCheck.PUBLISHERS_KEY, PublisherEntryCheck.PUBLISHERS_KEY), ANCHOR, true)))),
                 Arguments.of("publisher bound from another source does not hide a dropped entry at its index",
                         List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
                                 Map.of("mode", "dataspce"))),
@@ -99,7 +112,11 @@ class PublisherEntryCheckTest {
     }
 
     private static String dropped(int index, String id, boolean removal) {
-        String start = "%s[%s] (id %s) has an invalid value and is dropped; ".formatted(PublisherEntryCheck.PUBLISHERS_KEY, index, id);
+        return dropped("%s[%s]".formatted(PublisherEntryCheck.PUBLISHERS_KEY, index), id, removal);
+    }
+
+    private static String dropped(String keys, String id, boolean removal) {
+        String start = "%s (id %s) has an invalid value and is dropped; ".formatted(keys, id);
         return removal
                 ? start + "an invalid value drops the whole publisher entry, so it would neither be authorized for its event "
                 + "types nor handle participant removals."
@@ -115,6 +132,14 @@ class PublisherEntryCheckTest {
 
     private static Publisher keeping(Publisher publisher) {
         publisher.getOnParticipantRemoved().setKeep(List.of(KEPT));
+        return publisher;
+    }
+
+    private static Publisher overriding(Publisher publisher) {
+        DataSpaceEventsProperties.ModeOverride override = new DataSpaceEventsProperties.ModeOverride();
+        override.setId(KEPT);
+        override.setMode(RemovalMode.FULL);
+        publisher.getOnParticipantRemoved().setOverrides(List.of(override));
         return publisher;
     }
 
