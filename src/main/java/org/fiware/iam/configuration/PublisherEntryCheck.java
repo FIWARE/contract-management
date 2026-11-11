@@ -34,6 +34,7 @@ public final class PublisherEntryCheck {
     private static final String MAX_ADOPTIONS_FIELD = "maxadoptionsperrun";
     private static final String ADOPT_FIELD = "adoptunattributed";
     private static final String REGISTRY_URL_FIELD = "registryurl";
+    private static final int UNMATCHED = -1;
 
     private PublisherEntryCheck() {
     }
@@ -58,8 +59,9 @@ public final class PublisherEntryCheck {
     public static List<Finding> check(@Nullable List<?> rawEntries, List<Publisher> publishers) {
         List<Finding> findings = new ArrayList<>();
         List<?> raw = rawEntries == null ? List.of() : rawEntries;
-        int[] rawIndexOf = rawIndices(raw, publishers);
-        checkDropped(raw, rawIndexOf, findings);
+        int[] matched = align(raw, publishers);
+        checkDropped(raw, matched, findings);
+        int[] rawIndexOf = keyIndices(matched);
         checkInertPolicies(publishers, rawIndexOf, findings);
         checkRepeatedIds(publishers, rawIndexOf, findings);
         return findings;
@@ -69,7 +71,22 @@ public final class PublisherEntryCheck {
      * Index of each bound publisher in the unconverted entries, i.e. its configuration key; the bound index where none matches.
      */
     public static int[] rawIndices(@Nullable List<?> rawEntries, List<Publisher> publishers) {
-        List<?> raw = rawEntries == null ? List.of() : rawEntries;
+        return keyIndices(align(rawEntries == null ? List.of() : rawEntries, publishers));
+    }
+
+    // a publisher without a raw counterpart, e.g. bound from another source, keeps its bound index for messages
+    private static int[] keyIndices(int[] matched) {
+        int[] keyIndices = matched.clone();
+        for (int bound = 0; bound < keyIndices.length; bound++) {
+            if (keyIndices[bound] == UNMATCHED) {
+                keyIndices[bound] = bound;
+            }
+        }
+        return keyIndices;
+    }
+
+    // the raw index of each bound publisher, UNMATCHED where none matches
+    private static int[] align(List<?> raw, List<Publisher> publishers) {
         // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
         // between entries repeating an id, the one whose types and policy values agree with the bound entry wins
         List<BiPredicate<Object, Publisher>> preferences = List.of(
@@ -88,8 +105,7 @@ public final class PublisherEntryCheck {
                 }
             }
             if (match == raw.size()) {
-                // not from the list, e.g. bound from another source; keep the bound index
-                rawIndexOf[bound] = bound;
+                rawIndexOf[bound] = UNMATCHED;
                 continue;
             }
             rawIndexOf[bound] = match;
@@ -155,7 +171,7 @@ public final class PublisherEntryCheck {
     private static void checkDropped(List<?> raw, int[] rawIndexOf, List<Finding> findings) {
         boolean[] matched = new boolean[raw.size()];
         for (int index : rawIndexOf) {
-            if (index < raw.size()) {
+            if (index != UNMATCHED) {
                 matched[index] = true;
             }
         }

@@ -65,6 +65,11 @@ class PublisherEntryCheckTest {
                                         Map.of("mode", "dataspce")),
                                 Map.of("id", ANCHOR, "types", PEER_TYPE + ", " + PARTICIPANT_REMOVED_TYPE)),
                         List.of(publisher(ANCHOR, PEER_TYPE, PARTICIPANT_REMOVED_TYPE)),
+                        List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))),
+                Arguments.of("publisher bound from another source does not hide a dropped entry at its index",
+                        List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("mode", "dataspce"))),
+                        List.of(publisher(PEER, PARTICIPANT_REMOVED_TYPE)),
                         List.of(new Finding(Severity.FATAL, dropped(0, ANCHOR, true)))));
     }
 
@@ -74,6 +79,9 @@ class PublisherEntryCheckTest {
                         List.of(Map.of("id", PEER, "types", List.of(PEER_TYPE)),
                                 Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE))),
                         List.of(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE)), new int[]{1}),
+                Arguments.of("publisher without an unconverted counterpart keeps its bound index",
+                        List.of(Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE))),
+                        List.of(publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE), publisher(PEER, PEER_TYPE)), new int[]{0, 1}),
                 Arguments.of("no unconverted entries", null,
                         List.of(publisher(PEER, PEER_TYPE), publisher(ANCHOR, PARTICIPANT_REMOVED_TYPE)), new int[]{0, 1}));
     }

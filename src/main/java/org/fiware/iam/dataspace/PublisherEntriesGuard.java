@@ -23,8 +23,11 @@ import java.util.stream.Collectors;
 @Requires(condition = DataSpaceEventsProperties.ListenerCondition.class)
 public class PublisherEntriesGuard {
 
+    private final List<Finding> startupFindings;
+
     public PublisherEntriesGuard(DataSpaceEventsProperties properties, Environment environment) {
         List<Finding> findings = findings(properties, environment);
+        startupFindings = findings;
         findings.stream()
                 .filter(finding -> finding.severity() == Severity.WARN)
                 .forEach(finding -> log.warn(finding.message()));
@@ -35,6 +38,13 @@ public class PublisherEntriesGuard {
         if (!fatal.isEmpty()) {
             throw new ConfigurationException(fatal);
         }
+    }
+
+    /**
+     * The findings logged at start-up, so the sweep logs only those a refresh changes.
+     */
+    public List<Finding> startupFindings() {
+        return startupFindings;
     }
 
     static List<Finding> findings(DataSpaceEventsProperties properties, PropertyResolver resolver) {

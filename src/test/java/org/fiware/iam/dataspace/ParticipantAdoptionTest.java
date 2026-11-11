@@ -86,7 +86,7 @@ class ParticipantAdoptionTest {
             properties, generalProperties, Optional.of(meterRegistry));
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
             removal, new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties,
-            new ConfigurationRefreshLock(), environment, Optional.of(meterRegistry), clock);
+            new ConfigurationRefreshLock(), environment, Optional.empty(), Optional.of(meterRegistry), clock);
 
     private final List<Logger> loggers = List.of((Logger) LoggerFactory.getLogger(ParticipantReconciler.class),
             (Logger) LoggerFactory.getLogger(ParticipantAdoption.class));

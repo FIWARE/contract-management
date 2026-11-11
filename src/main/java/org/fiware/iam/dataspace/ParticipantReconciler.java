@@ -97,14 +97,15 @@ public class ParticipantReconciler {
     // reason of the last skipped run, null while runs are not skipped; only touched by run()
     @Nullable
     private String skipReason;
-    // the publisher entry findings last logged; only touched by run()
-    private List<PublisherEntryCheck.Finding> loggedEntryFindings = List.of();
+    // the publisher entry findings last logged, starting with those the start-up guard logged; only touched by run()
+    private List<PublisherEntryCheck.Finding> loggedEntryFindings;
 
     public ParticipantReconciler(TrustedIssuersListAdapter adapter, TilCapabilities capabilities,
                                  TrustedIssuersRegistryReader registryReader, ParticipantRemoval removal,
                                  ParticipantAdoption adoption, RemovedParticipantsReport report,
                                  DataSpaceEventsProperties properties, GeneralProperties generalProperties,
                                  ConfigurationRefreshLock refreshLock, Environment environment,
+                                 Optional<PublisherEntriesGuard> entriesGuard,
                                  Optional<MeterRegistry> meterRegistry, Clock clock) {
         this.adapter = adapter;
         this.capabilities = capabilities;
@@ -116,6 +117,7 @@ public class ParticipantReconciler {
         this.generalProperties = generalProperties;
         this.refreshLock = refreshLock;
         this.environment = environment;
+        this.loggedEntryFindings = entriesGuard.map(PublisherEntriesGuard::startupFindings).orElse(List.of());
         this.meterRegistry = meterRegistry.orElseGet(CompositeMeterRegistry::new);
         this.clock = clock;
     }
@@ -425,9 +427,11 @@ public class ParticipantReconciler {
         removal.count(publisherId, modeTag, RemovalAction.FAILED);
     }
 
-    // the start-up guard does not run after a refresh, so the findings it would fail on are logged here instead
+    // the start-up guard does not run after a refresh, so the findings it would fail on are logged here instead;
+    // under the lock, so the raw entries and the bound publishers come from the same configuration state
     private void logEntryFindings() {
-        List<PublisherEntryCheck.Finding> findings = PublisherEntriesGuard.findings(properties, environment);
+        List<PublisherEntryCheck.Finding> findings =
+                refreshLock.exclusively(() -> PublisherEntriesGuard.findings(properties, environment));
         if (findings.equals(loggedEntryFindings)) {
             return;
         }
