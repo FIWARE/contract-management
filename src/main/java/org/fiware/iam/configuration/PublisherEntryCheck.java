@@ -373,12 +373,12 @@ public final class PublisherEntryCheck {
                 .map(Object::toString).filter(string -> string.contains(LIST_SEPARATOR)).toList();
     }
 
-    // the field a possibly flattened key (overrides[0].mode) sets
     // the key as configured, up to its first path separator
     private static String stemOf(String key) {
         return key.split(KEY_PATH_SEPARATORS, 2)[0];
     }
 
+    // the field a possibly flattened key (overrides[0].mode) sets
     private static String fieldOf(String key) {
         return boundName(stemOf(key));
     }
