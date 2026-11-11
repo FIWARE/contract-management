@@ -9,19 +9,19 @@ import java.time.ZoneOffset;
 /**
  * Test clock that only moves when told to, so lease expiry can be tested without waiting.
  */
-final class MutableClock extends Clock {
+public final class MutableClock extends Clock {
 
     private volatile Instant now;
 
-    MutableClock(Instant now) {
+    public MutableClock(Instant now) {
         this.now = now;
     }
 
-    void advance(Duration duration) {
+    public void advance(Duration duration) {
         now = now.plus(duration);
     }
 
-    void set(Instant instant) {
+    public void set(Instant instant) {
         now = instant;
     }
 

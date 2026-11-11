@@ -15,6 +15,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.events.api.EventsApi;
 import org.fiware.iam.events.model.DataSpaceEventVO;
+import org.fiware.iam.exception.InvalidEventException;
+import org.fiware.iam.exception.TirLookupException;
+import org.fiware.iam.exception.TrustedIssuersException;
 import org.fiware.iam.logging.DownstreamError;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -41,6 +44,8 @@ public class EventListener implements EventsApi {
     static final String IN_FLIGHT = "in_flight";
     static final String INVALID = "invalid";
     static final String HANDLER_FAILED = "handler_failed";
+    static final String INVALID_EVENT = "invalid_event";
+    static final String DOWNSTREAM_FAILED = "downstream_failed";
     static final Duration RETRY_AFTER = Duration.ofSeconds(5);
 
     private final List<DataSpaceEventHandler> handlers;
@@ -121,14 +126,35 @@ public class EventListener implements EventsApi {
                 .concatMap(handler -> handler.handleEvent(event))
                 .then()
                 .doOnSuccess(ignored -> deduplicator.complete(key))
-                .doOnError(e -> deduplicator.forget(key))
                 .doOnCancel(() -> deduplicator.forget(key))
                 .then(respond(EventDecision.ACCEPT.getStatus(), metricType, EventDecision.ACCEPT.getOutcome()))
-                .onErrorResume(e -> {
-                    log.warn("Data space event {} from {} of type {} could not be handled: {}",
-                            event.getId(), event.getSource(), event.getType(), DownstreamError.reason(e), e);
-                    return respond(HttpStatus.INTERNAL_SERVER_ERROR, metricType, HANDLER_FAILED);
-                });
+                .onErrorResume(e -> failed(key, event, metricType, e));
+    }
+
+    private Mono<HttpResponse<Object>> failed(EventDeduplicator.Key key, DataSpaceEventVO event, String metricType, Throwable e) {
+        if (causedBy(e, InvalidEventException.class)) {
+            // a redelivery of the same event can never succeed, so it is answered as a duplicate
+            deduplicator.complete(key);
+            log.warn("Rejected data space event {} from {} of type {}: {}",
+                    event.getId(), event.getSource(), event.getType(), DownstreamError.reason(e));
+            return respond(HttpStatus.BAD_REQUEST, metricType, INVALID_EVENT);
+        }
+        deduplicator.forget(key);
+        boolean downstream = causedBy(e, TrustedIssuersException.class) || causedBy(e, TirLookupException.class);
+        log.warn("Data space event {} from {} of type {} could not be handled: {}",
+                event.getId(), event.getSource(), event.getType(), DownstreamError.reason(e), e);
+        return downstream
+                ? respond(HttpStatus.BAD_GATEWAY, metricType, DOWNSTREAM_FAILED)
+                : respond(HttpStatus.INTERNAL_SERVER_ERROR, metricType, HANDLER_FAILED);
+    }
+
+    private static boolean causedBy(Throwable e, Class<? extends Throwable> type) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (type.isInstance(cause)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Mono<HttpResponse<Object>> retryLater(String metricType, String outcome) {

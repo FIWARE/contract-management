@@ -38,6 +38,9 @@ paths:
           description: The request is not a structured-mode CloudEvent.
         '500':
           description: The event could not be handled. The publisher may retry.
+        '502':
+          description: A downstream service (the trusted-issuers-list or the publisher's registry) failed while the event
+            was handled. The publisher should retry.
         '503':
           description: An event with the same source and id is still being processed. The publisher should retry later.
           headers:
