@@ -489,6 +489,228 @@ micronaut:
         url: http://trusted-issuers-list:8080
 ```
 
+#### Reacting to participant removals
+
+A participant can act on the `org.fiware.dataspace.participant.removed` events of a trust anchor (see above). The handling is
+active when `listener.enabled` is `true` and at least one entry of `dataspace.events.publishers` lists that type in `types`.
+Each such publisher has an `on-participant-removed` policy. It is applied in two places: to the publisher's events (the
+`subject`, or `data.participantId` when there is no subject, is the removed participant) and in a reconciliation sweep that
+runs per publisher shortly after startup and then on a timer. Nothing is written to the trusted-issuers-list (TIL) unless a
+writing mode is configured: the default `report` only reads and reports.
+
+```yaml
+dataspace:
+  events:
+    dataspace-id: "my-dataspace"
+    listener:
+      enabled: true
+    publishers:
+      - id: "did:web:trust-anchor.org"
+        origin: "cm.trust-anchor.org"
+        types: [ "org.fiware.dataspace.participant.removed" ]
+        on-participant-removed:
+          mode: dataspace
+          keep: [ "did:web:partner.org" ]
+          overrides:
+            - id: "did:web:special.org"
+              mode: report
+          max-removals-per-run: 5
+          adopt-unattributed: false
+          max-adoptions-per-run: 50
+          registry-url: "https://tir.trust-anchor.org"
+    participant-removed:
+      page-size: 100
+      max-pages: 1000
+      reconcile:
+        initial-delay: PT1M
+        interval: PT15M
+```
+
+| Key (`publishers[].on-participant-removed.`) | Default | Meaning |
+|---|---|---|
+| `mode` | `report` | `report`, `dataspace`, `granted` or `full`, see below. Every mode but `report` writes and requires `registry-url`. |
+| `keep` | `[]` | Identifiers never touched, whichever publisher removes them. |
+| `overrides` | `[]` | `{id, mode}` pairs replacing `mode` for one identifier (a list, because DIDs cannot be property-map keys). |
+| `max-removals-per-run` | `5` | Breaker of the sweep, >= 0, see below. |
+| `adopt-unattributed` | `false` | Adoption of unattributed entries, see below. |
+| `max-adoptions-per-run` | `50` | Adoptions per sweep, >= 0; the rest follow in the next sweep. |
+| `registry-url` | | Base URL of the publisher's trusted issuers registry (`GET /v4/issuers`). Needed by the sweep, the stale-event check and adoption. |
+
+`dataspace.events.participant-removed.page-size` (1..100) and `max-pages` (>= 1) bound the listings of the TIL and of the
+registries; `reconcile.initial-delay` and `reconcile.interval` (positive) time the sweep. All of these keys are refreshable.
+
+**Where an entry comes from.** CM tells the origin of what an issuer holds in the TIL by its scope:
+
+* a **membership grant** is `scope=<publisher id>` with `scopeType=dataspace-membership`;
+* an **order grant** is an untyped scope (`scope=<order id>`), as CM writes it for a product order;
+* credentials **without a scope** are **unattributed**, e.g. entries an operator provisioned by hand.
+
+**Modes.** What each mode does with the identifier X that publisher P announces as removed:
+
+| what X holds | `report` | `dataspace` | `granted` | `full` |
+|---|---|---|---|---|
+| P's membership grant | kept | revoked | revoked | issuer deleted |
+| another publisher's membership grant | kept | kept | kept | issuer deleted |
+| order grants | kept | kept | revoked² | issuer deleted |
+| only unattributed credentials | kept | kept¹ | kept¹ | issuer deleted |
+| unattributed credentials next to grants | kept | kept | kept | issuer deleted |
+
+¹ Revoked instead when adoption is allowed (see below) and X comes from an **event**: the publisher's explicit announcement
+attributes an entry holding nothing but unattributed credentials to its data space. Without adoption, unattributed entries
+survive every mode but `full`. Unattributed credentials next to grants are never touched, because the TIL cannot tell
+which of them belong to which grant.
+
+² Only when X is attributed to P **alone**: it holds P's membership grant and no other publisher's. Order grants carry no
+data space, so they are attributed through the entry's memberships. If X also holds P2's membership, its order grants may
+stem from contracts in P2's data space and are kept; if X holds no membership at all, nothing ties them to P and they are
+kept and reported. A later removal by P2 (then the only membership) revokes them.
+
+**Keep and overrides.** An identifier on `keep` is protected against **every** publisher, although `keep` is configured
+under one publisher: P1's `keep` of X stops P2 in `full` from deleting X's issuer entry. To stop only P's removals of X from
+writing while other publishers still act, use an override `{id: X, mode: report}` under P. The own participant id
+(`own-participant-id`, falling back to `general.did`) is never touched either, by events, the sweep or adoption: a `full`
+event about our own removal does not delete our own issuer entry. An event whose `subject` is the own id is answered `202`
+before it reaches the handling (see the checks above) and is not counted; only an event naming the own id in
+`data.participantId` and the sweep count it, as `mode=keep, action=kept`. An identifier on `keep` that also has an override
+gets a WARN at startup: `keep` wins.
+
+**Invalid policy values.** A value that cannot be converted, e.g. `mode: dataspce` or a non-numeric `max-removals-per-run`,
+drops the **whole** publisher entry, which then is not authorized for any event type. For an entry that carries
+`on-participant-removed` or lists participant.removed in `types`, startup fails with a message naming
+`dataspace.events.publishers[<index>]`; for other entries it is a WARN, as before. After a refresh the sweep logs the same
+findings, once per configuration change (ERROR for a dropped removal publisher). `on-participant-removed` takes effect only
+when the entry's `types` include participant.removed; otherwise it gets a WARN and is ignored. A publisher split over several
+entries needs a single policy: repeated removal entries of one id with different policies fail startup (after a refresh, the
+first entry's policy applies).
+
+Startup also fails, naming the key, for an override without `id` or `mode`, a `registry-url` that is not an absolute
+http(s) URL, a value out of its range, a writing mode or writing override without `registry-url` (without it there is no
+sweep, so a failed or dropped removal event is never completed), and an `adopt-unattributed` whose only obstacle is a missing
+`registry-url`. After a refresh, a writing mode without `registry-url` acts as `report` (ERROR once) and out-of-range values
+are clamped.
+
+**Stale events.** An event may arrive late, after X was re-admitted. Before any write, the event path therefore asks P's
+registry (`GET {registry-url}/v4/issuers/{did}`) whether X is listed again. If it is, nothing is written (`action=still_listed`,
+`202`); a `404` lets the cleanup proceed; any other answer is a `502`, so the publisher retries. A registry that lags behind
+the announcement also gives `still_listed`; for an entry that holds P's membership the next sweep completes the cleanup. An
+unattributed-only entry is not completed by the sweep, see the adoption caveat below.
+
+**No empty issuer entries.** An issuer that holds no credential after a `dataspace` or `granted` cleanup would still be listed
+in the TIL's registry view, and a verifier would then accept credentials of that issuer typed only with base types such as
+`VerifiableCredential`. So when a cleanup would leave the entry empty, its last write deletes the issuer instead. The entry is
+read again just before; if anything else appeared meanwhile, only the scope is revoked. An entry found already empty in a
+writing mode is deleted as well. A credential written between that read and the delete is lost (the TIL has no conditional
+delete). The report then shows the mode's revoking action with `held: []`.
+
+**Convergent cleanup.** The TIL has no transactions. All reads come first, so a failed read changes nothing. Writes follow
+with P's membership grant **last**, so an interrupted cleanup still leaves P's membership in place and the next sweep (or a
+retry of the publisher) finds the entry and completes it. Every write is idempotent. When a TIL call fails while an event is
+handled, the listener answers `502 Bad Gateway` (outcome `downstream_failed`) and forgets the event, so the publisher retries
+it.
+
+**Bounded publisher retries; the sweep is the reliable path.** A publisher retries a `502` only for a while: a CM publisher
+makes `delivery.max-attempts` attempts (by default 5, about 15 s) and then drops the event. A TIL outage longer than that loses
+the event, and the sweep completes the cleanup, which is why writing modes require `registry-url`. One loss remains: with
+adoption allowed, an unattributed-only entry that P delisted before the sweep adopted it is removed only by an event; if that
+event is dropped or answered `still_listed`, the entry stays until a later event names it or the operator removes it.
+
+**The sweep.** Every `reconcile.interval` and per publisher with a `registry-url`, CM lists the issuers holding P's membership
+grant in the TIL and the participants in P's registry. Those holding P's membership although P no longer lists them are
+handled with P's policy. The sweep never removes unattributed entries: an unattributed-only entry P does not list cannot be
+told apart from an operator-managed one; only an event, which names the identifier, removes it. A registry listing that is
+incomplete changes nothing.
+
+**Breaker.** If a sweep finds more write candidates (identifiers whose effective mode writes) than `max-removals-per-run`, it
+applies none of them and reports all of them: ERROR and `action=breaker` once when it trips or the candidates change, INFO
+when it clears, and the health stays `DEGRADED` in between. `report`, `keep` and own-id candidates never trip it. Applying the
+first N per run was rejected: a wrongly truncated registry would empty the TIL a few entries at a time. Events are not capped;
+the trust anchor's watcher has its own breaker. `0` holds back every write for the operator.
+
+**Adoption.** With `adopt-unattributed: true`, the sweep attributes entries of P's listed participants that hold nothing
+but unattributed credentials to P's data space: it copies them into a membership grant of P and then removes the unattributed
+originals. Once adopted, such an entry is a normal sweep candidate when P delists it. Adoption is allowed only when
+`dataspace-id` is set, exactly one publisher announces participant.removed, it has `adopt-unattributed: true` and a
+`registry-url`; otherwise it is refused (WARN, `action=adoption_refused`) and nothing is adopted. It assumes that this
+participant belongs to P's data space alone: a participant in several data spaces must not enable it. The event filter does
+not detect a second data space, because events without `dataspaceid` pass. At most `max-adoptions-per-run` entries are
+adopted per sweep. `keep` and the own id are never adopted. The entry is read again before the originals are removed and
+skipped if they changed; a credential added between that read and the removal is still lost (accepted race).
+
+##### Writing membership grants
+
+Contract Management itself writes membership grants only through adoption. Other components (e.g. onboarding, or entries
+provisioned by the data-space-connector chart) that grant a participant membership of a data space must write them as
+`scope=<publisher id>`, exactly the publisher's `id` in `dataspace.events.publishers` (the `source` of its events), with
+`scopeType=dataspace-membership`, one grant per data space:
+
+```shell
+curl -X PUT "http://trusted-issuers-list:8080/issuer/did:web:consumer.org/credential?scope=did:web:trust-anchor.org&scopeType=dataspace-membership" \
+  -H "Content-Type: application/json" \
+  -d '[ { "credentialsType": "MembershipCredential", "claims": [] } ]'
+```
+
+An entry written with an untyped scope is treated as an order grant, one without a scope as unattributed: such entries are
+only reported, never revoked in `dataspace`, and survive every mode but `full`.
+
+**Reporting.** Every decision is visible in three ways:
+
+* a log line `Participant <did> removed by <publisher> (mode <mode>, <trigger>): <action>; still held: ...`;
+* the counter `dsc.dataspace.events.participant.removed` (Prometheus `dsc_dataspace_events_participant_removed_total`) with
+  the tags `publisher` (a configured publisher id), `mode` (`report`, `dataspace`, `granted`, `full`, or `keep` for an
+  identifier on `keep` or the own id) and `action` (`reported`, `kept`, `not_held`, `still_listed`, `revoked_membership`,
+  `revoked_granted`, `deleted_issuer`, `adopted`, `adoption_refused`, `failed`, `breaker`). Events count every time; the sweep
+  counts an identifier only when it is new for the publisher or its mode changed, so a standing drift is not added every
+  interval. The gauge `dsc.dataspace.events.participant.removed.held{publisher}` (Prometheus
+  `dsc_dataspace_events_participant_removed_held`) is that standing drift: identifiers still holding P's membership although
+  P's registry no longer lists them;
+* the read-only management endpoint `GET :9090/participants-removed`, per removal publisher its effective `mode`, the
+  shared `til` state (`supported`, `pending`, `unverified`, `too-old`), `adoption` (`allowed`, `refused`, `off`), `breaker`
+  (`tripped`, `clear`) and the latest outcome per participant, with what it still holds:
+
+```json
+[ {
+  "publisher": "did:web:trust-anchor.org", "mode": "dataspace", "til": "supported", "adoption": "off", "breaker": "clear",
+  "participants": [ {
+    "id": "did:web:gone.org", "trigger": "event", "lastSeen": "2026-11-10T12:00:00Z", "mode": "dataspace",
+    "action": "revoked_membership", "applied": true, "attributable": true, "held": [], "unattributedCount": 0
+  } ]
+} ]
+```
+
+`held`, `attributable` and `unattributedCount` are `null` when the entry was not read (e.g. a `too-old` TIL in `report`).
+`attributable: true` with `held: []` means that nothing is held any more. The endpoint shows which issuers this participant
+trusts under which scopes, so it is served on the cluster-internal management port only; disable it with
+`endpoints.participants-removed.enabled: false`.
+
+The health indicator `dataspace-participant-removed` reports `DEGRADED` while a required TIL capability is `unverified` or
+`too-old` or a breaker is tripped. It never reports `DOWN`, so the liveness and readiness probes are not affected.
+
+**Required trusted-issuers-list version.** The handling needs typed scopes (TIL-1, `scopeType` filter), the
+`GET /issuer/{did}/scopes` endpoint (TIL-2) and, while adoption is allowed, unscoped addressing (TIL-3). The TIL has no version
+endpoint, so CM probes each capability without side effects, each probe bounded by 5 s:
+
+* **too old** for a configured writing mode, writing override or allowed adoption: startup fails, naming the capability, the
+  configuration that needs it and the TIL ticket;
+* **too old** with `report` only: ERROR once, health `DEGRADED`, events are reported without what the participant holds, and
+  no sweep runs;
+* **unreachable** or not decided (`401`, `403`, `5xx`, timeout): startup continues with a WARN, health `DEGRADED`, events are
+  answered `502` (also in `report`, which reads what the participant holds) and sweeps are skipped until a re-probe (at most
+  every 30 s) succeeds. Events dropped meanwhile are completed by the first sweep after that.
+
+One case is not caught at startup: a TIL with TIL-1 but without TIL-2 that is **empty** at startup (a fresh installation)
+offers no issuer to probe `/scopes` with. It counts as `pending`, which does not block, since an empty TIL holds nothing. When
+the first issuer appears, the re-probe finds the TIL too old: ERROR once, health `DEGRADED`, writes blocked and events in
+writing modes answered `502`. After the TIL is upgraded and CM restarted or refreshed, the sweep completes the cleanup. The
+same holds after a refresh that switches to a writing mode while the TIL is too old.
+
+**Upgrade impact.** Deployments whose publishers already list participant.removed in `types` activate the handling with this
+release, in `report` mode: it only reads, degrades instead of failing on a too-old TIL, and turns the health `DEGRADED`, never
+`DOWN`. Startup fails only for new configuration (a writing mode, an override or adoption that the TIL is too old for, or that
+lacks `registry-url`), with one exception: such a deployment that runs the management endpoints on the server port, or leaves
+`endpoints.all.port` unset, now fails startup in the management-port check, also in `report` mode, because
+`GET /participants-removed` would be public. Set a separate cluster-internal `endpoints.all.port`, or disable the report with
+`endpoints.participants-removed.enabled: false` (or all management endpoints with `endpoints.all.enabled: false`).
+
 #### Changing the configuration without a restart
 
 All `dataspace.events.*` values except `listener.enabled`, `listener.watch.enabled`, `publisher.enabled`, `subscriber.enabled`,
@@ -497,7 +719,8 @@ refreshable; these need a restart. All other `publisher.*` values, e.g. the caps
 the next request or delivery attempt (`delivery.queue-size` only to subscriptions that receive their first event afterwards).
 All other `subscriber.*` values and the publishers' `subscriptions-url`, `client-id` and `scopes` are refreshable as well; see
 [Subscribing to publishers](#subscribing-to-publishers) for how the subscriber reacts.
-All other `tir-watcher.*` values apply from the next cycle on.
+All other `tir-watcher.*` values apply from the next cycle on, `participant-removed.*` and the `on-participant-removed`
+policies from the next event or sweep.
 A refresh is triggered by:
 
 * `POST :9090/refresh` reloads the configuration. The management port is not authenticated, keep port 9090 cluster-internal.

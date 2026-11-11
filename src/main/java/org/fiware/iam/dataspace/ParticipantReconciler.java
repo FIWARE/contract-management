@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.context.env.Environment;
 import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +14,7 @@ import org.fiware.iam.configuration.DataSpaceEventsProperties.EffectiveRemoval;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemoved;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.configuration.PublisherEntryCheck;
 import org.fiware.iam.configuration.RemovalMode;
 import org.fiware.iam.exception.AdoptionIncompleteException;
 import org.fiware.iam.logging.DownstreamError;
@@ -72,6 +74,7 @@ public class ParticipantReconciler {
     private final DataSpaceEventsProperties properties;
     private final GeneralProperties generalProperties;
     private final ConfigurationRefreshLock refreshLock;
+    private final Environment environment;
     private final MeterRegistry meterRegistry;
     private final Clock clock;
 
@@ -94,12 +97,15 @@ public class ParticipantReconciler {
     // reason of the last skipped run, null while runs are not skipped; only touched by run()
     @Nullable
     private String skipReason;
+    // the publisher entry findings last logged; only touched by run()
+    private List<PublisherEntryCheck.Finding> loggedEntryFindings = List.of();
 
     public ParticipantReconciler(TrustedIssuersListAdapter adapter, TilCapabilities capabilities,
                                  TrustedIssuersRegistryReader registryReader, ParticipantRemoval removal,
                                  ParticipantAdoption adoption, RemovedParticipantsReport report,
                                  DataSpaceEventsProperties properties, GeneralProperties generalProperties,
-                                 ConfigurationRefreshLock refreshLock, Optional<MeterRegistry> meterRegistry, Clock clock) {
+                                 ConfigurationRefreshLock refreshLock, Environment environment,
+                                 Optional<MeterRegistry> meterRegistry, Clock clock) {
         this.adapter = adapter;
         this.capabilities = capabilities;
         this.registryReader = registryReader;
@@ -109,6 +115,7 @@ public class ParticipantReconciler {
         this.properties = properties;
         this.generalProperties = generalProperties;
         this.refreshLock = refreshLock;
+        this.environment = environment;
         this.meterRegistry = meterRegistry.orElseGet(CompositeMeterRegistry::new);
         this.clock = clock;
     }
@@ -143,6 +150,7 @@ public class ParticipantReconciler {
      * One sweep over all removal publishers; blocks until done. Skipped while a required TIL capability is not supported.
      */
     public void run() {
+        logEntryFindings();
         warnIfAdoptionRefused();
         try {
             capabilities.requireSupported().block();
@@ -415,6 +423,22 @@ public class ParticipantReconciler {
                         + "unattributed credentials; completed in the next run (after a restart, revoked when the participant is removed): {}",
                 did, publisherId, DownstreamError.reason(e), e);
         removal.count(publisherId, modeTag, RemovalAction.FAILED);
+    }
+
+    // the start-up guard does not run after a refresh, so the findings it would fail on are logged here instead
+    private void logEntryFindings() {
+        List<PublisherEntryCheck.Finding> findings = PublisherEntriesGuard.findings(properties, environment);
+        if (findings.equals(loggedEntryFindings)) {
+            return;
+        }
+        loggedEntryFindings = findings;
+        findings.forEach(finding -> {
+            if (finding.severity() == PublisherEntryCheck.Severity.FATAL) {
+                log.error(finding.message());
+            } else {
+                log.warn(finding.message());
+            }
+        });
     }
 
     // configuration only, so it is checked even while runs are skipped: it is the start-up and refresh warning

@@ -1,5 +1,6 @@
 package org.fiware.iam.dataspace;
 
+import io.micronaut.context.env.Environment;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -9,6 +10,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
 import org.fiware.iam.configuration.GeneralProperties;
+import org.fiware.iam.configuration.PublisherEntryCheck;
 import org.fiware.iam.configuration.RemovalMode;
 import org.fiware.iam.exception.FailureReason;
 import org.fiware.iam.exception.TirEnumerationException;
@@ -73,6 +75,7 @@ class ParticipantReconcilerTest {
     private final TilCapabilities capabilities = mock(TilCapabilities.class);
     private final PublisherRegistryLookup registryLookup = mock(PublisherRegistryLookup.class);
     private final TrustedIssuersRegistryReader registryReader = mock(TrustedIssuersRegistryReader.class);
+    private final Environment environment = mock(Environment.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final MutableClock clock = new MutableClock(Instant.EPOCH);
     private final RemovedParticipantsReport report = new RemovedParticipantsReport(clock);
@@ -93,7 +96,7 @@ class ParticipantReconcilerTest {
     };
     private final ParticipantReconciler reconciler = new ParticipantReconciler(adapter, capabilities, registryReader,
             removal, new ParticipantAdoption(adapter, removal, registryLookup), report, properties, generalProperties, refreshLock,
-            Optional.of(meterRegistry), clock);
+            environment, Optional.of(meterRegistry), clock);
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(ParticipantReconciler.class);
     private final ListAppender<ILoggingEvent> logged = new ListAppender<>();
@@ -107,6 +110,8 @@ class ParticipantReconcilerTest {
     void fakes() {
         logged.start();
         logger.addAppender(logged);
+        // an old Mockito answers Optional with null; no raw publisher entries unless a test sets them
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class)).thenReturn(Optional.empty());
         properties.setOwnParticipantId(OWN_ID);
         when(capabilities.requireSupported()).thenReturn(Mono.empty());
         when(registryReader.enumerate(anyString())).thenAnswer(invocation -> REGISTRY_URLS.entrySet().stream()
@@ -630,6 +635,29 @@ class ParticipantReconcilerTest {
         assertEquals(Optional.of(RemovalMode.REPORT), properties.removalMode(P1, X, OWN_ID));
         assertTrue(holdsMembership(X, P1));
         verify(adapter, never()).issuersGrantedBy(anyString(), any());
+    }
+
+    @Test
+    void logsAPublisherEntryDroppedByARefreshOncePerConfigurationChange() {
+        configure(publisher(P1, RemovalMode.REPORT));
+        Map<String, Object> bound = Map.of("id", P1, "types", List.of(DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE));
+        Map<String, Object> dropped = Map.of("id", P2, "types", List.of(DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE),
+                "on-participant-removed", Map.of("mode", "dataspce"));
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class))
+                .thenReturn(Optional.of(List.of(bound, dropped)));
+
+        reconciler.run();
+        reconciler.run();
+
+        assertEquals(1, logs(Level.ERROR).size());
+        assertTrue(logs(Level.ERROR).get(0).getFormattedMessage().contains("publishers[1] (id " + P2 + ")"));
+
+        when(environment.getProperty(PublisherEntryCheck.PUBLISHERS_KEY, List.class))
+                .thenReturn(Optional.of(List.of(dropped, bound)));
+        reconciler.run();
+
+        assertEquals(2, logs(Level.ERROR).size());
+        assertTrue(logs(Level.ERROR).get(1).getFormattedMessage().contains("publishers[0] (id " + P2 + ")"));
     }
 
     private void configure(DataSpaceEventsProperties.Publisher... publishers) {
