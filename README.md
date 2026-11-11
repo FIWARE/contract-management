@@ -584,11 +584,15 @@ when the entry's `types` include participant.removed; otherwise it gets a WARN a
 entries needs a single policy: repeated removal entries of one id with different policies fail startup (after a refresh, the
 first entry's policy applies).
 
-**Unknown keys.** The binding accepts kebab-case and camelCase keys (`registry-url`, `registryUrl`) and silently ignores
-any other key, so a misspelt key such as `mod`, `max-removal-per-run` or `registry_url` leaves the field at its default
-(`report`, no registry). A key under `on-participant-removed` that names no policy field fails startup for an entry
-listing participant.removed in `types`, naming `dataspace.events.publishers[<index>].on-participant-removed.<key>`; on other
-entries it is a WARN. An unknown key directly on a publisher entry is a WARN only, so existing deployments keep starting.
+**Unknown keys.** The binding accepts a key whose camelCase form is the field name, i.e. kebab-case or camelCase
+(`registry-url`, `registryUrl`), and silently ignores any other key, so a misspelt or miscased key such as `mod`,
+`max-removal-per-run`, `maxremovalsperrun`, `registryURL` or `registry_url` leaves the field at its default (`report`, no
+registry). A key under `on-participant-removed` that names no policy field fails startup for an entry listing
+participant.removed in `types`, naming `dataspace.events.publishers[<index>].on-participant-removed.<key>`; on other
+entries it is a WARN. An unknown key directly on a publisher entry is a WARN only, so existing deployments keep starting,
+except on an entry listing participant.removed when the key holds policy fields (e.g. `on-participant-remove: {keep: [...]}`):
+the whole policy would be lost, a `keep` list included, so another publisher in `full` could delete an identifier the
+operator meant to protect. That fails startup too.
 After a refresh the sweep logs these findings like the ones above.
 
 Startup also fails, naming the key, for an override without `id` or `mode`, a `registry-url` that is not an absolute

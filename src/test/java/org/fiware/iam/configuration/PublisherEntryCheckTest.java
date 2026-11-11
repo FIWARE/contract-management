@@ -129,16 +129,38 @@ class PublisherEntryCheckTest {
                 Arguments.of("misspelt policy key of a peer entry",
                         Map.of("id", PEER, "types", List.of(PEER_TYPE), "on-participant-removed", Map.of("mod", "full")),
                         List.of(new Finding(Severity.WARN, unknownPolicyKey("mod", PEER)))),
-                Arguments.of("misspelt publisher keys",
+                Arguments.of("all-lower-case policy key of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("maxremovalsperrun", MAX_REMOVALS)),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("maxremovalsperrun", ANCHOR)))),
+                Arguments.of("upper-case kebab-case policy key of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("REGISTRY-URL", REGISTRY_URL)),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("REGISTRY-URL", ANCHOR)))),
+                Arguments.of("miscased camel-case policy key of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("registryURL", REGISTRY_URL)),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("registryURL", ANCHOR)))),
+                Arguments.of("misspelt policy of a removal entry",
                         Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
-                                "on-participant-remove", Map.of("mode", "full")),
-                        List.of(new Finding(Severity.WARN, unknownPublisherKey("on-participant-remove", ANCHOR)))),
+                                "on-participant-remove", Map.of("keep", List.of(KEPT))),
+                        List.of(new Finding(Severity.FATAL, misspeltPolicy("on-participant-remove", ANCHOR)))),
+                Arguments.of("flattened misspelt policy of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-remove.keep[0]", KEPT),
+                        List.of(new Finding(Severity.FATAL, misspeltPolicy("on-participant-remove.keep[0]", ANCHOR)))),
+                Arguments.of("misspelt policy of a peer entry",
+                        Map.of("id", PEER, "types", List.of(PEER_TYPE), "on-participant-remove", Map.of("mode", "full")),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("on-participant-remove", PEER)))),
+                Arguments.of("unknown publisher key without policy settings",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "extra", Map.of("key", "value")),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("extra", ANCHOR)))),
                 Arguments.of("camel-case, kebab-case and flattened known keys",
                         Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "subscriptionsUrl", REGISTRY_URL,
                                 "client-id", PEER, "onParticipantRemoved.overrides[0].mode", "full",
-                                "onParticipantRemoved.keep[0]", KEPT, "on-participant-removed",
+                                "onParticipantRemoved.keep[0]", KEPT, "On-Participant-Removed",
                                 Map.of("registryUrl", REGISTRY_URL, "max-adoptions-per-run", MAX_REMOVALS,
-                                        "adoptUnattributed", true)),
+                                        "AdoptUnattributed", true, "max-removalsPerRun", MAX_REMOVALS)),
                         List.of()));
     }
 
@@ -159,6 +181,12 @@ class PublisherEntryCheckTest {
     private static String unknownPolicyKey(String key, String id) {
         return "%s[0].%s.%s (id %s) is not an %s setting and is ignored, so its default applies.".formatted(
                 PublisherEntryCheck.PUBLISHERS_KEY, PublisherEntryCheck.POLICY_KEY, key, id, PublisherEntryCheck.POLICY_KEY);
+    }
+
+    private static String misspeltPolicy(String key, String id) {
+        return ("%s[0].%s (id %s) is not a publisher setting and is ignored, but holds %s settings: the whole policy, keep "
+                + "list included, would fall back to its defaults.").formatted(PublisherEntryCheck.PUBLISHERS_KEY, key, id,
+                PublisherEntryCheck.POLICY_KEY);
     }
 
     private static String unknownPublisherKey(String key, String id) {

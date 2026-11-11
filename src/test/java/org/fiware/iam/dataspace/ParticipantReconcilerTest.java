@@ -51,7 +51,6 @@ import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyZeroInteractions;
@@ -87,11 +86,11 @@ class ParticipantReconcilerTest {
     // lets a test land a refresh right after the sweep decided, before any write
     private Runnable refreshAfterDecision = () -> {
     };
+    private int refreshesInjected;
     private boolean inRefreshLock;
     private final ConfigurationRefreshLock refreshLock = new ConfigurationRefreshLock() {
         @Override
         public <T> T exclusively(Supplier<T> work) {
-            int environmentReads = mockingDetails(environment).getInvocations().size();
             T result = super.exclusively(() -> {
                 inRefreshLock = true;
                 try {
@@ -100,9 +99,9 @@ class ParticipantReconcilerTest {
                     inRefreshLock = false;
                 }
             });
-            // the entry findings, read under the lock too, are the only work reading the environment; the refresh
-            // belongs after the decision
-            if (mockingDetails(environment).getInvocations().size() == environmentReads) {
+            // only the sweep's decision section, whatever else runs under the lock
+            if (result instanceof ParticipantReconciler.Split) {
+                refreshesInjected++;
                 refreshAfterDecision.run();
             }
             return result;
@@ -240,6 +239,7 @@ class ParticipantReconcilerTest {
 
         reconciler.run();
 
+        assertEquals(1, refreshesInjected, "the refresh was not injected after the decision");
         verify(adapter, never()).deleteIssuer(anyString());
         assertEquals(membershipKept, holdsMembership(X, P1));
         assertEquals(1, count(P1, expectedMode, expectedAction));

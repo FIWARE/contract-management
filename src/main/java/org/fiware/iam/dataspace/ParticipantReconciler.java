@@ -140,8 +140,9 @@ public class ParticipantReconciler {
                                    List<String> removalPublishers, Map<String, Boolean> askingWithoutRegistryUrl) {
     }
 
-    // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted
-    private record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
+    // the run's decisions, taken from one configuration state; kept candidates have no removal, kept DIDs are never adopted;
+    // package-private so that tests can recognise the decision section
+    record Split(@Nullable String registryUrl, @Nullable String ownId, int cap, RemovalMode publisherMode,
                          Set<String> kept,
                          Map<String, EffectiveRemoval> report, Map<String, EffectiveRemoval> write,
                          Map<String, EffectiveRemoval> adopt, int adoptionCap,

@@ -1,6 +1,7 @@
 package org.fiware.iam.configuration;
 
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.core.naming.NameUtils;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.ModeOverride;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemoved;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
@@ -13,7 +14,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -33,22 +33,24 @@ public final class PublisherEntryCheck {
 
     public static final String PUBLISHERS_KEY = "dataspace.events.publishers";
     public static final String POLICY_KEY = "on-participant-removed";
-    static final String POLICY_KEY_CAMEL_CASE = "onParticipantRemoved";
+    private static final String POLICY_FIELD = "onParticipantRemoved";
     static final String ID_KEY = "id";
     static final String TYPES_KEY = "types";
     private static final String LIST_SEPARATOR = ",";
     private static final String MODE_FIELD = "mode";
-    private static final String MAX_REMOVALS_FIELD = "maxremovalsperrun";
-    private static final String MAX_ADOPTIONS_FIELD = "maxadoptionsperrun";
-    private static final String ADOPT_FIELD = "adoptunattributed";
-    private static final String REGISTRY_URL_FIELD = "registryurl";
+    private static final String MAX_REMOVALS_FIELD = "maxRemovalsPerRun";
+    private static final String MAX_ADOPTIONS_FIELD = "maxAdoptionsPerRun";
+    private static final String ADOPT_FIELD = "adoptUnattributed";
+    private static final String REGISTRY_URL_FIELD = "registryUrl";
     private static final String KEEP_FIELD = "keep";
     private static final String OVERRIDES_FIELD = "overrides";
     private static final String OVERRIDE_ID_FIELD = "id";
     private static final String OVERRIDE_MODE_FIELD = "mode";
     private static final int UNMATCHED = -1;
     private static final String KEY_PATH_SEPARATORS = "[.\\[]";
-    // the binding accepts kebab-case and camelCase names and silently ignores any other key
+    private static final String KEY_PATH_SEPARATOR = ".";
+    private static final String SNAKE_CASE_SEPARATOR = "_";
+    // the binding accepts a key whose camel-case form is the field name and silently ignores any other key
     private static final Set<String> PUBLISHER_FIELDS = fieldNames(Publisher.class);
     private static final Set<String> POLICY_FIELDS = fieldNames(OnParticipantRemoved.class);
     // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
@@ -198,11 +200,11 @@ public final class PublisherEntryCheck {
         return configured == null || configured.toString().trim().equalsIgnoreCase(String.valueOf(bound));
     }
 
-    // policy values keyed by their normalised name
+    // policy values keyed by the field they bind to
     private static Map<String, Object> policyValues(Object entry) {
         Map<String, Object> values = new HashMap<>();
         if (entry instanceof Map<?, ?> map) {
-            policyEntries(map).forEach((key, value) -> values.put(normalised(key), value));
+            policyEntries(map).forEach((key, value) -> values.put(boundName(key), value));
         }
         return values;
     }
@@ -214,15 +216,17 @@ public final class PublisherEntryCheck {
             String name = String.valueOf(key);
             if (isPolicyKey(name) && value instanceof Map<?, ?> nested) {
                 nested.forEach((field, fieldValue) -> values.put(String.valueOf(field), fieldValue));
-            } else if (name.startsWith(POLICY_KEY + ".") || name.startsWith(POLICY_KEY_CAMEL_CASE + ".")) {
-                values.put(name.substring(name.indexOf('.') + 1), value);
+            } else if (isFlattenedPolicyKey(name)) {
+                values.put(name.substring(name.indexOf(KEY_PATH_SEPARATOR) + 1), value);
             }
         });
         return values;
     }
 
-    private static String normalised(String key) {
-        return key.replace("-", "").toLowerCase(Locale.ROOT);
+    // the field a key binds to; Micronaut has already turned snake case in flattened keys into kebab case, while a
+    // nested snake-case key binds nothing
+    private static String boundName(String key) {
+        return key.contains(SNAKE_CASE_SEPARATOR) ? key : NameUtils.camelCase(key);
     }
 
     private static void checkDropped(List<?> raw, List<Publisher> publishers, int[] rawIndexOf, List<Finding> findings) {
@@ -275,13 +279,21 @@ public final class PublisherEntryCheck {
             }
             String prefix = "%s[%s]".formatted(PUBLISHERS_KEY, index);
             String id = idOf(entry);
-            for (Object key : entry.keySet()) {
-                if (!PUBLISHER_FIELDS.contains(fieldOf(String.valueOf(key)))) {
+            boolean removal = typesOf(entry).contains(PARTICIPANT_REMOVED_TYPE);
+            entry.forEach((key, value) -> {
+                if (PUBLISHER_FIELDS.contains(fieldOf(String.valueOf(key)))) {
+                    return;
+                }
+                if (removal && holdsPolicy(String.valueOf(key), value)) {
+                    findings.add(new Finding(Severity.FATAL, ("%s.%s (id %s) is not a publisher setting and is ignored, "
+                            + "but holds %s settings: the whole policy, keep list included, would fall back to its defaults.")
+                            .formatted(prefix, key, id, POLICY_KEY)));
+                } else {
                     findings.add(new Finding(Severity.WARN, "%s.%s (id %s) is not a publisher setting and is ignored."
                             .formatted(prefix, key, id)));
                 }
-            }
-            Severity severity = typesOf(entry).contains(PARTICIPANT_REMOVED_TYPE) ? Severity.FATAL : Severity.WARN;
+            });
+            Severity severity = removal ? Severity.FATAL : Severity.WARN;
             for (String key : policyEntries(entry).keySet()) {
                 if (!POLICY_FIELDS.contains(fieldOf(key))) {
                     findings.add(new Finding(severity, ("%s.%s.%s (id %s) is not an %s setting and is ignored, so its "
@@ -291,16 +303,24 @@ public final class PublisherEntryCheck {
         }
     }
 
-    // the normalised field a possibly flattened key (overrides[0].mode) sets
+    // a misspelt policy key: a map, or a flattened key, setting policy fields
+    private static boolean holdsPolicy(String key, @Nullable Object value) {
+        if (value instanceof Map<?, ?> nested) {
+            return nested.keySet().stream().anyMatch(field -> POLICY_FIELDS.contains(fieldOf(String.valueOf(field))));
+        }
+        int separator = key.indexOf(KEY_PATH_SEPARATOR);
+        return separator >= 0 && POLICY_FIELDS.contains(fieldOf(key.substring(separator + 1)));
+    }
+
+    // the field a possibly flattened key (overrides[0].mode) sets
     private static String fieldOf(String key) {
-        return normalised(key.split(KEY_PATH_SEPARATORS, 2)[0]);
+        return boundName(key.split(KEY_PATH_SEPARATORS, 2)[0]);
     }
 
     private static Set<String> fieldNames(Class<?> type) {
         return Arrays.stream(type.getDeclaredFields())
                 .filter(field -> !Modifier.isStatic(field.getModifiers()) && !field.isSynthetic())
                 .map(Field::getName)
-                .map(PublisherEntryCheck::normalised)
                 .collect(Collectors.toUnmodifiableSet());
     }
 
@@ -348,12 +368,16 @@ public final class PublisherEntryCheck {
         // flattened properties (publishers[0].on-participant-removed.mode) keep the dotted key
         return entry instanceof Map<?, ?> map && map.keySet().stream()
                 .map(String::valueOf)
-                .anyMatch(key -> isPolicyKey(key) || key.startsWith(POLICY_KEY + ".")
-                        || key.startsWith(POLICY_KEY_CAMEL_CASE + "."));
+                .anyMatch(key -> isPolicyKey(key) || isFlattenedPolicyKey(key));
     }
 
     private static boolean isPolicyKey(String key) {
-        return key.equals(POLICY_KEY) || key.equals(POLICY_KEY_CAMEL_CASE);
+        return boundName(key).equals(POLICY_FIELD);
+    }
+
+    private static boolean isFlattenedPolicyKey(String key) {
+        int separator = key.indexOf(KEY_PATH_SEPARATOR);
+        return separator >= 0 && isPolicyKey(key.substring(0, separator));
     }
 
     private static List<String> typesOf(@Nullable Object entry) {
