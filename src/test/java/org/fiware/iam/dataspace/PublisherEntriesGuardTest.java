@@ -72,7 +72,10 @@ class PublisherEntriesGuardTest {
                                 "onParticipantRemoved", Map.of("mode", "dataspce"))), "publishers[0] (id " + ANCHOR + ")"),
                 Arguments.of("repeated removal publisher with different policies",
                         List.of(anchor(ANCHOR, Map.of()), anchor(ANCHOR, Map.of("keep", List.of(PEER)))),
-                        "publishers[0] and dataspace.events.publishers[1] both publish participant removals as " + ANCHOR));
+                        "publishers[0] and dataspace.events.publishers[1] both publish participant removals as " + ANCHOR),
+                Arguments.of("misspelt policy key of a removal publisher",
+                        List.of(peer(Map.of()), anchor(ANCHOR, Map.of("mod", "dataspace"))),
+                        "publishers[1].on-participant-removed.mod (id " + ANCHOR + ") is not an on-participant-removed setting"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -92,6 +95,9 @@ class PublisherEntriesGuardTest {
                 Arguments.of("non-default policy without the type",
                         List.of(anchor(ANCHOR, Map.of()), peer(Map.of(POLICY, Map.of("mode", "full")))),
                         "on-participant-removed of " + PEER + " is ignored"),
+                Arguments.of("unknown publisher key",
+                        List.of(anchor(ANCHOR, Map.of()), peer(Map.of("client_id", PEER))),
+                        "publishers[1].client_id (id " + PEER + ") is not a publisher setting and is ignored"),
                 Arguments.of("default policy without the type",
                         List.of(anchor(ANCHOR, Map.of()), peer(Map.of(POLICY, Map.of("mode", "report")))), null),
                 Arguments.of("repeated removal publisher with identical policies",

@@ -5,14 +5,18 @@ import org.fiware.iam.configuration.DataSpaceEventsProperties.ModeOverride;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.OnParticipantRemoved;
 import org.fiware.iam.configuration.DataSpaceEventsProperties.Publisher;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.BiPredicate;
 import java.util.stream.Collectors;
@@ -21,7 +25,8 @@ import static org.fiware.iam.configuration.DataSpaceEventsProperties.PARTICIPANT
 
 /**
  * Finds publisher entries whose participant.removed handling differs from what the configuration reads like: entries
- * dropped by a failed conversion, policies ignored for lack of the type, and conflicting policies of one repeated id.
+ * dropped by a failed conversion, unknown keys the binding ignores, policies ignored for lack of the type, and
+ * conflicting policies of one repeated id.
  * Shared by the start-up guard and the sweep, which re-checks after a refresh.
  */
 public final class PublisherEntryCheck {
@@ -42,6 +47,10 @@ public final class PublisherEntryCheck {
     private static final String OVERRIDE_ID_FIELD = "id";
     private static final String OVERRIDE_MODE_FIELD = "mode";
     private static final int UNMATCHED = -1;
+    private static final String KEY_PATH_SEPARATORS = "[.\\[]";
+    // the binding accepts kebab-case and camelCase names and silently ignores any other key
+    private static final Set<String> PUBLISHER_FIELDS = fieldNames(Publisher.class);
+    private static final Set<String> POLICY_FIELDS = fieldNames(OnParticipantRemoved.class);
     // the binding keeps the order of the entries and leaves out those it cannot convert, so a greedy match pairs them;
     // between entries repeating an id, the one whose types and policy values agree with the bound entry wins
     private static final List<BiPredicate<Object, Publisher>> PREFERENCES = List.of(
@@ -74,6 +83,7 @@ public final class PublisherEntryCheck {
         List<?> raw = rawEntries == null ? List.of() : rawEntries;
         int[] matched = align(raw, publishers);
         checkDropped(raw, publishers, matched, findings);
+        checkUnknownKeys(raw, findings);
         int[] rawIndexOf = keyIndices(matched);
         checkInertPolicies(publishers, rawIndexOf, findings);
         checkRepeatedIds(publishers, rawIndexOf, findings);
@@ -188,21 +198,27 @@ public final class PublisherEntryCheck {
         return configured == null || configured.toString().trim().equalsIgnoreCase(String.valueOf(bound));
     }
 
-    // policy values keyed by their normalised name, from a nested policy map or flattened dotted keys
+    // policy values keyed by their normalised name
     private static Map<String, Object> policyValues(Object entry) {
-        Map<String, Object> scalars = new HashMap<>();
-        if (!(entry instanceof Map<?, ?> map)) {
-            return scalars;
+        Map<String, Object> values = new HashMap<>();
+        if (entry instanceof Map<?, ?> map) {
+            policyEntries(map).forEach((key, value) -> values.put(normalised(key), value));
         }
-        map.forEach((key, value) -> {
+        return values;
+    }
+
+    // policy values keyed as configured, from a nested policy map or flattened dotted keys
+    private static Map<String, Object> policyEntries(Map<?, ?> entry) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        entry.forEach((key, value) -> {
             String name = String.valueOf(key);
             if (isPolicyKey(name) && value instanceof Map<?, ?> nested) {
-                nested.forEach((field, fieldValue) -> scalars.put(normalised(String.valueOf(field)), fieldValue));
+                nested.forEach((field, fieldValue) -> values.put(String.valueOf(field), fieldValue));
             } else if (name.startsWith(POLICY_KEY + ".") || name.startsWith(POLICY_KEY_CAMEL_CASE + ".")) {
-                scalars.put(normalised(name.substring(name.indexOf('.') + 1)), value);
+                values.put(name.substring(name.indexOf('.') + 1), value);
             }
         });
-        return scalars;
+        return values;
     }
 
     private static String normalised(String key) {
@@ -248,6 +264,44 @@ public final class PublisherEntryCheck {
         String keys = indices.stream().map(index -> "%s[%s]".formatted(PUBLISHERS_KEY, index))
                 .collect(Collectors.joining(" or "));
         return indices.size() == 1 ? keys : "one of " + keys;
+    }
+
+    // a misspelt key binds nothing, so the field keeps its default; inside the policy of a removal entry that would
+    // silently weaken the configured cleanup, elsewhere it keeps today's behaviour
+    private static void checkUnknownKeys(List<?> raw, List<Finding> findings) {
+        for (int index = 0; index < raw.size(); index++) {
+            if (!(raw.get(index) instanceof Map<?, ?> entry)) {
+                continue;
+            }
+            String prefix = "%s[%s]".formatted(PUBLISHERS_KEY, index);
+            String id = idOf(entry);
+            for (Object key : entry.keySet()) {
+                if (!PUBLISHER_FIELDS.contains(fieldOf(String.valueOf(key)))) {
+                    findings.add(new Finding(Severity.WARN, "%s.%s (id %s) is not a publisher setting and is ignored."
+                            .formatted(prefix, key, id)));
+                }
+            }
+            Severity severity = typesOf(entry).contains(PARTICIPANT_REMOVED_TYPE) ? Severity.FATAL : Severity.WARN;
+            for (String key : policyEntries(entry).keySet()) {
+                if (!POLICY_FIELDS.contains(fieldOf(key))) {
+                    findings.add(new Finding(severity, ("%s.%s.%s (id %s) is not an %s setting and is ignored, so its "
+                            + "default applies.").formatted(prefix, POLICY_KEY, key, id, POLICY_KEY)));
+                }
+            }
+        }
+    }
+
+    // the normalised field a possibly flattened key (overrides[0].mode) sets
+    private static String fieldOf(String key) {
+        return normalised(key.split(KEY_PATH_SEPARATORS, 2)[0]);
+    }
+
+    private static Set<String> fieldNames(Class<?> type) {
+        return Arrays.stream(type.getDeclaredFields())
+                .filter(field -> !Modifier.isStatic(field.getModifiers()) && !field.isSynthetic())
+                .map(Field::getName)
+                .map(PublisherEntryCheck::normalised)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private static void checkInertPolicies(List<Publisher> publishers, int[] rawIndexOf, List<Finding> findings) {

@@ -584,6 +584,13 @@ when the entry's `types` include participant.removed; otherwise it gets a WARN a
 entries needs a single policy: repeated removal entries of one id with different policies fail startup (after a refresh, the
 first entry's policy applies).
 
+**Unknown keys.** The binding accepts kebab-case and camelCase keys (`registry-url`, `registryUrl`) and silently ignores
+any other key, so a misspelt key such as `mod`, `max-removal-per-run` or `registry_url` leaves the field at its default
+(`report`, no registry). A key under `on-participant-removed` that names no policy field fails startup for an entry
+listing participant.removed in `types`, naming `dataspace.events.publishers[<index>].on-participant-removed.<key>`; on other
+entries it is a WARN. An unknown key directly on a publisher entry is a WARN only, so existing deployments keep starting.
+After a refresh the sweep logs these findings like the ones above.
+
 Startup also fails, naming the key, for an override without `id` or `mode`, a `registry-url` that is not an absolute
 http(s) URL, a value out of its range, a writing mode or writing override without `registry-url` (without it there is no
 sweep, so a failed or dropped removal event is never completed), and an `adopt-unattributed` whose only obstacle is a missing

@@ -25,6 +25,7 @@ class PublisherEntryCheckTest {
     private static final String PEER_TYPE = "org.fiware.dataspace.example";
     private static final String KEPT = "did:web:kept.org";
     private static final int MAX_REMOVALS = 3;
+    private static final String REGISTRY_URL = "http://registry.anchor.org";
 
     static Stream<Arguments> entries() {
         return Stream.of(
@@ -109,6 +110,60 @@ class PublisherEntryCheckTest {
     @MethodSource("entries")
     void findsDroppedEntries(String description, List<?> raw, List<Publisher> bound, List<Finding> expected) {
         assertEquals(expected, PublisherEntryCheck.check(raw, bound));
+    }
+
+    static Stream<Arguments> unknownKeys() {
+        return Stream.of(
+                Arguments.of("misspelt policy key of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "on-participant-removed",
+                                Map.of("mod", "dataspace")),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("mod", ANCHOR)))),
+                Arguments.of("snake-case policy key of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "onParticipantRemoved",
+                                Map.of("registry_url", REGISTRY_URL)),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("registry_url", ANCHOR)))),
+                Arguments.of("flattened misspelt policy key of a removal entry",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-removed.max-removal-per-run", MAX_REMOVALS),
+                        List.of(new Finding(Severity.FATAL, unknownPolicyKey("max-removal-per-run", ANCHOR)))),
+                Arguments.of("misspelt policy key of a peer entry",
+                        Map.of("id", PEER, "types", List.of(PEER_TYPE), "on-participant-removed", Map.of("mod", "full")),
+                        List.of(new Finding(Severity.WARN, unknownPolicyKey("mod", PEER)))),
+                Arguments.of("misspelt publisher keys",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE),
+                                "on-participant-remove", Map.of("mode", "full")),
+                        List.of(new Finding(Severity.WARN, unknownPublisherKey("on-participant-remove", ANCHOR)))),
+                Arguments.of("camel-case, kebab-case and flattened known keys",
+                        Map.of("id", ANCHOR, "types", List.of(PARTICIPANT_REMOVED_TYPE), "subscriptionsUrl", REGISTRY_URL,
+                                "client-id", PEER, "onParticipantRemoved.overrides[0].mode", "full",
+                                "onParticipantRemoved.keep[0]", KEPT, "on-participant-removed",
+                                Map.of("registryUrl", REGISTRY_URL, "max-adoptions-per-run", MAX_REMOVALS,
+                                        "adoptUnattributed", true)),
+                        List.of()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("unknownKeys")
+    void findsUnknownKeys(String description, Map<String, Object> entry, List<Finding> expected) {
+        assertEquals(expected, PublisherEntryCheck.check(List.of(entry), List.of(publisher(idOf(entry), typeOf(entry)))));
+    }
+
+    private static String idOf(Map<String, Object> entry) {
+        return entry.get("id").toString();
+    }
+
+    private static String typeOf(Map<String, Object> entry) {
+        return ((List<?>) entry.get("types")).get(0).toString();
+    }
+
+    private static String unknownPolicyKey(String key, String id) {
+        return "%s[0].%s.%s (id %s) is not an %s setting and is ignored, so its default applies.".formatted(
+                PublisherEntryCheck.PUBLISHERS_KEY, PublisherEntryCheck.POLICY_KEY, key, id, PublisherEntryCheck.POLICY_KEY);
+    }
+
+    private static String unknownPublisherKey(String key, String id) {
+        return "%s[0].%s (id %s) is not a publisher setting and is ignored.".formatted(PublisherEntryCheck.PUBLISHERS_KEY,
+                key, id);
     }
 
     private static String dropped(int index, String id, boolean removal) {
