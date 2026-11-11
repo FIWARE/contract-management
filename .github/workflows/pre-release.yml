@@ -12,6 +12,12 @@ env:
   REGISTRY: quay.io
   REPOSITORY: fiware
 
+# one run at a time per pull request: opening one with a label fires two events at once, and both
+# would publish the same pre-release
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
 
   # The version from the semver label of the pull request: X.Y.Z-PRE-<number> on a pull request,
@@ -49,19 +55,15 @@ jobs:
           mvn versions:set -DnewVersion=${{ needs.generate-version.outputs.version }}
           mvn clean install deploy -DskipITs -DskipTests -Poci -Dimage.tag=${{ needs.generate-version.outputs.version }} -Dimage.registry="${{ env.REGISTRY }}" -Dimage.repository="${{ env.REPOSITORY }}"
 
+  # Publishes the pre-release, replacing the one of the previous push, see
+  # https://github.com/FIWARE/github-workflows
   git-release:
     needs: ["generate-version","build-and-push"]
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - uses: actions/checkout@v2
-
-      - uses: "marvinpinto/action-automatic-releases@latest"
-        with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: ${{ needs.generate-version.outputs.version }}
-          prerelease: true
-          title: ${{ needs.generate-version.outputs.version }}
-          files: |
-            LICENSE
+    uses: FIWARE/github-workflows/.github/workflows/github-release.yml@v1
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.generate-version.outputs.version }}
+      prerelease: true
+      files: |
+        LICENSE
