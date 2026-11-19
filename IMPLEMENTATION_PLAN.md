@@ -123,17 +123,25 @@ Changes:
     detail `til` (see `ParticipantRemovedHealthIndicator.TIL_DETAIL` and `TilCapability` ids) must contain
     `typed-scopes: supported` and `unscoped: supported`. It must also contain `scopes-endpoint`, which may read
     `pending` while the provider TIL is empty and must read `supported` once the test below has seeded an issuer. Await
-    these values; the probes run asynchronously after startup.
+    these values; the probes run asynchronously after startup. Await `typed-scopes` and `unscoped` = `supported`
+    *before* seeding anything (start of the adoption test), so the sweep is known to run when the TIL is seeded.
+  - Bound every await that depends on the sweep or a removal by one shared timeout derived from
+    `TilCapabilities.PROBE_RETRY_INTERVAL` + the reconcile interval + margin (about 60s with a 5s interval). Reason:
+    `ParticipantReconciler.run` and `ParticipantRemoval` call `requireSupported()`, which fails with
+    `TIL_CAPABILITY_UNVERIFIED` while any required capability is UNVERIFIED. That happens when the provider TIL was not
+    reachable at startup, or after the existing ITs' `restore()` sends a RefreshEvent. An UNVERIFIED capability is
+    re-probed at most once per `PROBE_RETRY_INTERVAL` (30s), so a sweep-interval-only await can time out with the fix in
+    place. This applies to the `typed-scopes`/`unscoped` health await, the adoption await and the removal await below.
   - Bound the `scopes-endpoint` await explicitly. `ParticipantRemovedHealthIndicator` only reports
     `TilCapabilities.state()` and never probes. A PENDING capability is re-probed only when `requireSupported()` /
     `probeRequired()` runs (the sweep, or a removal), and then at most once per `TilCapabilities.PROBE_RETRY_INTERVAL`
     (30s). After the issuer is seeded, await at least `PROBE_RETRY_INTERVAL` + the reconcile interval + margin (with a
-    5s interval, e.g. 60s), and derive the timeout from the constant rather than hard-coding a shorter one; a 10-20s
-    await would be flaky. Do this assertion after the adoption step below has seeded the issuer.
+    5s interval, e.g. 60s; the shared timeout above), rather than hard-coding a shorter one; a 10-20s await would be
+    flaky. Do this assertion after the adoption step below has seeded the issuer.
   - Adoption writes the grant: pick a unique DID per run (e.g. `did:web:member-<uuid>.io`).
     1. Seed it at the provider TIL (`POST localhost:7085/issuer`) with one credential and no `scope` (unattributed).
     2. List it at the registry (`POST localhost:8085/issuer`).
-    3. Await (Awaitility, sweep interval + margin) that `GET localhost:7085/issuer?scope=did:web:anchor.io&scopeType=dataspace-membership`
+    3. Await (Awaitility, the shared timeout above) that `GET localhost:7085/issuer?scope=did:web:anchor.io&scopeType=dataspace-membership`
        lists the DID, and that `GET localhost:7085/issuer/{did}` holds the credential with `scope` = the anchor id
        and `scopeType` = `dataspace-membership`, and no unattributed copy.
   - Removal deletes the grant:
@@ -141,8 +149,8 @@ Changes:
     2. POST a `participant.removed` CloudEvent from the anchor to `EVENTS_URL` (identity header =
        `userinfo("did:web:anchor.io")`, `source` = anchor id, `subject` = the DID, `type` =
        `DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE`, `dataspaceid` = the configured id). Assert `202`.
-    3. Await that the typed list above no longer contains the DID and the entry holds no `dataspace-membership`
-       credential. Either the event or the sweep may have done it; the assertion only checks the outcome.
+    3. Await (the shared timeout above) that the typed list above no longer contains the DID and the entry holds no
+       `dataspace-membership` credential. Either the event or the sweep may have done it; the assertion only checks the outcome.
   - Clean up the DID at both TILs in `@AfterEach`, so reruns and the other ITs sharing the provider TIL are not
     affected. Do not reuse DIDs that other ITs write to `localhost:8085`, because the sweep adopts every listed DID
     whose provider entry is unattributed only.
