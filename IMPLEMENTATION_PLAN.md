@@ -111,8 +111,12 @@ Changes:
     It must be the *only* publisher listing `participant.removed`, otherwise adoption is refused with MULTIPLE_PUBLISHERS.
     Keep `did:web:publisher-a.io` unchanged. `withPublishers(...)` appends to the list, so the existing tests and
     `restore()` keep working.
-  - With the bug, CM must now fail to start: `ParticipantRemovedStartupGuard` throws because `removalWritesConfigured()`
-    and typed-scopes reads TOO_OLD. That makes startup itself a regression check.
+  - With the bug, CM *may* fail to start: `ParticipantRemovedStartupGuard` throws only if the provider TIL already
+    answers when the `@Context` guard runs, so that typed-scopes reads TOO_OLD while `removalWritesConfigured()`. If the
+    TIL is not reachable yet (k3s pod ordering), the probe gives UNVERIFIED, which per the guard's Javadoc only
+    degrades; CM starts and typed-scopes turns `too_old` on a later re-probe, so health goes DEGRADED. The guaranteed
+    regression signal is therefore the health assertion `typed-scopes: supported` below, not startup. Do not write a
+    test that expects a startup failure.
 - Extend `src/test/java/org/fiware/iam/InContainerDataSpaceEventsIT.java` (plain `java.net.http` like the existing
   helpers; add small helpers for the TIL calls and the health read; no new framework):
   - Health: `GET http://localhost:9090/health` reports status `UP`. Its `dataspace-participant-removed` component
@@ -120,6 +124,12 @@ Changes:
     `typed-scopes: supported` and `unscoped: supported`. It must also contain `scopes-endpoint`, which may read
     `pending` while the provider TIL is empty and must read `supported` once the test below has seeded an issuer. Await
     these values; the probes run asynchronously after startup.
+  - Bound the `scopes-endpoint` await explicitly. `ParticipantRemovedHealthIndicator` only reports
+    `TilCapabilities.state()` and never probes. A PENDING capability is re-probed only when `requireSupported()` /
+    `probeRequired()` runs (the sweep, or a removal), and then at most once per `TilCapabilities.PROBE_RETRY_INTERVAL`
+    (30s). After the issuer is seeded, await at least `PROBE_RETRY_INTERVAL` + the reconcile interval + margin (with a
+    5s interval, e.g. 60s), and derive the timeout from the constant rather than hard-coding a shorter one; a 10-20s
+    await would be flaky. Do this assertion after the adoption step below has seeded the issuer.
   - Adoption writes the grant: pick a unique DID per run (e.g. `did:web:member-<uuid>.io`).
     1. Seed it at the provider TIL (`POST localhost:7085/issuer`) with one credential and no `scope` (unattributed).
     2. List it at the registry (`POST localhost:8085/issuer`).
@@ -142,4 +152,5 @@ Changes:
 Acceptance: against TIL 0.10.3, CM starts with the writing participant-removed configuration. Health is `UP` with
 `typed-scopes` and `unscoped` = `supported`, and `scopes-endpoint` = `supported` once an issuer exists. Adoption
 writes a `scope=did:web:anchor.io&scopeType=dataspace-membership` grant, and the `participant.removed` path deletes it.
-All existing ITs pass. Without Step 1's converter, CM fails to start with this config (typed-scopes TOO_OLD).
+All existing ITs pass. Without Step 1's converter, the health assertion fails (typed-scopes `too_old`, health
+DEGRADED); CM additionally fails to start if the provider TIL already answers when the startup guard runs.
