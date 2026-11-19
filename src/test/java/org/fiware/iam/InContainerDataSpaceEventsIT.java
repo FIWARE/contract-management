@@ -1,11 +1,15 @@
 package org.fiware.iam;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import org.fiware.iam.configuration.DataSpaceEventsProperties;
+import org.fiware.iam.til.TilCapabilities;
+import org.fiware.iam.til.TilCapability;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,13 +30,17 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.StreamSupport;
 
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -40,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The deployment has no gateway in front, so the identity header is set directly, as APISIX would from a verified token.
  * The deployed CM has no event handler, so whether a publisher is configured is observed through the OPTIONS origin grant.
  * The watch is enabled here, so /refresh is only checked for reachability; DataSpaceEventsRefreshTest proves it applies changes.
+ * The anchor publisher adopts and revokes dataspace-membership grants at the provider TIL; the consumer TIL is its registry.
  */
 @EnabledIfSystemProperty(named = "inContainer", matches = "true")
 class InContainerDataSpaceEventsIT {
@@ -59,16 +68,41 @@ class InContainerDataSpaceEventsIT {
     private static final String CONFIGURED_PUBLISHER = "did:web:publisher-a.io";
     private static final Publisher PUBLISHER_B = new Publisher("did:web:publisher-b.io", "events.publisher-b.io");
     private static final Publisher PUBLISHER_C = new Publisher("did:web:publisher-c.io", "events.publisher-c.io");
+    private static final String HEALTH_URL = "http://localhost:9090/health";
+    private static final String PROVIDER_TIL_URL = "http://localhost:7085";
+    // the anchor's registry-url in the ConfigMap, as the host reaches it
+    private static final String REGISTRY_TIL_URL = "http://localhost:8085";
+    private static final String ANCHOR = "did:web:anchor.io";
+    // dataspace.events.dataspace-id of the ConfigMap
+    private static final String DATASPACE_ID = "test-dataspace";
+    private static final String MEMBERSHIP_SCOPE_TYPE = "dataspace-membership";
+    private static final String CREDENTIALS_TYPE = "VerifiableCredential";
+    private static final int TIL_PAGE_SIZE = 100;
+    // ParticipantRemovedHealthIndicator.NAME and TIL_DETAIL
+    private static final String PARTICIPANT_REMOVED_HEALTH = "dataspace-participant-removed";
+    private static final String TIL_HEALTH_DETAIL = "til";
+    private static final String STATUS_UP = "UP";
+    private static final String SUPPORTED = TilCapability.State.SUPPORTED.name().toLowerCase(Locale.ROOT);
+    private static final String PENDING = TilCapability.State.PENDING.name().toLowerCase(Locale.ROOT);
     private static final int HTTP_OK = 200;
+    private static final int HTTP_CREATED = 201;
     private static final int HTTP_ACCEPTED = 202;
     private static final int HTTP_UNAUTHORIZED = 401;
+    private static final int HTTP_NOT_FOUND = 404;
     // kubelet propagates ConfigMap changes after its sync period (1 min) plus the ConfigMap cache TTL
     private static final Duration KUBELET_PROPAGATION = Duration.ofMinutes(3);
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
+    // participant-removed.reconcile.interval of the ConfigMap
+    private static final Duration RECONCILE_INTERVAL = Duration.ofSeconds(5);
+    private static final Duration SWEEP_MARGIN = Duration.ofSeconds(25);
+    // an UNVERIFIED or PENDING capability blocks sweeps and removals until its next re-probe, at most one retry interval away
+    private static final Duration SWEEP_TIMEOUT = TilCapabilities.PROBE_RETRY_INTERVAL.plus(RECONCILE_INTERVAL).plus(SWEEP_MARGIN);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final HttpClient http = HttpClient.newHttpClient();
     private KubernetesClient kubernetes;
     private String originalConfig;
+    private String member;
 
     @BeforeEach
     void connect() throws IOException {
@@ -95,6 +129,55 @@ class InContainerDataSpaceEventsIT {
         } finally {
             kubernetes.close();
         }
+    }
+
+    /**
+     * Removes the member from both TILs, so reruns and the other ITs sharing them are not affected.
+     */
+    @AfterEach
+    void removeMember() {
+        if (member != null) {
+            deleteIssuer(PROVIDER_TIL_URL, member);
+            deleteIssuer(REGISTRY_TIL_URL, member);
+        }
+    }
+
+    @Test
+    void healthReportsTheRequiredTilCapabilities() {
+        awaitTypedScopesSupported();
+        String scopesEndpoint = tilCapabilities(health()).get(TilCapability.SCOPES_ENDPOINT.getId());
+        // pending as long as the provider TIL holds no issuer to probe with
+        assertTrue(SUPPORTED.equals(scopesEndpoint) || PENDING.equals(scopesEndpoint),
+                "Unexpected scopes-endpoint state " + scopesEndpoint);
+    }
+
+    @Test
+    void adoptionGrantsTheMembershipAndRemovalRevokesIt() {
+        // the sweep only runs once the required capabilities are supported
+        awaitTypedScopesSupported();
+        member = "did:web:member-%s.io".formatted(UUID.randomUUID());
+
+        assertEquals(HTTP_CREATED, createUnattributedIssuer(PROVIDER_TIL_URL, member));
+        assertEquals(HTTP_CREATED, createUnattributedIssuer(REGISTRY_TIL_URL, member));
+        await().atMost(SWEEP_TIMEOUT).pollInterval(POLL_INTERVAL)
+                .until(() -> membershipGrantees().contains(member));
+        assertEquals(1, credentialCount(member), "The unattributed credential should have been moved, not copied.");
+        JsonNode scopes = scopesOf(member).orElseThrow();
+        assertEquals(1, scopes.size(), "Only the membership grant should remain: " + scopes);
+        assertEquals(ANCHOR, scopes.get(0).path("scope").asText());
+        assertEquals(MEMBERSHIP_SCOPE_TYPE, scopes.get(0).path("scopeType").asText());
+        await().atMost(SWEEP_TIMEOUT).pollInterval(POLL_INTERVAL)
+                .until(() -> SUPPORTED.equals(tilCapabilities(health()).get(TilCapability.SCOPES_ENDPOINT.getId())));
+
+        deleteIssuer(REGISTRY_TIL_URL, member);
+        assertEquals(HTTP_ACCEPTED, postParticipantRemoved(member));
+        // the event or the sweep, whichever comes first, revokes the grant
+        await().atMost(SWEEP_TIMEOUT).pollInterval(POLL_INTERVAL)
+                .until(() -> !membershipGrantees().contains(member));
+        assertFalse(scopesOf(member).stream()
+                        .flatMap(list -> StreamSupport.stream(list.spliterator(), false))
+                        .anyMatch(scope -> MEMBERSHIP_SCOPE_TYPE.equals(scope.path("scopeType").asText())),
+                "No membership grant should remain.");
     }
 
     @Test
@@ -173,6 +256,85 @@ class InContainerDataSpaceEventsIT {
             request.header(IDENTITY_HEADER, identity);
         }
         return send(request.POST(HttpRequest.BodyPublishers.ofString(event))).statusCode();
+    }
+
+    private int postParticipantRemoved(String did) {
+        String event = """
+                {"specversion": "1.0", "id": "%s", "source": "%s", "type": "%s", "subject": "%s", "dataspaceid": "%s"}
+                """.formatted(UUID.randomUUID(), ANCHOR, DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE, did, DATASPACE_ID);
+        return send(HttpRequest.newBuilder(URI.create(EVENTS_URL))
+                .header("Content-Type", CLOUDEVENTS_JSON)
+                .header(IDENTITY_HEADER, userinfo(ANCHOR))
+                .POST(HttpRequest.BodyPublishers.ofString(event))).statusCode();
+    }
+
+    private void awaitTypedScopesSupported() {
+        await().atMost(SWEEP_TIMEOUT).pollInterval(POLL_INTERVAL).until(() -> {
+            JsonNode health = health();
+            Map<String, String> capabilities = tilCapabilities(health);
+            return STATUS_UP.equals(health.path("status").asText())
+                    && SUPPORTED.equals(capabilities.get(TilCapability.TYPED_SCOPES.getId()))
+                    && SUPPORTED.equals(capabilities.get(TilCapability.UNSCOPED.getId()));
+        });
+    }
+
+    private JsonNode health() {
+        return json(send(HttpRequest.newBuilder(URI.create(HEALTH_URL)).GET()).body());
+    }
+
+    /**
+     * The TIL capability states the participant-removed health component reports, by capability id.
+     */
+    private static Map<String, String> tilCapabilities(JsonNode health) {
+        JsonNode til = health.path("details").path(PARTICIPANT_REMOVED_HEALTH).path("details").path(TIL_HEALTH_DETAIL);
+        Map<String, String> capabilities = new HashMap<>();
+        til.fields().forEachRemaining(field -> capabilities.put(field.getKey(), field.getValue().asText()));
+        return capabilities;
+    }
+
+    private int createUnattributedIssuer(String tilUrl, String did) {
+        String issuer = """
+                {"did": "%s", "credentials": [{"credentialsType": "%s"}]}
+                """.formatted(did, CREDENTIALS_TYPE);
+        return send(HttpRequest.newBuilder(URI.create(tilUrl + "/issuer"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(issuer))).statusCode();
+    }
+
+    private void deleteIssuer(String tilUrl, String did) {
+        send(HttpRequest.newBuilder(URI.create(tilUrl + "/issuer/" + did)).DELETE());
+    }
+
+    private List<String> membershipGrantees() {
+        String query = "?pageSize=%d&scope=%s&scopeType=%s".formatted(TIL_PAGE_SIZE, ANCHOR, MEMBERSHIP_SCOPE_TYPE);
+        JsonNode items = json(send(HttpRequest.newBuilder(URI.create(PROVIDER_TIL_URL + "/issuer" + query)).GET()).body())
+                .path("items");
+        return StreamSupport.stream(items.spliterator(), false).map(JsonNode::asText).toList();
+    }
+
+    private int credentialCount(String did) {
+        return json(send(HttpRequest.newBuilder(URI.create(PROVIDER_TIL_URL + "/issuer/" + did)).GET()).body())
+                .path("credentials").size();
+    }
+
+    /**
+     * The issuer's grants at the provider TIL; empty if the TIL does not hold the issuer.
+     */
+    private Optional<JsonNode> scopesOf(String did) {
+        HttpResponse<String> response = send(HttpRequest.newBuilder(URI.create(PROVIDER_TIL_URL + "/issuer/" + did + "/scopes")).GET());
+        if (response.statusCode() == HTTP_NOT_FOUND) {
+            return Optional.empty();
+        }
+        assertEquals(HTTP_OK, response.statusCode(), "Unexpected scopes answer " + response.body());
+        return Optional.of(json(response.body()));
+    }
+
+    private static JsonNode json(String body) {
+        try {
+            return OBJECT_MAPPER.readTree(body);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private Optional<String> grantedOrigin(String origin) {
