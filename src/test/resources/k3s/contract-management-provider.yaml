@@ -25,6 +25,8 @@ data:
         port: 9090
       health:
         enabled: true
+        # InContainerDataSpaceEventsIT reads the participant-removed TIL capabilities from the health details
+        details-visible: ANONYMOUS
     ---
     general:
       did: did:web:provider.io
@@ -39,6 +41,13 @@ data:
     # InContainerDataSpaceEventsIT edits the publishers and relies on /refresh and the watch on /config
     dataspace:
       events:
+        # required for adoption
+        dataspace-id: test-dataspace
+        participant-removed:
+          # the sweep has to run within the IT's await window
+          reconcile:
+            initial-delay: 5s
+            interval: 5s
         listener:
           enabled: true
           watch:
@@ -49,6 +58,15 @@ data:
             origin: events.publisher-a.io
             types:
               - org.fiware.dataspace.test
+          # the only participant.removed publisher, so adoption is allowed; the consumer TIL doubles as its registry
+          - id: did:web:anchor.io
+            origin: events.anchor.io
+            types:
+              - org.fiware.dataspace.participant.removed
+            on-participant-removed:
+              mode: dataspace
+              adopt-unattributed: true
+              registry-url: http://trusted-issuers-list:8085
 ---
 apiVersion: apps/v1
 kind: Deployment
