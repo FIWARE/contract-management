@@ -60,23 +60,86 @@ in query or path parameters need a `TypeConverter` to their API value, with `til
 Acceptance: the new tests fail without the converter (wire value `DATASPACE_MEMBERSHIP`, so the probe returns TOO_OLD)
 and pass with it. `mvn test` is green.
 
-### Step 2: Run the k3s integration tests against TIL 0.10.3 and assert typed-scope support end to end
+### Step 2: Run the k3s integration tests against TIL 0.10.3 and drive adoption and removal end to end
+Why the current k3s setup cannot catch the bug: `contract-management-provider.yaml` has no publisher whose `types`
+include `org.fiware.dataspace.participant.removed`. `DataSpaceEventsProperties.participantRemovedEnabled()` is therefore
+false, and none of the `ParticipantRemovedCondition` beans exist: `TilCapabilities` probes,
+`ParticipantRemovedHealthIndicator`, `ParticipantRemovedStartupGuard`, `ParticipantAdoption`, `ParticipantRemoval`,
+`ParticipantReconciler` and `PublisherRegistryLookup`. Health is `UP` today with the bug in place. Note that
+`general.enableTrustedIssuersList` only gates `TilProductOrderHandler`, not these beans, so it can stay `false`.
+`micronaut.http.services.trusted-issuers-list.url` already points at `trusted-issuers-list-provider:7085`.
+
+Code paths that write and delete `dataspace-membership` entries (the only ones):
+- Write: `ParticipantReconciler` (sweep) -> `ParticipantAdoption.adopt` -> `TrustedIssuersListAdapter.grantMembership`.
+  The sweep runs only when adoption is allowed (`DataSpaceEventsProperties.adoption()`): exactly one removal publisher,
+  with `on-participant-removed.adopt-unattributed: true` and a `registry-url`, and `dataspace.events.dataspace-id` set.
+  It adopts a DID that the publisher's registry lists (`TrustedIssuersRegistryReader.enumerate(registryUrl)`, TIR API
+  `GET /v4/issuers`) and whose provider-TIL entry holds nothing but unattributed credentials (no `scope`).
+- Delete: a `participant.removed` event from that publisher -> `ParticipantRemovedHandler` -> `ParticipantRemoval`.
+  In a writing mode this first asks `PublisherRegistryLookup.isListed` (`GET /v4/issuers/{did}` on the `registry-url`).
+  A DID that is still listed is answered `STILL_LISTED` and left alone. Otherwise `RemovalPlan.RevokeGrant` ->
+  `adapter.revokeGrant(did, <publisher id>, dataspace-membership)`. The sweep also revokes grants of DIDs the registry
+  no longer lists (`issuersGrantedBy`), so the test must accept either path having done the delete.
+- A writing mode without `registry-url` is clamped to REPORT, and adoption is refused with NO_REGISTRY_URL. A
+  `registry-url` is mandatory for this scenario.
+
+Registry decision: use the consumer-side TIL that is already deployed as the publisher's registry. The FIWARE
+trusted-issuers-list serves the TIR API (`/v4/issuers`, `/v4/issuers/{did}`) next to its TIL API (`/issuer`) on the
+same port. Set `registry-url: http://trusted-issuers-list:8085` (service from `til.yaml`; the host reaches it on
+`localhost:8085`). "Listed" then means "an issuer at the consumer TIL", which the IT controls with `POST /issuer` and
+`DELETE /issuer/{did}` on `localhost:8085`. First verify against 0.10.3 that `GET http://localhost:8085/v4/issuers` and
+`/v4/issuers/{did}` answer as the TIR API (`TrustedIssuersRegistryReaderHttpTest` and `PublisherRegistryLookupTest`
+show the shapes CM expects). Only if 0.10.3 does not serve them may you add a minimal fake registry: one Deployment +
+Service in `src/test/resources/k3s/` that serves those two routes from a list the IT can change, with a port binding in
+`pom.xml`. Say in the completion summary which option was used and why.
+
 Changes:
 - Bump `image: quay.io/fiware/trusted-issuers-list:0.9.1` to `0.10.3` in `src/test/resources/k3s/til.yaml` and
-  `src/test/resources/k3s/til-provider.yaml`. Check whether 0.10.3 needs new env or config, such as a DB migration flag,
-  and adjust the manifests if it does.
-- Extend `src/test/java/org/fiware/iam/InContainerDataSpaceEventsIT.java`, or the most fitting `InContainer*IT`, so that:
-  - The CM health endpoint on the management port reports `UP`, and the typed-scopes capability reads supported, not
-    `too_old`.
-  - With the data-space mode that writes membership (`dataspace`, `granted` or `full`; see `DataSpaceEventsProperties`
-    and `ParticipantRemovedStartupGuard`), CM starts. A participant added through the existing ConfigMap and watch flow
-    shows up at the TIL as a credential entry with `scopeType=dataspace-membership`. Removing that participant deletes
-    the entry. Reuse the existing helpers such as `grantedOrigin(...)` and the Awaitility patterns. Do not add new
-    infrastructure.
-- If the CM ConfigMap in `src/test/resources/k3s/contract-management-provider.yaml` needs a mode switch for this, make
-  it, and keep the existing ITs passing.
+  `til-provider.yaml`. Check whether 0.10.3 needs new env or config, such as a DB migration flag, and adjust the
+  manifests if it does. Check that 0.10.3 serves `GET /issuer/{did}/scopes` (curl it for an existing issuer on
+  `localhost:7085`). `TilCapabilities.required()` needs SCOPES_ENDPOINT as well as TYPED_SCOPES, and with adoption
+  allowed also UNSCOPED. If 0.10.3 lacks one of them, health stays DEGRADED (or startup fails) for a reason unrelated
+  to this bug. In that case stop and report `blocked` with the missing capability rather than weakening the assertions.
+- In the `contract-management-provider` ConfigMap (static config, so the startup guard runs against it):
+  - `endpoints.health.details-visible: ANONYMOUS`. Without it the anonymous IT cannot read health details.
+  - `dataspace.events.dataspace-id: <some id>`. Required for adoption. `EventAuthorizer` only rejects events that
+    carry a *different* `dataspaceid`, so the existing ITs, which send none, are unaffected.
+  - `dataspace.events.participant-removed.reconcile.initial-delay` and `.interval` of a few seconds (e.g. `5s`), so
+    the sweep runs within the IT's await window instead of after 1 min / 15 min.
+  - A second publisher, e.g. `did:web:anchor.io` with its own `origin`, `types: [org.fiware.dataspace.participant.removed]`
+    and `on-participant-removed: {mode: dataspace, adopt-unattributed: true, registry-url: http://trusted-issuers-list:8085}`.
+    It must be the *only* publisher listing `participant.removed`, otherwise adoption is refused with MULTIPLE_PUBLISHERS.
+    Keep `did:web:publisher-a.io` unchanged. `withPublishers(...)` appends to the list, so the existing tests and
+    `restore()` keep working.
+  - With the bug, CM must now fail to start: `ParticipantRemovedStartupGuard` throws because `removalWritesConfigured()`
+    and typed-scopes reads TOO_OLD. That makes startup itself a regression check.
+- Extend `src/test/java/org/fiware/iam/InContainerDataSpaceEventsIT.java` (plain `java.net.http` like the existing
+  helpers; add small helpers for the TIL calls and the health read; no new framework):
+  - Health: `GET http://localhost:9090/health` reports status `UP`. Its `dataspace-participant-removed` component
+    detail `til` (see `ParticipantRemovedHealthIndicator.TIL_DETAIL` and `TilCapability` ids) must contain
+    `typed-scopes: supported` and `unscoped: supported`. It must also contain `scopes-endpoint`, which may read
+    `pending` while the provider TIL is empty and must read `supported` once the test below has seeded an issuer. Await
+    these values; the probes run asynchronously after startup.
+  - Adoption writes the grant: pick a unique DID per run (e.g. `did:web:member-<uuid>.io`).
+    1. Seed it at the provider TIL (`POST localhost:7085/issuer`) with one credential and no `scope` (unattributed).
+    2. List it at the registry (`POST localhost:8085/issuer`).
+    3. Await (Awaitility, sweep interval + margin) that `GET localhost:7085/issuer?scope=did:web:anchor.io&scopeType=dataspace-membership`
+       lists the DID, and that `GET localhost:7085/issuer/{did}` holds the credential with `scope` = the anchor id
+       and `scopeType` = `dataspace-membership`, and no unattributed copy.
+  - Removal deletes the grant:
+    1. Delete the DID from the registry (`DELETE localhost:8085/issuer/{did}`), so `isListed` is false.
+    2. POST a `participant.removed` CloudEvent from the anchor to `EVENTS_URL` (identity header =
+       `userinfo("did:web:anchor.io")`, `source` = anchor id, `subject` = the DID, `type` =
+       `DataSpaceEventsProperties.PARTICIPANT_REMOVED_TYPE`, `dataspaceid` = the configured id). Assert `202`.
+    3. Await that the typed list above no longer contains the DID and the entry holds no `dataspace-membership`
+       credential. Either the event or the sweep may have done it; the assertion only checks the outcome.
+  - Clean up the DID at both TILs in `@AfterEach`, so reruns and the other ITs sharing the provider TIL are not
+    affected. Do not reuse DIDs that other ITs write to `localhost:8085`, because the sweep adopts every listed DID
+    whose provider entry is unattributed only.
 - Run `mvn verify` (k3s ITs). If the container environment cannot run k3s, run at least `mvn test` and the
   manifest-independent parts, and say so explicitly in the completion summary.
 
-Acceptance: against TIL 0.10.3 the typed-scopes probe reads supported, and health is UP. Data-space mode starts and
-writes and deletes `dataspace-membership` entries. All existing ITs pass.
+Acceptance: against TIL 0.10.3, CM starts with the writing participant-removed configuration. Health is `UP` with
+`typed-scopes` and `unscoped` = `supported`, and `scopes-endpoint` = `supported` once an issuer exists. Adoption
+writes a `scope=did:web:anchor.io&scopeType=dataspace-membership` grant, and the `participant.removed` path deletes it.
+All existing ITs pass. Without Step 1's converter, CM fails to start with this config (typed-scopes TOO_OLD).
