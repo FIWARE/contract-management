@@ -46,7 +46,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Publishers added to the contract-management-provider ConfigMap are accepted without a restart, through the file watch.
  * The deployment has no gateway in front, so the identity header is set directly, as APISIX would from a verified token.
- * The deployed CM has no event handler, so whether a publisher is configured is observed through the OPTIONS origin grant.
+ * The deployed CM has no handler for the test event type, so whether a publisher is configured is observed through the
+ * OPTIONS origin grant.
  * The watch is enabled here, so /refresh is only checked for reachability; DataSpaceEventsRefreshTest proves it applies changes.
  * The anchor publisher adopts and revokes dataspace-membership grants at the provider TIL; the consumer TIL is its registry.
  */
@@ -87,6 +88,7 @@ class InContainerDataSpaceEventsIT {
     private static final int HTTP_OK = 200;
     private static final int HTTP_CREATED = 201;
     private static final int HTTP_ACCEPTED = 202;
+    private static final int HTTP_MULTIPLE_CHOICES = 300;
     private static final int HTTP_UNAUTHORIZED = 401;
     private static final int HTTP_NOT_FOUND = 404;
     // kubelet propagates ConfigMap changes after its sync period (1 min) plus the ConfigMap cache TTL
@@ -169,7 +171,9 @@ class InContainerDataSpaceEventsIT {
         await().atMost(SWEEP_TIMEOUT).pollInterval(POLL_INTERVAL)
                 .until(() -> SUPPORTED.equals(tilCapabilities(health()).get(TilCapability.SCOPES_ENDPOINT.getId())));
 
-        deleteIssuer(REGISTRY_TIL_URL, member);
+        int registryDelete = deleteIssuer(REGISTRY_TIL_URL, member);
+        // still listed, the removal would be answered STILL_LISTED and the await below would time out
+        assertTrue(isSuccess(registryDelete), "The registry did not delist the member: " + registryDelete);
         assertEquals(HTTP_ACCEPTED, postParticipantRemoved(member));
         // the event or the sweep, whichever comes first, revokes the grant
         await().atMost(SWEEP_TIMEOUT).pollInterval(POLL_INTERVAL)
@@ -301,14 +305,20 @@ class InContainerDataSpaceEventsIT {
                 .POST(HttpRequest.BodyPublishers.ofString(issuer))).statusCode();
     }
 
-    private void deleteIssuer(String tilUrl, String did) {
-        send(HttpRequest.newBuilder(URI.create(tilUrl + "/issuer/" + did)).DELETE());
+    private int deleteIssuer(String tilUrl, String did) {
+        return send(HttpRequest.newBuilder(URI.create(tilUrl + "/issuer/" + did)).DELETE()).statusCode();
+    }
+
+    private static boolean isSuccess(int status) {
+        return status >= HTTP_OK && status < HTTP_MULTIPLE_CHOICES;
     }
 
     private List<String> membershipGrantees() {
         String query = "?pageSize=%d&scope=%s&scopeType=%s".formatted(TIL_PAGE_SIZE, ANCHOR, MEMBERSHIP_SCOPE_TYPE);
-        JsonNode items = json(send(HttpRequest.newBuilder(URI.create(PROVIDER_TIL_URL + "/issuer" + query)).GET()).body())
-                .path("items");
+        HttpResponse<String> response = send(HttpRequest.newBuilder(URI.create(PROVIDER_TIL_URL + "/issuer" + query)).GET());
+        // an error answer has no items and would let the removal await pass at once
+        assertEquals(HTTP_OK, response.statusCode(), "Unexpected issuer list answer " + response.body());
+        JsonNode items = json(response.body()).path("items");
         return StreamSupport.stream(items.spliterator(), false).map(JsonNode::asText).toList();
     }
 
